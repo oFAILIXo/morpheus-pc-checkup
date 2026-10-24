@@ -1,0 +1,5 @@
+# Berichte enthalten Systemdetails (Benutzer, Netzwerk, Software) und gehören nicht ins Repo
+reports/
+
+# Persönliche Akzeptanzliste (Vorlage: accepted.example.psd1)
+accepted.psd1
