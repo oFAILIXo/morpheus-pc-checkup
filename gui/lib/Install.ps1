@@ -233,6 +233,24 @@ function Test-MorpheusCodeSecure {
     @{ Sicher = ($reasons.Count -eq 0); Gruende = $list }
 }
 
+# SHA256 über den Inhalt. Textdateien werden vorher auf LF normalisiert (jedes CR direkt vor LF entfällt), damit
+# Git-Checkouts mit CRLF bzw. LF denselben Stand ergeben. Jede inhaltliche Änderung ändert den Hash weiterhin.
+function MorpheusContentHash {
+    param([string]$Path)
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if (($ext -in '.ps1', '.psd1', '.psm1', '.cmd', '.bat', '.md', '.txt', '.html', '.js', '.css', '.json', '.svg') -or ($ext -eq '')) {
+        $out = New-Object System.Collections.Generic.List[byte] ($bytes.Length)
+        for ($i = 0; $i -lt $bytes.Length; $i++) {
+            if (($bytes[$i] -eq 13) -and (($i + 1) -lt $bytes.Length) -and ($bytes[$i + 1] -eq 10)) { continue }
+            $out.Add($bytes[$i])
+        }
+        $bytes = $out.ToArray()
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') } finally { $sha.Dispose() }
+}
+
 # Sind alle Codedateien von Quelle und Ziel gleich (relative Pfade und SHA256) und ist das Ziel sicher?
 function Test-MorpheusInstallCurrent {
     [CmdletBinding()]
@@ -245,7 +263,7 @@ function Test-MorpheusInstallCurrent {
         $h = @{}
         foreach ($f in $files) {
             $rel = $f.Substring($root.Length).TrimStart('\').ToLowerInvariant()
-            $h[$rel] = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash
+            $h[$rel] = MorpheusContentHash $f
         }
         $h
     }
