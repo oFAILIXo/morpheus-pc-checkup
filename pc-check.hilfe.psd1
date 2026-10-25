@@ -5,7 +5,8 @@
         CRIT = 'Kritisch: echtes Sicherheits- oder Stabilitätsrisiko. Zuerst beheben.'
         WARN = 'Warnung: sollte behoben werden, ist aber selten akut. Prüfen, ob es bewusst so gewollt ist.'
         ACK  = 'Akzeptiert: eine Warnung, die du in accepted.psd1 bewusst als gewollt eingetragen hast. Meldet sich nach Ablaufdatum oder wenn sich der Befund ändert wieder.'
-        INFO = 'Hinweis: kein Problem, aber eine Information oder Optimierungsmöglichkeit. Kann ignoriert werden.'
+        TIPP = 'Tipp: kein Problem, aber eine lohnende Verbesserung. Nutzen, Aufwand und Risiko stehen dabei, die Anleitung unter „So geht''s“.'
+        INFO = 'Hinweis: reine Information zur Einordnung, nichts zu tun.'
         OK   = 'OK: alles in Ordnung.'
         SKIP = 'Nicht geprüft: meist fehlen Adminrechte oder die Funktion gibt es auf diesem PC nicht. Kein Befund.'
     }
@@ -127,6 +128,9 @@
         'Mausbeschleunigung'                         = @{ Was = 'Ob „Zeigerpräzision verbessern“ aktiv ist.'; Warum = 'Für Shooter stört es, weil die Mausbewegung nicht 1:1 umgesetzt wird.'; Harmlos = 'Fürs Büro ist es Geschmackssache.' }
         'Overlays und Hintergrund-Tools'             = @{ Was = 'Laufende Overlays und RGB-/Tuning-Tools.'; Warum = 'Jedes kostet etwas Leistung und kann Ruckler verursachen; manche bringen anfällige Treiber mit.'; Harmlos = 'Tools, die du aktiv nutzt.' }
         'Virtualisierung und Spieleleistung'         = @{ Was = 'Ob Virtualisierung und Speicherintegrität aktiv sind.'; Warum = 'Kostet wenige Prozent Leistung, schützt aber stark.'; Harmlos = 'Empfehlung: anlassen.' }
+        'Resizable BAR und PCIe-Anbindung'           = @{ Was = 'Ob die CPU den ganzen Grafikspeicher auf einmal ansprechen kann (Resizable BAR) und wie die Grafikkarte angebunden ist.'; Warum = 'Resizable BAR bringt in vielen aktuellen Spielen einige Prozent mehr FPS; eine Karte mit zu wenigen Lanes verschenkt Leistung.'; Harmlos = 'Ältere Mainboards ohne die BIOS-Option; x8 bei Karten, die nur x8 haben; PCIe 3.0 statt 4.0 kostet kaum etwas.' }
+        'Spielebibliotheken'                         = @{ Was = 'Auf welchen Laufwerken die Spiele von Steam, Epic, GOG, Ubisoft und Xbox liegen und wie voll diese sind.'; Warum = 'Spiele auf einer Festplatte laden langsam und ruckeln beim Nachladen; fast volle SSDs werden beim Schreiben langsamer.'; Harmlos = 'Alte oder selten gespielte Spiele auf einer Festplatte.' }
+        'Netzwerkkarte: Energiesparfunktionen'       = @{ Was = 'Energiesparfunktionen der LAN-Karte (Energy Efficient Ethernet, Green Ethernet, Ultra Low Power).'; Warum = 'Sie legen die Verbindung in Ruhephasen schlafen; beim Aufwachen kann es kurze Latenzspitzen geben.'; Harmlos = 'Bei Laptops und reinen Büro-PCs, wo jedes Watt zählt.' }
         'CPU-Last (Stichprobe 5 s)'                  = @{ Was = 'CPU-Auslastung im Leerlauf über 5 Sekunden.'; Warum = 'Hohe Grundlast ohne laufendes Programm deutet auf Hintergrundprozesse oder Schadsoftware.'; Harmlos = 'Kurz nach dem Start (Updates, Indexierung) oder während pc-check selbst.' }
         'RAM-Auslastung'                             = @{ Was = 'Wie viel Arbeitsspeicher belegt ist und von welchen Programmen.'; Warum = 'Ist der RAM schon ohne Spiel fast voll, ruckelt es im Spiel.'; Harmlos = 'Browser mit vielen Tabs belegen viel, geben aber bei Bedarf frei.' }
         'Speicherkomprimierung'                      = @{ Was = 'Ob Windows selten genutzten Speicher komprimiert.'; Warum = 'Schneller als Auslagern auf die SSD.'; Harmlos = 'Reine Information; anlassen.' }
@@ -138,9 +142,156 @@
         'Grafiktreiber-Abstürze'                     = @{ Was = 'Abstürze und Neustarts des Grafiktreibers.'; Warum = 'Deuten auf instabile Grafik-Übertaktung, Treiberprobleme oder Netzteil.'; Harmlos = 'Ein einzelner Fehler ohne Auswirkungen.' }
         'Leistungsdrosselung durch Firmware'         = @{ Was = 'Ob das Mainboard den CPU-Takt begrenzt hat.'; Warum = 'Meist zu hohe Temperatur oder zu niedrige Leistungsgrenzen.'; Harmlos = 'Vereinzelte Meldungen ohne spürbare Einbußen.' }
         'Programmabstürze'                           = @{ Was = 'Abgestürzte und hängende Programme.'; Warum = 'Häufen sich Abstürze vieler verschiedener Programme, ist oft RAM oder Übertaktung schuld.'; Harmlos = 'Einzelne Abstürze eines bestimmten Programms.' }
-        'Dienstfehler'                               = @{ Was = 'Dienste, die nicht starten wollten oder abgestürzt sind.'; Warum = 'Oft Reste deinstallierter Programme.'; Harmlos = 'Einzelne Fehler beim Start, z. B. Zeitüberschreitungen.' }
+        'Dienstfehler'                               = @{ Was = 'Dienste, die nicht starten wollten oder abgestürzt sind. Bekannt harmlose Fehler und Fehler inzwischen entfernter Dienste ordnet pc-check selbst ein.'; Warum = 'Oft Reste deinstallierter Programme.'; Harmlos = 'Einzelne Fehler beim Start, z. B. Zeitüberschreitungen.' }
         'Datenträgerfehler'                          = @{ Was = 'Lese- und Schreibfehler der Laufwerke.'; Warum = 'Ein frühes Warnzeichen für einen Laufwerksausfall.'; Harmlos = 'Fehler eines abgezogenen USB-Sticks.' }
         'Startdauer'                                 = @{ Was = 'Wie lange Windows bis zum Desktop braucht und was den Start bremst.'; Warum = 'Zeigt, welche Programme den Start verlangsamen.'; Harmlos = 'Spiele und Updates tauchen hier nach ihrer Installation einmalig auf.' }
         'Zuverlässigkeitsindex'                      = @{ Was = 'Windows-eigene Stabilitätsbewertung von 1 bis 10.'; Warum = 'Fasst Abstürze und Fehler der letzten Zeit zusammen.'; Harmlos = 'Kurz nach Abstürzen sinkt der Wert und erholt sich wieder.' }
+    }
+
+    # Tipps und Anleitungen je Prüfung. Ein Hinweis mit passendem Eintrag wird zum Tipp; bei Warnungen erscheint die Anleitung zusätzlich.
+    # Je Prüfung eine Liste von Varianten, die erste passende zählt:
+    #   Match    = regulärer Ausdruck auf den Befund (optional)
+    #   Profile  = nur in diesen Profilen ein Tipp, sonst bleibt es ein Hinweis (optional; Gaming, Office, Laptop)
+    #   Nutzen, Aufwand, Risiko = gering | mittel | hoch
+    #   NurAnleitung = $true: bleibt ein Hinweis (z. B. reine Durchsicht), bekommt aber die Anleitung
+    #   Schritte = Klickweg; Befehl = optional, für eine Administrator-PowerShell
+    Tipps      = @{
+        'Microsoft Defender: Einstellungen'          = @(
+            @{ Match = 'PUA|Cloud'; Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Windows-Sicherheit > App- & Browsersteuerung > Einstellungen für zuverlässigkeitsbasierten Schutz: „Potenziell unerwünschte Apps blockieren“ einschalten.', 'Windows-Sicherheit > Viren- & Bedrohungsschutz > Einstellungen verwalten: „Cloudbasierter Schutz“ einschalten.') }
+            @{ Match = 'Netzwerkschutz aus'; Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Rechtsklick auf Start > „Terminal (Administrator)“.', 'Den Befehl unten einfügen und mit Enter ausführen. In Windows-Sicherheit gibt es dafür keinen Schalter.', 'Sperrt er fälschlich eine Seite: mit -EnableNetworkProtection AuditMode wird nur noch protokolliert.'); Befehl = 'Set-MpPreference -EnableNetworkProtection Enabled' }
+        )
+        'Defender: ASR-Regeln'                       = @(
+            @{ Match = 'Keine Regeln'; Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Rechtsklick auf Start > „Terminal (Administrator)“.', 'Den Befehl unten ausführen. Er schaltet zwei Regeln ein, die Gaming und Entwicklung nicht stören: anfällige signierte Treiber blockieren und Anmeldedaten-Diebstahl aus LSASS blockieren.', 'Blockiert danach ein Tool (selten, meist alte OC-/RGB-Tools), steht in der Ereignisanzeige bei Defender das Ereignis 1121; dann im Befehl Enabled durch AuditMode ersetzen.'); Befehl = 'Add-MpPreference -AttackSurfaceReductionRules_Ids 56a863a9-875e-4185-98a7-b882c64b5ce5,9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2 -AttackSurfaceReductionRules_Actions Enabled,Enabled' }
+        )
+        'Defender: Manipulationsschutz'              = @(
+            @{ Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Windows-Sicherheit > Viren- & Bedrohungsschutz > Einstellungen verwalten.', '„Manipulationsschutz“ einschalten.') }
+        )
+        'Windows Update: ausstehend'                 = @(
+            @{ Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > Windows Update > „Nach Updates suchen“.', 'Danach neu starten.') }
+        )
+        'Wiederherstellung'                          = @(
+            @{ Match = 'Wiederherstellungspunkte: 0'; Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Win+R drücken, sysdm.cpl eingeben, Enter.', 'Reiter „Computerschutz“ > Laufwerk C: markieren > „Konfigurieren“.', '„Computerschutz aktivieren“ wählen, Regler auf 3–5 % stellen, OK.', '„Erstellen“ klicken und einen Namen vergeben, z. B. „Vor Änderungen“.'); Befehl = 'Enable-ComputerRestore -Drive ''C:\''
+Checkpoint-Computer -Description ''pc-check'' -RestorePointType MODIFY_SETTINGS' }
+        )
+        'Remoteunterstützung'                        = @(
+            @{ Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Win+R drücken, sysdm.cpl eingeben, Enter.', 'Reiter „Remote“: Haken bei „Remoteunterstützungsverbindungen mit diesem Computer zulassen“ entfernen, OK.') }
+        )
+        'Remotedesktop'                              = @(
+            @{ Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > System > Remotedesktop: ausschalten.') }
+        )
+        'LLMNR / NetBIOS'                            = @(
+            @{ Profile = @('Laptop'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Windows Pro: Win+R > gpedit.msc > Computerkonfiguration > Administrative Vorlagen > Netzwerk > DNS-Client > „Multicastnamensauflösung deaktivieren“ auf „Aktiviert“.', 'Windows Home: den Befehl unten in einer Administrator-PowerShell ausführen.'); Befehl = 'New-Item -Path ''HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'' -Force | Out-Null
+Set-ItemProperty -Path ''HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'' -Name EnableMulticast -Value 0 -Type DWord' }
+        )
+        'Kennwort- und Sperrrichtlinie'              = @(
+            @{ Match = 'Keine Kontosperre'; Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Rechtsklick auf Start > „Terminal (Administrator)“.', 'Den Befehl unten ausführen: Nach 10 Fehlversuchen wird das Konto für 10 Minuten gesperrt (Windows-Standard bei Neuinstallation).'); Befehl = 'net accounts /lockoutthreshold:10 /lockoutduration:10 /lockoutwindow:10' }
+        )
+        'Bildschirmsperre'                           = @(
+            @{ Profile = @('Laptop', 'Office'); Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > Personalisierung > Sperrbildschirm > „Bildschirmschoner“.', 'Bildschirmschoner „Leer“ wählen (bei „(Kein)“ sperrt nichts), Wartezeit z. B. 10 Minuten, Haken bei „Anmeldeseite bei Reaktivierung“, OK.') }
+        )
+        'Administratorgruppe'                        = @(
+            @{ Match = 'ist Administrator'; Nutzen = 'mittel'; Aufwand = 'hoch'; Risiko = 'mittel'; Schritte = @('Einstellungen > Konten > Andere Benutzer > „Konto hinzufügen“: ein zweites Konto anlegen und unter „Kontotyp ändern“ zum Administrator machen.', 'Mit dem neuen Konto anmelden und dem Alltagskonto den Kontotyp „Standardbenutzer“ geben.', 'Künftig fragt die Benutzerkontensteuerung bei Installationen nach dem Kennwort des Admin-Kontos. Kennwort gut aufheben, sonst sperrst du dich aus.') }
+        )
+        'Kernisolierung (VBS / Speicherintegrität)'  = @(
+            @{ Nutzen = 'hoch'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Windows-Sicherheit > Gerätesicherheit > „Details zur Kernisolierung“.', '„Speicherintegrität“ einschalten und neu starten.', 'Meldet Windows inkompatible Treiber: „Inkompatible Treiber überprüfen“ zeigt sie. Das zugehörige Programm (oft alte RGB-, Lüfter- oder OC-Tools) deinstallieren.') }
+        )
+        'LSA-Schutz'                                 = @(
+            @{ Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Windows-Sicherheit > Gerätesicherheit > „Details zur Kernisolierung“.', '„Schutz der lokalen Sicherheitsautorität“ einschalten und neu starten.') }
+        )
+        'Treiber-Sperrliste und Smart App Control'   = @(
+            @{ Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Windows-Sicherheit > Gerätesicherheit > „Details zur Kernisolierung“.', '„Microsoft-Sperrliste für anfällige Treiber“ einschalten.') }
+        )
+        'Secure Boot'                                = @(
+            @{ Match = 'Secure Boot aus'; Nutzen = 'hoch'; Aufwand = 'mittel'; Risiko = 'mittel'; Schritte = @('Mit dem Befehl unten direkt ins BIOS neu starten.', 'Im Bereich „Boot“: „CSM Support“ ausschalten und „Secure Boot“ aktivieren (ggf. „Standardschlüssel installieren“), mit F10 speichern.', 'Startet Windows danach nicht: CSM wieder einschalten. Dann ist das Laufwerk noch im alten MBR-Format und muss erst mit mbr2gpt umgestellt werden.'); Befehl = 'shutdown /r /fw /t 0' }
+        )
+        'BitLocker'                                  = @(
+            @{ Match = 'nicht verschlüsselt'; Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'mittel'; Schritte = @('Systemsteuerung > System und Sicherheit > BitLocker-Laufwerkverschlüsselung > „BitLocker aktivieren“ (Windows Home: Einstellungen > Datenschutz und Sicherheit > Geräteverschlüsselung).', 'Den Wiederherstellungsschlüssel im Microsoft-Konto speichern und zusätzlich ausdrucken.', 'Vor BIOS-Updates und OC-Änderungen künftig „Schutz anhalten“, sonst fragt der PC beim Start nach dem Schlüssel.') }
+        )
+        'BIOS/UEFI-Version'                          = @(
+            @{ Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'mittel'; Schritte = @('Mainboard und BIOS-Version stehen im Befund; auf der Supportseite des Herstellers nach einer neueren Version suchen.', 'Bei Übertaktung vorher das OC-Profil im BIOS speichern: Das Update setzt die Einstellungen zurück.', 'Ist BitLocker an: vorher „Schutz anhalten“.', 'Update mit dem Werkzeug im BIOS von einem USB-Stick einspielen (Q-Flash, EZ Flash, M-Flash) und den Strom dabei nicht unterbrechen.') }
+        )
+        'Firewall: eigene Eingangsregeln'            = @(
+            @{ Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Win+R > wf.msc > „Eingehende Regeln“, nach „Profil“ sortieren.', 'Regeln für Programme löschen, die nicht mehr installiert sind.', 'Bei den übrigen per Doppelklick > Reiter „Erweitert“ den Haken bei „Öffentlich“ entfernen.') }
+        )
+        'Treiber: bekannt anfällige und unsignierte' = @(
+            @{ Match = 'Nicht geladen'; Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Im Anhang „Treiber: bekannt anfällige“ steht, wo die Datei liegt und zu welchem Dienst sie gehört.', 'Das zugehörige Programm (meist RGB-, Lüfter- oder Übertaktungstool) unter Einstellungen > Apps > Installierte Apps deinstallieren.', 'Mit dem nächsten pc-check-Lauf prüfen, ob der Treiber verschwunden ist.') }
+        )
+        'Browser-Erweiterungen'                      = @(
+            @{ NurAnleitung = $true; Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Im Browser edge://extensions bzw. chrome://extensions öffnen (Firefox: about:addons).', 'Alles entfernen, was du nicht kennst oder seit Monaten nicht genutzt hast.', 'Erweiterungen mit Vollzugriff (stehen im Befund) lassen sich oft auf „Bei Klick“ beschränken: Details > Websitezugriff.') }
+        )
+        'Schnellstart und Ruhezustand'               = @(
+            @{ Match = 'Schnellstart an'; Profile = @('Gaming', 'Office'); Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Systemsteuerung > Hardware und Sound > Energieoptionen > „Auswählen, was beim Drücken von Netzschaltern geschehen soll“.', '„Einige Einstellungen sind momentan nicht verfügbar“ anklicken und den Haken bei „Schnellstart aktivieren“ entfernen.', 'Oder der Befehl unten: Er schaltet auch den Ruhezustand ab und gibt die Datei hiberfil.sys frei.'); Befehl = 'powercfg /hibernate off' }
+        )
+        'Temporäre Dateien und Caches'               = @(
+            @{ Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > System > Speicher > „Bereinigungsempfehlungen“.', 'Temporäre Dateien und alte Update-Dateien auswählen und bereinigen. Shader-Caches nicht löschen.') }
+        )
+        'Dev Drive (Entwicklung)'                    = @(
+            @{ Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Einstellungen > System > Speicher > Erweiterte Speichereinstellungen > Datenträger und Volumes > „Dev Drive erstellen“.', 'Freien Platz auf einer SSD nutzen oder eine virtuelle Festplatte anlegen (VHDX, dynamisch, z. B. 100 GB).', 'Repos und Paket-Caches (npm, pip, NuGet) dorthin verschieben; Defender scannt dort im schnelleren Leistungsmodus.') }
+        )
+        'Laufwerke (Typ und Zustand)'                = @(
+            @{ Match = 'SATA-SSD'; Nutzen = 'gering'; Aufwand = 'hoch'; Risiko = 'mittel'; Schritte = @('Nur sinnvoll, wenn ein M.2-Steckplatz frei ist oder ohnehin ein neues Laufwerk ansteht.', 'Windows mit dem Klon-Programm des SSD-Herstellers auf die NVMe übertragen (z. B. Samsung Data Migration, Acronis für WD/Crucial).', 'Danach im BIOS die NVMe als erstes Startlaufwerk wählen.') }
+        )
+        'Festplatten (HDD)'                          = @(
+            @{ Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Spiele, die auf der Festplatte liegen, auf eine SSD verschieben (Anleitung bei „Spielebibliotheken“).', 'Die Festplatte für Daten, Videos und Backups weiter nutzen.') }
+        )
+        'Prozessor-Energieeinstellungen'             = @(
+            @{ Match = 'min\. 100 %'; Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Rechtsklick auf Start > „Terminal (Administrator)“.', 'Die Befehle unten einfügen: Sie legen eine Kopie von „Höchstleistung“ an, die unter Last voll taktet und im Leerlauf heruntertaktet, und aktivieren sie.', 'Zurück geht es jederzeit unter Systemsteuerung > Energieoptionen.'); Befehl = '$g = (New-Guid).Guid
+powercfg /duplicatescheme 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c $g
+powercfg /changename $g ''Leistung (dynamisch)'' ''Volle Leistung unter Last, taktet im Leerlauf herunter''
+powercfg /setacvalueindex $g SUB_PROCESSOR PROCTHROTTLEMIN 5
+powercfg /setacvalueindex $g SUB_PROCESSOR PERFEPP 10
+powercfg /setacvalueindex $g SUB_PROCESSOR PERFBOOSTMODE 2
+powercfg /setactive $g' }
+        )
+        'Weitere Energiesparfunktionen'              = @(
+            @{ Match = 'PCIe-Verbindungsenergieverwaltung maximal'; Profile = @('Gaming'); Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Systemsteuerung > Energieoptionen > Energiesparplaneinstellungen ändern > Erweiterte Energieeinstellungen ändern.', 'PCI Express > Verbindungszustand-Energieverwaltung: „Aus“.'); Befehl = 'powercfg /setacvalueindex SCHEME_CURRENT SUB_PCIEXPRESS ASPM 0
+powercfg /setactive SCHEME_CURRENT' }
+        )
+        'Bildschirme und Bildwiederholrate'          = @(
+            @{ Nutzen = 'hoch'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > System > Anzeige > den Monitor oben auswählen > „Erweiterte Anzeige“.', 'Bei „Bildwiederholrate wählen“ den höchsten Wert einstellen.', 'Fehlt der Wert: DisplayPort-Kabel statt HDMI nutzen bzw. im Monitor-Menü den hohen Modus (Overclock/FreeSync) aktivieren.') }
+        )
+        'Arbeitsspeicher'                            = @(
+            @{ Match = 'Intel-Spezifikation|JEDEC'; Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Auf dem RAM-Aufkleber bzw. über die Modellnummer (Anhang „RAM-Module“) nachsehen, welchen Takt das Kit kann.', 'Im BIOS das XMP-/EXPO-Profil aktivieren (auch „Extreme Memory Profile“ oder „DOCP“).', 'Startet der PC damit nicht, setzt das BIOS nach einigen Versuchen meist selbst zurück; dann das Profil mit niedrigerem Takt wählen.') }
+        )
+        'Grafikkarte und Treiber'                    = @(
+            @{ Match = 'Tage\)'; Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('NVIDIA App, AMD Adrenalin bzw. Intel-Treiberassistent öffnen und nach Updates suchen.') }
+        )
+        'Resizable BAR und PCIe-Anbindung'           = @(
+            @{ Match = 'x(1|2|4|8)\b'; Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Im Handbuch des Mainboards nachsehen, welcher Steckplatz mit x16 angebunden ist (meist der oberste) und ob M.2-Steckplätze Lanes davon abzweigen.', 'PC ausschalten, Netzstecker ziehen und die Grafikkarte ggf. umstecken.') }
+            @{ Match = 'Resizable BAR aus'; Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Bei Übertaktung zuerst das OC-Profil im BIOS speichern.', 'Mit dem Befehl unten direkt ins BIOS neu starten.', '„Above 4G Decoding“ einschalten; danach erscheint „Re-Size BAR Support“: auf Auto bzw. Enabled stellen (Gigabyte: Settings > IO Ports; ASUS und MSI: Advanced > PCI Subsystem).', '„CSM Support“ muss aus sein (bei aktivem Secure Boot ist er das). Mit F10 speichern.', 'Fehlt die Option, ein BIOS-Update suchen. Danach mit pc-check prüfen.'); Befehl = 'shutdown /r /fw /t 0' }
+        )
+        'Spielebibliotheken'                         = @(
+            @{ Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Nicht mehr gespielte Spiele deinstallieren (Steam: Rechtsklick auf das Spiel > Verwalten > Deinstallieren).', 'Große, oft gespielte Spiele auf das schnellste Laufwerk mit Platz verschieben: Steam > Rechtsklick > Eigenschaften > Installierte Dateien > „Installationsordner verschieben“.', 'Fehlt dort noch eine Steam-Bibliothek: Steam > Einstellungen > Speicher > „Laufwerk hinzufügen“.', 'Epic: Bibliothek > … > Verwalten > Verschieben. Xbox-App: Spiel > … > Verwalten > Dateien > Verschieben.') }
+        )
+        'Netzwerkkarte: Energiesparfunktionen'       = @(
+            @{ Profile = @('Gaming'); Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Geräte-Manager > Netzwerkadapter > die LAN-Karte doppelklicken > Reiter „Erweitert“.', 'Die im Befund genannten Einträge auf Off bzw. Disabled stellen. Die Verbindung ist dabei ein paar Sekunden weg.', 'Oder die Befehle unten in einer Administrator-PowerShell ausführen.') }
+        )
+        'Spielmodus'                                 = @(
+            @{ Profile = @('Gaming'); Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > Spielen > Spielmodus: einschalten.') }
+        )
+        'Hardwarebeschleunigte GPU-Planung (HAGS)'   = @(
+            @{ Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > System > Anzeige > Grafik > „Standardgrafikeinstellungen ändern“.', '„Hardwarebeschleunigte GPU-Planung“ einschalten und neu starten.') }
+        )
+        'Optimierungen für Spiele im Fenstermodus'   = @(
+            @{ Profile = @('Gaming'); Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > System > Anzeige > Grafik > „Erweiterte Grafikeinstellungen“.', '„Optimierungen für Spiele im Fenstermodus“ einschalten.') }
+        )
+        'Mausbeschleunigung'                         = @(
+            @{ Profile = @('Gaming'); Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Einstellungen > Bluetooth und Geräte > Maus > „Weitere Mauseinstellungen“.', 'Reiter „Zeigeroptionen“: Haken bei „Zeigerpräzision verbessern“ entfernen, OK.') }
+        )
+        'Overlays und Hintergrund-Tools'             = @(
+            @{ NurAnleitung = $true; Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Bei jedem Tool im Befund prüfen, ob du das Overlay nutzt: Discord > Einstellungen > Spiel-Overlay; NVIDIA App > Einstellungen > Overlay; Steam > Einstellungen > Im Spiel.', 'Ungenutzte Tools im Task-Manager (Strg+Umschalt+Esc) > „Autostart-Apps“ deaktivieren.') }
+        )
+        'RAM-Auslastung'                             = @(
+            @{ Nutzen = 'mittel'; Aufwand = 'hoch'; Risiko = 'gering'; Schritte = @('Zuerst die großen Verbraucher prüfen (Anhang „Top-Prozesse nach Arbeitsspeicher“), z. B. viele Browser-Tabs.', 'Zum Aufrüsten: Modell der vorhandenen Module steht im Anhang „RAM-Module“. Am besten ein Kit mit gleichem Takt und gleicher Größe je Modul kaufen.') }
+        )
+        'Autostart-Umfang'                           = @(
+            @{ Nutzen = 'mittel'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Strg+Umschalt+Esc > Task-Manager > „Autostart-Apps“.', 'Alles deaktivieren, was nicht sofort nach der Anmeldung laufen muss; Launcher und Chat-Programme lassen sich bei Bedarf von Hand starten.') }
+        )
+        'Laufzeit seit Neustart'                     = @(
+            @{ Nutzen = 'gering'; Aufwand = 'gering'; Risiko = 'gering'; Schritte = @('Start > Ein/Aus > „Neu starten“ (nicht „Herunterfahren“, solange der Schnellstart an ist).') }
+        )
+        'Netzwerkverbindung'                         = @(
+            @{ Match = 'Nur WLAN'; Profile = @('Gaming'); Nutzen = 'mittel'; Aufwand = 'mittel'; Risiko = 'gering'; Schritte = @('Ein LAN-Kabel (Cat 5e oder besser) zum Router legen.', 'Geht das nicht: Powerline- oder Mesh-Adapter mit LAN-Anschluss.') }
+        )
     }
 }

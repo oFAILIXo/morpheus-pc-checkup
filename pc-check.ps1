@@ -37,6 +37,10 @@
 .PARAMETER NoOpen
     HTML-Bericht am Ende nicht automatisch im Browser öffnen.
 
+.PARAMETER Profil
+    Nutzungsprofil, nach dem Empfehlungen gewichtet werden: Gaming, Office oder Laptop.
+    Standard Auto: Laptop, wenn ein Akku vorhanden ist; Gaming bei eigener Grafikkarte; sonst Office.
+
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pc-check.ps1
 #>
@@ -49,10 +53,14 @@ param(
     [switch]$SkipWinget,
     [switch]$NoUpdatePrompt,
     [string]$CompareWith,
-    [switch]$NoOpen
+    [switch]$NoOpen,
+    [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto'
 )
 
-$ScriptVersion = '1.4.0'
+$ScriptVersion = '2.1.0'
+# Anzeigename (Dateien und Repos heißen weiter pc-check)
+$ProductName = 'Morpheus'
+$ProductTagline = 'PC Check-up'
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if (-not $OutputDir) { $OutputDir = Join-Path $PSScriptRoot 'reports' }
@@ -60,6 +68,7 @@ if (-not $AcceptedFile) { $AcceptedFile = Join-Path $PSScriptRoot 'accepted.psd1
 
 $script:Findings = New-Object System.Collections.Generic.List[object]
 $script:Tables = [ordered]@{}
+$script:TableChecks = [ordered]@{}   # Tabellentitel -> Prüfung, aus der die Tabelle stammt (für Links in der GUI)
 $script:Area = ''
 $script:Category = ''
 $script:CheckName = ''
@@ -70,6 +79,8 @@ $startedAt = Get-Date
 
 #region Hilfsfunktionen
 
+# Status: CRIT/WARN = Handlungsbedarf, TIPP = lohnende Optimierung (wird aus INFO abgeleitet, siehe Tipps in pc-check.hilfe.psd1),
+# INFO = reine Information, ACK = akzeptiert, OK, SKIP = nicht geprüft.
 function Add-Finding {
     param(
         [Parameter(Mandatory, Position = 0)][ValidateSet('OK', 'INFO', 'WARN', 'CRIT', 'SKIP')][string]$Status,
@@ -86,12 +97,18 @@ function Add-Finding {
             Recommendation = $Recommendation
             OriginalStatus = ''
             Note           = ''
+            Effort         = ''
+            Benefit        = ''
+            Risk           = ''
+            Steps          = @()
+            Command        = ''
         })
 }
 
 function Add-Table {
     param([Parameter(Mandatory)][string]$Title, [object[]]$Rows)
     $script:Tables[$Title] = @($Rows | Where-Object { $null -ne $_ })
+    if ($script:CheckName) { $script:TableChecks[$Title] = $script:CheckName }
 }
 
 function Start-Section {
@@ -305,6 +322,44 @@ function Get-ExclusionRisk {
     $null
 }
 
+# Laufwerkstyp zu einem Laufwerksbuchstaben, z. B. 'NVMe-SSD', 'SATA-SSD', 'HDD'
+function Get-DriveKind {
+    param([string]$Letter)
+    $Letter = $Letter.TrimEnd(':', '\')
+    if (-not $script:DriveKindCache) { $script:DriveKindCache = @{} }
+    if ($script:DriveKindCache.ContainsKey($Letter)) { return $script:DriveKindCache[$Letter] }
+    $kind = 'unbekannt'
+    try {
+        $num = (Get-Partition -DriveLetter $Letter -ErrorAction Stop | Get-Disk -ErrorAction Stop).Number
+        $pd = Get-PhysicalDisk | Where-Object { [string]$_.DeviceId -eq [string]$num } | Select-Object -First 1
+        if ($pd) {
+            $media = [string]$pd.MediaType
+            $kind = if ($media -eq 'HDD') { 'HDD' } elseif ([string]$pd.BusType -eq 'NVMe') { 'NVMe-SSD' } elseif ($media -eq 'SSD') { "$($pd.BusType)-SSD" } else { "$($pd.BusType)" }
+        }
+    }
+    catch {}
+    $script:DriveKindCache[$Letter] = $kind
+    $kind
+}
+
+# Bekannt harmlose Einträge in Ereignisprotokollen: Muster -> kurze Begründung für den Bericht.
+$script:KnownHarmless = @{
+    # Dienstfehler (Name oder Anzeigename des Dienstes)
+    ServiceErrors   = [ordered]@{
+        '^dam$'                    = 'Desktop Activity Moderator: nur für Laptops mit Modern Standby, auf Desktops normal'
+        '^Steam Client Service$'   = 'startet nur bei Bedarf und meldet sonst einen Fehler'
+        '^(edgeupdate|MicrosoftEdgeElevationService|GoogleUpdater)' = 'Update-Dienst, startet nur bei Bedarf'
+        '^(gupdate|gupdatem)$'     = 'Update-Dienst, startet nur bei Bedarf'
+    }
+    # Code Integrity: DLLs von Overlays/Aufnahme-Tools, die Windows aus geschützten Systemprozessen fernhält
+    CodeIntegrity   = 'nvspcap64\.dll|NvCamera|nvd3dumx|RTSSHooks|GameOverlayRenderer|DiscordHook|graphics-hook|obs-vulkan|igdumd|amdxx|atiu'
+    # PowerShell-Skriptblöcke: Aufruf von pc-check selbst und automatisch erzeugte Modul-Exporte
+    # pc-check selbst (auch per Umgebungsvariable gestartet) und der PowerShell-Wrapper von Claude Code
+    PowerShell      = 'pc-check\.ps1|\$env:PCCHECK\b|^\s*-Function .* -Alias|^\s*function Write-Result\(\$Json\) \{ \[System\.Convert\]::ToBase64String|^\s*try \{ \$PSDefaultParameterValues\[''Out-File:Encoding''\] = ''utf8'' \} catch \{\}'
+}
+# Browser-Berechtigung für alle Webseiten (nicht: *://*.reddit.com/*)
+$script:AllSitesPattern = '^<all_urls>$|^(\*|https?|wss?)://\*/'
+
 $displayCode = @'
 using System;
 using System.Collections.Generic;
@@ -408,7 +463,7 @@ public static class PcCheckDisplay
 
 #endregion
 
-Write-Host "pc-check $ScriptVersion  |  Admin: $($script:IsAdmin)  |  Ereignisse: letzte $EventDays Tage" -ForegroundColor Green
+Write-Host "$ProductName - $ProductTagline $ScriptVersion  |  Admin: $($script:IsAdmin)  |  Ereignisse: letzte $EventDays Tage" -ForegroundColor Green
 if (-not $script:IsAdmin) { Write-Warning 'Ohne Adminrechte fehlen einige Prüfungen. Für den vollen Umfang als Administrator starten.' }
 $script:PackagedFrom = Get-PackagedAncestor
 if ($script:PackagedFrom) { Write-Warning "Gestartet aus der Store-App $($script:PackagedFrom): Ergebnisse unter HKCU können von der echten Registry abweichen. Für verlässliche Ergebnisse aus einer normalen Konsole starten." }
@@ -417,6 +472,15 @@ $script:OS = Get-CimInstance Win32_OperatingSystem
 $script:CS = Get-CimInstance Win32_ComputerSystem
 $script:CV = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $script:Services = @(Get-CimInstance Win32_Service)
+$script:Profile = $Profil
+$script:ProfileAuto = $false
+if ($Profil -eq 'Auto') {
+    $script:ProfileAuto = $true
+    $hasBattery = [bool](Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)
+    $hasDgpu = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'NVIDIA|AMD|Radeon|Arc' })
+    $script:Profile = if ($hasBattery) { 'Laptop' } elseif ($hasDgpu) { 'Gaming' } else { 'Office' }
+}
+Write-Host "Profil: $($script:Profile)$(if ($script:ProfileAuto) { ' (automatisch erkannt, ändern mit -Profil)' })" -ForegroundColor Green
 $script:Features = @()
 $script:DeviceGuard = $null
 $script:SecureBoot = $false
@@ -1250,11 +1314,14 @@ Invoke-Check 'Remotedesktop' {
     $deny = Get-RegValue $ts 'fDenyTSConnections'
     $nla = Get-RegValue "$ts\WinStations\RDP-Tcp" 'UserAuthentication'
     $port = Get-RegValue "$ts\WinStations\RDP-Tcp" 'PortNumber'
-    $ra = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowToGetHelp'
+    # Eine Gruppenrichtlinie hat Vorrang vor der Einstellung in den Systemeigenschaften
+    $ra = Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' 'fAllowToGetHelp'
+    if ($null -eq $ra) { $ra = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowToGetHelp' }
     if ($deny -eq 0 -and $nla -ne 1) { Add-Finding CRIT "RDP an (Port $port) ohne Authentifizierung auf Netzwerkebene" 'Remotedesktop ausschalten (Einstellungen > System > Remotedesktop).' }
     elseif ($deny -eq 0) { Add-Finding WARN "RDP an (Port $port)" 'Wenn du Remotedesktop nicht bewusst nutzt: Einstellungen > System > Remotedesktop ausschalten. Sonst in accepted.psd1 eintragen.' }
     else { Add-Finding OK 'Aus' }
     if ($ra -eq 1) { Add-Finding INFO 'Remoteunterstützung erlaubt' 'Wenn nicht genutzt: Systemeigenschaften > Remote > Remoteunterstützungsverbindungen nicht zulassen.' -Check 'Remoteunterstützung' }
+    else { Add-Finding OK 'Nicht erlaubt' -Check 'Remoteunterstützung' }
 }
 
 Invoke-Check 'Fernzugriffsdienste und -programme' {
@@ -1373,6 +1440,8 @@ Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
     $found = @($found) + $transient
     $third = foreach ($d in ($drv | Where-Object State -EQ 'Running')) {
         $p = Get-ExePath $d.PathName
+        # Ohne ImagePath lädt Windows den Treiber aus dem Standardpfad (z. B. UCPD, UnionFS)
+        if (-not $p) { $p = Join-Path $env:SystemRoot "System32\drivers\$($d.Name).sys" }
         $sig = Get-FileSignatureInfo $p
         if ($sig.Signer -like 'Microsoft*' -and $sig.Status -eq 'Valid') { continue }
         [pscustomobject][ordered]@{ Name = $d.Name; Anzeige = $d.DisplayName; Signatur = $sig.Status; Signierer = $sig.Signer; Hersteller = $sig.Company; Pfad = $p }
@@ -1382,11 +1451,14 @@ Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
     Add-Table 'Treiber: geladene Drittanbieter-Treiber' $third
     $unsigned = @($third | Where-Object { $_.Signatur -notin 'Valid', 'Datei fehlt' })
     $loaded = @($found | Where-Object Status -EQ 'geladen')
-    $rest = @($found | Where-Object Status -NE 'geladen' | ForEach-Object { "$($_.Treiber) ($($_.Status))" })
+    $rest = @($found | Where-Object Status -EQ 'vorhanden' | ForEach-Object { "$($_.Treiber) ($($_.Status))" })
+    # Nur kurz installierte und wieder gelöschte Treiber sind kein Befund mehr, nur eine Spur im Protokoll
+    $gone = @($found | Where-Object Status -EQ 'entfernt' | ForEach-Object Treiber)
+    $goneText = if ($gone) { "; früher installiert, inzwischen entfernt: $($gone -join ', ')" } else { '' }
     if ($loaded) { Add-Finding WARN ('Geladen: ' + (($loaded | ForEach-Object { "$($_.Treiber) $($_.Version) ($($_.Dienst))" }) -join ', ') + $(if ($rest) { '; außerdem: ' + ($rest -join ', ') } else { '' })) 'Treiber dieser Art (direkter Hardwarezugriff) wurden schon oft von Schadsoftware und Cheats missbraucht. Zugehöriges Tool (RGB/OC/Monitoring) aktuell halten oder deinstallieren; Speicherintegrität blockiert bekannt unsichere Versionen.' }
-    elseif ($rest) { Add-Finding INFO ('Nicht geladen: ' + ($rest -join ', ')) 'Reste alter Tools; zugehöriges Programm deinstallieren.' }
-    elseif ($unsigned) { Add-Finding WARN ('Ohne gültige Signatur geladen: ' + (($unsigned | ForEach-Object Name) -join ', ')) 'Herkunft prüfen.' }
-    else { Add-Finding OK "Keine bekannt anfälligen Treiber; $($third.Count) Drittanbieter-Treiber geladen (Anhang)" }
+    elseif ($rest) { Add-Finding INFO ('Nicht geladen: ' + ($rest -join ', ') + $goneText) 'Reste alter Tools; zugehöriges Programm deinstallieren.' }
+    elseif ($unsigned) { Add-Finding WARN ('Ohne gültige Signatur geladen: ' + (($unsigned | ForEach-Object Name) -join ', ') + $goneText) 'Herkunft prüfen.' }
+    else { Add-Finding OK "Keine bekannt anfälligen Treiber; $($third.Count) Drittanbieter-Treiber geladen (Anhang)$goneText" }
 }
 
 #endregion
@@ -1556,12 +1628,15 @@ Invoke-Check 'Browser-Erweiterungen' {
                 if (-not (Test-Path -LiteralPath $mf)) { continue }
                 try { $m = Get-Content -LiteralPath $mf -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
                 $perms = @(@($m.permissions) + @($m.host_permissions) | Where-Object { $_ -is [string] })
+                # Vollzugriff aus allen Berechtigungen bestimmen (Manifest V3: host_permissions, dazu Content-Scripts), nicht aus der gekürzten Anzeige
+                $hosts = @($perms) + @($m.content_scripts | ForEach-Object { $_.matches } | Where-Object { $_ -is [string] })
                 $rows.Add([pscustomobject][ordered]@{
                         Browser        = $b
                         Profil         = $prof.Name
                         Name           = Resolve-ExtensionName $m $verDir.FullName
                         Version        = $m.version
                         ID             = $ext.Name
+                        Vollzugriff    = [bool]($hosts | Where-Object { $_ -match $script:AllSitesPattern })
                         Berechtigungen = (($perms | Select-Object -First 8) -join ', ')
                     })
             }
@@ -1573,12 +1648,14 @@ Invoke-Check 'Browser-Erweiterungen' {
         if (-not (Test-Path -LiteralPath $f)) { continue }
         try { $j = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
         foreach ($a in @($j.addons | Where-Object { $_.location -eq 'app-profile' })) {
-            $rows.Add([pscustomobject][ordered]@{ Browser = 'Firefox'; Profil = $prof.Name; Name = $a.defaultLocale.name; Version = $a.version; ID = $a.id; Berechtigungen = ((@($a.userPermissions.permissions) + @($a.userPermissions.origins) | Select-Object -First 8) -join ', ') })
+            $origins = @($a.userPermissions.origins | Where-Object { $_ -is [string] })
+            $rows.Add([pscustomobject][ordered]@{ Browser = 'Firefox'; Profil = $prof.Name; Name = $a.defaultLocale.name; Version = $a.version; ID = $a.id; Vollzugriff = [bool]($origins | Where-Object { $_ -match $script:AllSitesPattern }); Berechtigungen = ((@($a.userPermissions.permissions) + $origins | Select-Object -First 8) -join ', ') })
         }
     }
     Add-Table 'Browser-Erweiterungen' $rows
-    $broad = @($rows | Where-Object { $_.Berechtigungen -match '<all_urls>|\*://\*/\*|https?://\*/\*' })
-    if ($rows.Count) { Add-Finding INFO "$($rows.Count) Erweiterungen, davon $($broad.Count) mit Zugriff auf alle Webseiten" 'Liste im Anhang durchgehen und alles entfernen, was du nicht kennst oder nicht nutzt. Erweiterungen mit Vollzugriff können Passwörter und Sitzungen mitlesen.' }
+    $broad = @($rows | Where-Object Vollzugriff)
+    $broadNames = @($broad | ForEach-Object Name | Select-Object -Unique)
+    if ($rows.Count) { Add-Finding INFO ("$($rows.Count) Erweiterungen, davon $($broad.Count) mit Zugriff auf alle Webseiten" + $(if ($broadNames) { ': ' + ($broadNames -join ', ') } else { '' })) 'Liste im Anhang durchgehen und alles entfernen, was du nicht kennst oder nicht nutzt. Erweiterungen mit Vollzugriff können Passwörter und Sitzungen mitlesen; bei Werbeblockern und Passwortmanagern ist das technisch nötig.' }
     else { Add-Finding OK 'Keine Erweiterungen gefunden' }
 }
 
@@ -1728,10 +1805,14 @@ Invoke-Check 'Fehlgeschlagene Anmeldungen' -NeedsAdmin {
     $rows = @($rows)
     Add-Table 'Fehlgeschlagene Anmeldungen' @($rows | Select-Object -First 100)
     $ext = @($rows | Where-Object { $_.Quelle -notmatch $script:LocalAddressPattern })
-    $top = ($rows | Group-Object Konto | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', '
+    # Anmeldetyp 3 = Netzwerk (Freigaben), 10 = Remotedesktop; 2/7/11 = Eingabe direkt am PC bzw. in einer App
+    $net = @($rows | Where-Object { $_.Anmeldetyp -in '3', '10' })
+    $local = @($rows | Where-Object { $_.Anmeldetyp -notin '3', '10' })
+    $byProc = { param($list) ($list | Group-Object { if ($_.Prozess -and $_.Prozess -ne '-') { [IO.Path]::GetFileName($_.Prozess) } else { "Konto $($_.Konto)" } } | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', ' }
     if ($ext) { Add-Finding CRIT ("$($ext.Count) Fehlversuche von externen Adressen: " + (($ext | ForEach-Object Quelle | Select-Object -Unique -First 5) -join ', ')) 'Prüfen, welcher Dienst aus dem Internet erreichbar ist (RDP/SMB/SSH) und Router-Portweiterleitungen schließen.' }
-    elseif ($rows.Count -gt 20) { Add-Finding WARN "$($rows.Count) Fehlversuche in $EventDays Tagen: $top" 'Ursache prüfen (gespeichertes altes Kennwort in einem Programm oder Angriff im lokalen Netz).' }
-    elseif ($rows.Count) { Add-Finding INFO "$($rows.Count) Fehlversuche: $top" }
+    elseif ($net.Count -gt 20) { Add-Finding WARN "$($net.Count) Fehlversuche über das Netzwerk in $EventDays Tagen: $(& $byProc $net)" 'Ursache prüfen (gespeichertes altes Kennwort auf einem anderen Gerät, z. B. NAS-Verbindung, oder Angriff im lokalen Netz).' }
+    elseif ($net) { Add-Finding INFO ("$($net.Count) Fehlversuche über das Netzwerk: $(& $byProc $net)" + $(if ($local) { "; außerdem $($local.Count) lokale Fehleingaben" } else { '' })) }
+    elseif ($local) { Add-Finding OK "Keine übers Netzwerk; $($local.Count) lokale Fehleingaben (Kennwort/PIN am PC oder in einer App: $(& $byProc $local))" }
     else { Add-Finding OK "Keine in $EventDays Tagen" }
 }
 
@@ -1768,8 +1849,13 @@ Invoke-Check 'Konto- und Gruppenänderungen' -NeedsAdmin {
     $rows = @($rows)
     Add-Table 'Konto- und Gruppenänderungen' $rows
     $groupAdds = @($rows | Where-Object { $_.Ereignis -like 'Zu *' })
+    # "Konto geändert" durch das Computerkonto (Name endet auf $) macht Windows selbst, z. B. beim Abgleich mit dem Microsoft-Konto
+    $routine = @($rows | Where-Object { $_.Ereignis -eq 'Konto geändert' -and $_.Durch -match '\$$' })
+    $other = @($rows | Where-Object { $_ -notin $routine })
+    $otherText = ($other | Group-Object Ereignis | ForEach-Object { "$($_.Count)x $($_.Name)" }) -join ', '
     if ($groupAdds) { Add-Finding WARN ('Gruppenmitgliedschaften geändert: ' + (($groupAdds | ForEach-Object { "$($_.Mitglied) -> $($_.Ziel)" }) -join '; ')) 'Prüfen, ob du das selbst warst (z. B. durch eine Software-Installation).' }
-    elseif ($rows) { Add-Finding INFO "$($rows.Count) Kontoänderungen (Anhang)" }
+    elseif ($other) { Add-Finding INFO ("$otherText (Anhang)" + $(if ($routine) { "; dazu $($routine.Count) Routine-Änderungen durch Windows" } else { '' })) 'Prüfen, ob du die Konten selbst angelegt, gelöscht oder geändert hast (auch Programme legen eigene Konten an).' }
+    elseif ($routine) { Add-Finding OK "Nur $($routine.Count) Routine-Änderungen durch Windows selbst" }
     else { Add-Finding OK "Keine in $EventDays Tagen" }
 }
 
@@ -1781,17 +1867,19 @@ Invoke-Check 'Gelöschte Ereignisprotokolle' {
 }
 
 Invoke-Check 'Neu installierte Dienste' {
-    $ev = @(Get-RecentEvents @{ LogName = 'System'; Id = 7045; ProviderName = 'Service Control Manager' } -Max 100)
-    $rows = foreach ($e in $ev) {
-        $d = Get-EventData $e
-        $sig = Get-FileSignatureInfo (Get-ExePath $d['ImagePath'])
-        [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Dienst = $d['ServiceName']; Signatur = $sig.Status; Signierer = $sig.Signer; Datei = $d['ImagePath'] }
-    }
-    $rows = @($rows)
+    $ev = @(Get-RecentEvents @{ LogName = 'System'; Id = 7045; ProviderName = 'Service Control Manager' } -Max 500)
+    # Je Dienst eine Zeile: Manche Programme (z. B. NVIDIA FrameView) installieren ihren Treiber bei jedem Start neu
+    $rows = @($ev | Group-Object { (Get-EventData $_)['ServiceName'] } | ForEach-Object {
+            $d = Get-EventData $_.Group[0]
+            $sig = Get-FileSignatureInfo (Get-ExePath $d['ImagePath'])
+            [pscustomobject][ordered]@{ Zuletzt = Format-Date $_.Group[0].TimeCreated; Dienst = $_.Name; Anzahl = $_.Count; Signatur = $sig.Status; Signierer = $sig.Signer; Datei = $d['ImagePath'] }
+        } | Sort-Object Zuletzt -Descending)
     Add-Table 'Neu installierte Dienste' $rows
     $bad = @($rows | Where-Object { $_.Signatur -notin 'Valid', 'Datei fehlt' })
-    if ($bad) { Add-Finding WARN ('Neue Dienste ohne gültige Signatur: ' + (($bad | ForEach-Object Dienst) -join ', ')) 'Herkunft prüfen.' }
-    elseif ($rows) { Add-Finding INFO ("$($rows.Count) neue Dienste: " + (($rows | ForEach-Object Dienst | Select-Object -Unique -First 8) -join ', ')) }
+    $signers = ($rows | Where-Object Signierer | Group-Object Signierer | Sort-Object Count -Descending | Select-Object -First 4 | ForEach-Object Name) -join ', '
+    $value = "$($rows.Count) Dienste ($($ev.Count) Installationen), alle gültig signiert" + $(if ($signers) { " ($signers …)" } else { '' })
+    if ($bad) { Add-Finding WARN ('Neue Dienste ohne gültige Signatur: ' + (($bad | ForEach-Object Dienst) -join ', ')) 'Herkunft prüfen (Pfad im Anhang).' }
+    elseif ($rows) { Add-Finding OK $value }
     else { Add-Finding OK "Keine in $EventDays Tagen" }
 }
 
@@ -1823,6 +1911,7 @@ Invoke-Check 'Auffällige PowerShell-Skripte' {
         $text = ([string]$d['ScriptBlockText']) -replace '\s+', ' '
         # Automatisch generierte Wrapper der CIM-Module (NetSecurity, ScheduledTasks …) sind harmlos.
         if ($text -match '__cmdletization|Cmdletization\.MethodParameter|\$script:MyModule') { continue }
+        if ($text -match $script:KnownHarmless.PowerShell) { continue }
         [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Pfad = $d['Path']; Auszug = $text.Substring(0, [Math]::Min(200, $text.Length)) }
     }
     $rows = @($rows)
@@ -1839,16 +1928,25 @@ Invoke-Check 'Neue Firewall-Regeln' {
     }
     $rows = @($rows)
     Add-Table 'Neue Firewall-Regeln' @($rows | Select-Object -First 100)
-    $inbound = @($rows | Where-Object Richtung -EQ 'Eingehend')
-    if ($inbound) { Add-Finding INFO "$($rows.Count) neue Regeln, davon $($inbound.Count) eingehend" 'Liste im Anhang prüfen.' }
+    # Regeln, die der Windows-Firewalldienst (svchost) selbst anlegt, stammen von App-Installationen und -Updates aus dem Store bzw. von Windows
+    $byWindows = @($rows | Where-Object { [string]$_.Durch -match '\\(svchost|MsMpEng)\.exe$' -or -not $_.Durch })
+    $inbound = @($rows | Where-Object { $_.Richtung -eq 'Eingehend' -and $_ -notin $byWindows })
+    $tools = ($inbound | ForEach-Object { [IO.Path]::GetFileName([string]$_.Durch) } | Select-Object -Unique -First 5) -join ', '
+    if ($inbound) { Add-Finding INFO "$($inbound.Count) neue eingehende Regeln durch Programme ($tools); dazu $($byWindows.Count) von Windows selbst" 'Prüfen, ob du die Programme kennst und die Regeln brauchst (Liste im Anhang).' }
+    elseif ($rows) { Add-Finding OK "$($rows.Count) neue Regeln, alle von Windows selbst (App-Installationen und -Updates)" }
     else { Add-Finding OK "Keine neuen eingehenden Regeln in $EventDays Tagen" }
 }
 
 Invoke-Check 'Blockierte Treiber/Dateien (Code Integrity)' {
     $ev = @(Get-RecentEvents @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; Id = 3033, 3077 } -Max 300)
-    $rows = @($ev | Group-Object { (([string]$_.Message) -split "`n")[0].Trim() } | Sort-Object Count -Descending | Select-Object -First 20 | ForEach-Object { [pscustomobject]@{ Anzahl = $_.Count; Meldung = $_.Name } })
+    $rows = @($ev | Group-Object { (([string]$_.Message) -split "`n")[0].Trim() } | Sort-Object Count -Descending | Select-Object -First 20 | ForEach-Object {
+            [pscustomobject][ordered]@{ Anzahl = $_.Count; Einordnung = $(if ($_.Name -match $script:KnownHarmless.CodeIntegrity) { 'bekannt harmlos (Overlay-/Aufnahme-DLL)' } else { '' }); Meldung = $_.Name }
+        })
     Add-Table 'Code Integrity: blockierte Dateien' $rows
-    if ($ev) { Add-Finding INFO "$($ev.Count) Blockierungen" 'Meist harmlos (z. B. nicht signierte DLLs in Spielen); bei Treibern prüfen, welches Tool betroffen ist.' }
+    $unknown = @($rows | Where-Object { -not $_.Einordnung })
+    $unknownCount = ($unknown | Measure-Object Anzahl -Sum).Sum
+    if ($unknown) { Add-Finding INFO "$unknownCount Blockierungen ungeklärter Herkunft (insgesamt $($ev.Count))" 'Meist harmlos (z. B. nicht signierte DLLs in Spielen); bei Treibern prüfen, welches Tool betroffen ist (Anhang).' }
+    elseif ($ev) { Add-Finding OK "$($ev.Count) Blockierungen, alle bekannt harmlos (Overlay-/Aufnahme-DLLs, die Windows aus Systemprozessen fernhält)" }
     else { Add-Finding OK "Keine in $EventDays Tagen" }
 }
 
@@ -2059,7 +2157,12 @@ Invoke-Check 'Dev Drive (Entwicklung)' {
         $detail = foreach ($v in $refs) { "$($v.DriveLetter): " + (((Invoke-Native fsutil.exe @('devdrv', 'query', "$($v.DriveLetter):")) | Where-Object { $_.Trim() } | Select-Object -First 1)) }
         Add-Finding OK ('ReFS-Volumes: ' + ($detail -join '; '))
     }
-    else { Add-Finding INFO 'Kein Dev Drive vorhanden' 'Für Repos, node_modules und Build-Ordner ein Dev Drive anlegen (Einstellungen > System > Speicher > Datenträger und Volumes). ReFS plus Defender-Leistungsmodus beschleunigt git, npm und Builds spürbar, ohne den Virenschutz abzuschalten.' }
+    else {
+        # Nur relevant, wenn auf dem PC entwickelt wird
+        $dev = @('git.exe', 'node.exe', 'python.exe', 'dotnet.exe', 'cargo.exe', 'go.exe', 'java.exe' | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | ForEach-Object { $_ -replace '\.exe$' })
+        if ($dev) { Add-Finding INFO "Kein Dev Drive vorhanden (Entwicklungswerkzeuge gefunden: $($dev -join ', '))" 'Für Repos, node_modules und Build-Ordner ein Dev Drive anlegen (Einstellungen > System > Speicher > Datenträger und Volumes). ReFS plus Defender-Leistungsmodus beschleunigt git, npm und Builds spürbar, ohne den Virenschutz abzuschalten.' }
+        else { Add-Finding OK 'Kein Dev Drive, keine Entwicklungswerkzeuge gefunden (nicht nötig)' }
+    }
 }
 
 #endregion
@@ -2074,9 +2177,15 @@ Invoke-Check 'Energieplan' {
     $name = if ($act -match '\(([^)]+)\)\s*\*?\s*$') { $Matches[1] } else { $guid }
     $plans = @((Invoke-Native powercfg.exe @('/list')) | Where-Object { $_ -match '[0-9a-fA-F]{8}-' } | ForEach-Object { [pscustomobject]@{ Plan = $_.Trim() } })
     Add-Table 'Energiepläne' $plans
+    $highPerf = $guid -in '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', 'e9a42b02-d5df-448d-aa00-03f14749eb61' -or $name -match 'Ultimat|High performance|Höchstleistung'
+    if ($script:Profile -eq 'Laptop') {
+        if ($highPerf) { Add-Finding WARN "Aktiv: $name" 'Auf einem Laptop leert "Höchstleistung" den Akku schnell und heizt das Gerät auf. "Ausbalanciert" wählen; für Spiele am Netzteil reicht der Energiemodus "Beste Leistung" (Einstellungen > System > Netzbetrieb und Akku).' }
+        else { Add-Finding OK "Aktiv: $name" }
+        return
+    }
     switch ($guid) {
-        'a1841308-3541-4fab-bc81-f71556f20b4a' { Add-Finding WARN "Aktiv: $name" 'Für einen Gaming-Desktop "Ausbalanciert" oder "Höchstleistung" wählen.' }
-        '381b4222-f694-41f0-9685-ff5bb260df2e' { Add-Finding INFO "Aktiv: $name" '"Ausbalanciert" ist mit aktuellem Windows meist ausreichend; "Höchstleistung" bringt im Spiel nur minimale Vorteile und kostet im Leerlauf Strom.' }
+        'a1841308-3541-4fab-bc81-f71556f20b4a' { Add-Finding WARN "Aktiv: $name" 'Für einen Desktop "Ausbalanciert" oder einen Plan mit voller Leistung wählen; "Energiesparmodus" drosselt die CPU.' }
+        '381b4222-f694-41f0-9685-ff5bb260df2e' { Add-Finding OK "Aktiv: $name (mit aktuellem Windows meist ausreichend)" }
         default { Add-Finding OK "Aktiv: $name" }
     }
 }
@@ -2090,7 +2199,8 @@ Invoke-Check 'Prozessor-Energieeinstellungen' {
     $value = "Netzbetrieb: min. $($min.AC) %, max. $($max.AC) %" + $(if ($boost) { ", Turbo-Modus $($boostNames[[int]$boost.AC])" } else { '' }) + $(if ($park) { ", Kernparken min. $($park.AC) %" } else { '' })
     if ($max -and $max.AC -lt 100) { Add-Finding WARN $value 'Maximalen Prozessorzustand im Energieplan auf 100 % setzen, sonst bremst Windows die CPU.' }
     elseif ($boost -and $boost.AC -eq 0) { Add-Finding WARN $value 'Turbo ist im Energieplan abgeschaltet: Prozessor-Leistungssteigerungsmodus auf "Aktiviert" stellen.' }
-    elseif ($min -and $min.AC -ge 100) { Add-Finding INFO $value 'CPU taktet im Leerlauf nicht herunter: bringt im Spiel kaum etwas, erhöht aber Verbrauch und Temperatur.' }
+    elseif ($min -and $min.AC -ge 100 -and $script:Profile -eq 'Laptop') { Add-Finding WARN $value 'Mindestzustand 100 % hält die CPU dauerhaft auf vollem Takt: kostet Akku und Lautstärke. Einen Plan mit niedrigem Mindestzustand nutzen (z. B. "Ausbalanciert").' }
+    elseif ($min -and $min.AC -ge 100) { Add-Finding INFO $value 'CPU taktet im Leerlauf nicht herunter: bringt im Spiel kaum etwas, erhöht aber Verbrauch und Temperatur. Besser: ein Plan, der unter Last voll taktet und im Leerlauf heruntertaktet (Anleitung unter „So geht''s“).' }
     else { Add-Finding OK $value }
 }
 
@@ -2179,6 +2289,128 @@ Invoke-Check 'Virtualisierung und Spieleleistung' {
     Add-Finding INFO $value 'Speicherintegrität kostet auf CPUs mit MBEC (Intel ab 7. Generation, AMD ab Zen 2) typischerweise nur wenige Prozent FPS. Empfehlung: anlassen; nur für Benchmark-Vergleiche testweise aus. WSL2/Docker brauchen den Hypervisor ohnehin.'
 }
 
+Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
+    $smi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if (-not $smi) {
+        if (Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA') { Add-Finding SKIP 'nvidia-smi nicht gefunden (wird mit dem NVIDIA-Treiber installiert)' }
+        else { Add-Finding SKIP 'Nur bei NVIDIA-Grafikkarten auslesbar (AMD: Adrenalin > Leistung > Tuning > Smart Access Memory)' }
+        return
+    }
+    $q = (Invoke-Native $smi.Source @('-q', '-i', '0')) -join "`n"
+    $num = { param($pattern) if ($q -match $pattern) { [int]$Matches[1] } else { $null } }
+    $gpuName = if ($q -match 'Product Name\s+:\s+(.+)') { $Matches[1].Trim() } else { 'NVIDIA-GPU' }
+    $bar1 = & $num 'BAR1 Memory Usage\s+Total\s+:\s+(\d+)\s*MiB'
+    $vram = & $num 'FB Memory Usage\s+Total\s+:\s+(\d+)\s*MiB'
+    $genMax = & $num 'PCIe Generation\s+Max\s+:\s+(\d+)'
+    $devMax = & $num 'Device Max\s+:\s+(\d+)'
+    $hostMax = & $num 'Host Max\s+:\s+(\d+)'
+    $width = & $num 'Link Width\s+Max\s+:\s+(\d+)x'
+    if ($null -eq $bar1) { Add-Finding SKIP 'Ausgabe von nvidia-smi nicht auswertbar'; return }
+    Add-Table 'Grafikkarte: Anbindung (nvidia-smi)' @([pscustomobject][ordered]@{ GPU = $gpuName; GrafikspeicherMiB = $vram; BAR1MiB = $bar1; PCIeGenMax = $genMax; KarteKann = $devMax; MainboardKann = $hostMax; Lanes = $width })
+    # Ohne Resizable BAR ist das Fenster der CPU auf den Grafikspeicher 256 MiB groß, mit ReBAR so groß wie der Grafikspeicher
+    $rebar = $bar1 -gt 1024
+    $link = "PCIe $genMax.0 x$width" + $(if ($devMax -and $hostMax -and $devMax -gt $hostMax) { " (Karte kann $devMax.0, Mainboard $hostMax.0; kaum spürbar)" } else { '' })
+    $value = "${gpuName}: Resizable BAR $(if ($rebar) { 'an' } else { 'aus' }) (Fenster $bar1 MiB); $link"
+    if ($width -and $width -lt 16) { Add-Finding INFO $value "Die Karte läuft mit $width Lanes. Bei Karten, die nur x8 haben (z. B. RTX 4060/5060), ist das normal; sonst prüfen, ob sie im obersten x16-Steckplatz steckt und ob ein M.2-Laufwerk Lanes abzweigt (Handbuch)." }
+    elseif (-not $rebar) { Add-Finding INFO $value 'Resizable BAR im BIOS einschalten: "Above 4G Decoding" und "Re-Size BAR Support" (CSM muss aus sein). Bringt je nach Spiel 0–10 % mehr FPS; fehlt die Option, ein BIOS-Update prüfen.' }
+    else { Add-Finding OK $value }
+}
+
+Invoke-Check 'Spielebibliotheken' {
+    $libs = New-Object System.Collections.Generic.List[object]
+    $addLib = { param($Launcher, $Path, $Games, $Bytes) if ($Path -and (Test-Path -LiteralPath $Path)) { $libs.Add([pscustomobject]@{ Launcher = $Launcher; Pfad = $Path; Spiele = $Games; Bytes = $Bytes }) } }
+    # Steam: libraryfolders.vdf listet alle Bibliotheken, appmanifest_*.acf je Spiel mit Größe
+    $steam = Get-RegValue 'HKCU:\Software\Valve\Steam' 'SteamPath'
+    $vdf = if ($steam) { Join-Path ($steam -replace '/', '\') 'steamapps\libraryfolders.vdf' }
+    if ($vdf -and (Test-Path -LiteralPath $vdf)) {
+        foreach ($m in [regex]::Matches((Get-Content -LiteralPath $vdf -Raw), '"path"\s+"([^"]+)"')) {
+            $p = $m.Groups[1].Value -replace '\\\\', '\'
+            $acf = @(Get-ChildItem -LiteralPath (Join-Path $p 'steamapps') -Filter 'appmanifest_*.acf' -ErrorAction SilentlyContinue)
+            $bytes = 0
+            foreach ($a in $acf) { if ((Get-Content -LiteralPath $a.FullName -Raw) -match '"SizeOnDisk"\s+"(\d+)"') { $bytes += [double]$Matches[1] } }
+            & $addLib 'Steam' $p $acf.Count $bytes
+        }
+    }
+    # Epic: ein Manifest je Spiel
+    $epic = @(Get-ChildItem -LiteralPath "$env:ProgramData\Epic\EpicGamesLauncher\Data\Manifests" -Filter '*.item' -ErrorAction SilentlyContinue | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch {} } | Where-Object InstallLocation)
+    foreach ($g in ($epic | Group-Object { Split-Path -Parent $_.InstallLocation })) { & $addLib 'Epic' $g.Name $g.Count ([double]($g.Group | Measure-Object InstallSize -Sum).Sum) }
+    # GOG und Ubisoft: Installationsordner je Spiel in der Registry
+    $regGames = @(
+        @{ Launcher = 'GOG'; Key = 'HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games\*'; Value = 'path' }
+        @{ Launcher = 'Ubisoft'; Key = 'HKLM:\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs\*'; Value = 'InstallDir' }
+    )
+    foreach ($r in $regGames) {
+        $paths = @(Get-ItemProperty $r.Key -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.($r.Value) } | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') -replace '/', '\' })
+        foreach ($g in ($paths | Group-Object { Split-Path -Parent $_ })) { & $addLib $r.Launcher $g.Name $g.Count 0 }
+    }
+    # Xbox-App: Laufwerke mit Spielebibliothek haben eine Datei .GamingRoot im Stammverzeichnis
+    foreach ($v in @(Get-Volume | Where-Object { $_.DriveLetter -and [string]$_.DriveType -eq 'Fixed' })) {
+        $root = "$($v.DriveLetter):\"
+        if (Test-Path -LiteralPath (Join-Path $root '.GamingRoot')) {
+            $dir = Join-Path $root 'XboxGames'
+            & $addLib 'Xbox' $dir @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue | Where-Object Name -NE 'GameSave').Count 0
+        }
+    }
+    if (-not $libs.Count) { Add-Finding OK 'Keine Spielebibliotheken gefunden (Steam, Epic, GOG, Ubisoft, Xbox)'; return }
+
+    $vols = @{}
+    Get-Volume | Where-Object DriveLetter | ForEach-Object { $vols[[string]$_.DriveLetter] = $_ }
+    $rows = foreach ($l in $libs) {
+        $letter = $l.Pfad.Substring(0, 1).ToUpper()
+        $v = $vols[$letter]
+        [pscustomobject][ordered]@{
+            Launcher    = $l.Launcher
+            Pfad        = $l.Pfad
+            Laufwerk    = "${letter}:"
+            Typ         = Get-DriveKind $letter
+            Spiele      = $l.Spiele
+            Groesse     = $(if ($l.Bytes) { Format-Size $l.Bytes } else { '' })
+            FreiProzent = $(if ($v -and $v.Size) { [int](100 * $v.SizeRemaining / $v.Size) } else { $null })
+            Frei        = $(if ($v) { Format-Size $v.SizeRemaining } else { '' })
+        }
+    }
+    $rows = @($rows | Where-Object Spiele)
+    Add-Table 'Spielebibliotheken' $rows
+    if (-not $rows) { Add-Finding OK 'Spielebibliotheken gefunden, aber keine installierten Spiele'; return }
+    $drives = @($rows | Group-Object Laufwerk | ForEach-Object {
+            $f = $_.Group[0]
+            [pscustomobject]@{ Laufwerk = $_.Name; Typ = $f.Typ; FreiProzent = $f.FreiProzent; Frei = $f.Frei; Spiele = ($_.Group | Measure-Object Spiele -Sum).Sum; Quellen = (($_.Group | Group-Object Launcher | ForEach-Object { "$($_.Name) $(($_.Group | Measure-Object Spiele -Sum).Sum)" }) -join ', ') }
+        } | Sort-Object Spiele -Descending)
+    $summary = ($drives | ForEach-Object { "$($_.Laufwerk) $($_.Typ), $($_.FreiProzent) % frei: $($_.Quellen)" }) -join '; '
+    $hdd = @($drives | Where-Object Typ -EQ 'HDD')
+    $full = @($drives | Where-Object { $null -ne $_.FreiProzent -and $_.FreiProzent -lt 20 })
+    # Ziel für umzuziehende Spiele: SSD mit dem meisten freien Platz, NVMe bevorzugt
+    $target = @(Get-Volume | Where-Object { $_.DriveLetter -and [string]$_.DriveType -eq 'Fixed' -and $_.Size -gt 100GB } | ForEach-Object {
+            [pscustomobject]@{ Laufwerk = "$($_.DriveLetter):"; Typ = Get-DriveKind $_.DriveLetter; Frei = $_.SizeRemaining }
+        } | Where-Object { $_.Typ -like '*SSD' -and $_.Laufwerk -notin $full.Laufwerk } | Sort-Object { $_.Typ -ne 'NVMe-SSD' }, { - $_.Frei } | Select-Object -First 1)
+    $targetText = if ($target) { " Platz bietet z. B. $($target[0].Laufwerk) ($($target[0].Typ), $(Format-Size $target[0].Frei) frei)." } else { '' }
+    $move = ' Umziehen ohne Neuinstallation: Steam > Spiel > Eigenschaften > Installierte Dateien > Installationsordner verschieben; Epic/Xbox bieten "Verschieben" in der Bibliothek.'
+    if (@($full | Where-Object { $_.FreiProzent -lt 10 })) { Add-Finding WARN $summary ("Spielelaufwerk fast voll: SSDs werden beim Schreiben (Patches, Shader-Caches) deutlich langsamer, Updates können scheitern. Nicht mehr gespielte Spiele deinstallieren oder umziehen.$targetText$move") }
+    elseif ($hdd -or $full) {
+        $why = @()
+        if ($hdd) { $why += "Spiele auf Festplatte ($(($hdd | ForEach-Object Laufwerk) -join ', ')): längere Ladezeiten und Nachlade-Ruckler; aktuelle Spiele setzen eine SSD voraus." }
+        if ($full) { $why += "Wenig Platz auf $(($full | ForEach-Object { "$($_.Laufwerk) ($($_.FreiProzent) %)" }) -join ', '): unter 15–20 % frei werden SSDs beim Schreiben langsamer." }
+        Add-Finding INFO $summary (($why -join ' ') + $targetText + $move)
+    }
+    else { Add-Finding OK $summary }
+}
+
+Invoke-Check 'Netzwerkkarte: Energiesparfunktionen' {
+    $ad = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and [string]$_.PhysicalMediaType -match '802\.3' })
+    if (-not $ad) { Add-Finding OK 'Kein kabelgebundener Adapter aktiv'; return }
+    # Energiesparfunktionen, die beim Aufwachen der Verbindung kurze Latenzspitzen verursachen können
+    $saving = [ordered]@{ '*EEE' = 'Energy Efficient Ethernet'; 'EEELinkAdvertisement' = 'Energy Efficient Ethernet'; '*GreenEthernet' = 'Green Ethernet'; 'EnableGreenEthernet' = 'Green Ethernet'; 'AdvancedEEE' = 'Advanced EEE'; 'ULPMode' = 'Ultra Low Power Mode'; 'PowerSavingMode' = 'Power Saving Mode' }
+    $hits = foreach ($a in $ad) {
+        foreach ($p in @(Get-NetAdapterAdvancedProperty -Name $a.Name -ErrorAction SilentlyContinue | Where-Object { $_.RegistryKeyword -in $saving.Keys })) {
+            if ("$(@($p.RegistryValue)[0])" -ne '0') { [pscustomobject]@{ Adapter = $a.Name; Name = $p.DisplayName; Keyword = $p.RegistryKeyword } }
+        }
+    }
+    $hits = @($hits)
+    if (-not $hits) { Add-Finding OK ((($ad | ForEach-Object Name) -join ', ') + ': keine Energiesparfunktionen aktiv'); return }
+    Add-Finding INFO ('Aktiv: ' + (($hits | ForEach-Object { "$($_.Adapter): $($_.Name)" }) -join ', ')) 'Für Online-Spiele ausschalten: Diese Funktionen legen die Verbindung in Ruhephasen schlafen und können beim Aufwachen kurze Latenzspitzen verursachen. Kostet am Desktop nur wenige Watt.'
+    $script:Findings[$script:Findings.Count - 1].Command = (($hits | ForEach-Object { "Set-NetAdapterAdvancedProperty -Name '$($_.Adapter)' -RegistryKeyword '$($_.Keyword)' -RegistryValue 0" }) -join "`n")
+}
+
 #endregion
 
 #region Performance: Auslastung
@@ -2195,11 +2427,27 @@ Invoke-Check 'CPU-Last (Stichprobe 5 s)' {
         [int](Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'").PercentProcessorTime
     }
     $elapsed = ((Get-Date) - $start).TotalSeconds
-    $rows = @(Get-Process | Where-Object { $_.Id -ne $PID -and $t0.ContainsKey($_.Id) -and $null -ne $_.CPU } | ForEach-Object {
+    # Eigene Last herausrechnen: dieses Script und die aufrufende GUI (Elternprozesse bis zu 3 Ebenen)
+    $own = @($PID)
+    try {
+        $id = $PID
+        for ($i = 0; $i -lt 3; $i++) {
+            $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction Stop).ParentProcessId
+            $pp = Get-Process -Id $parent -ErrorAction Stop
+            if ($pp.ProcessName -notin 'powershell', 'pwsh', 'cmd') { break }
+            $own += $parent; $id = $parent
+        }
+    }
+    catch { }
+    $ownShare = 0
+    foreach ($p in @(Get-Process -Id $own -ErrorAction SilentlyContinue)) {
+        if ($t0.ContainsKey($p.Id) -and $null -ne $p.CPU) { $ownShare += ($p.CPU - $t0[$p.Id]) / $elapsed / $n * 100 }
+    }
+    $rows = @(Get-Process | Where-Object { ($own -notcontains $_.Id) -and $t0.ContainsKey($_.Id) -and $null -ne $_.CPU } | ForEach-Object {
             [pscustomobject][ordered]@{ Prozess = $_.ProcessName; PID = $_.Id; CPU = [Math]::Round(($_.CPU - $t0[$_.Id]) / $elapsed / $n * 100, 1) }
         } | Where-Object CPU -GT 0 | Sort-Object CPU -Descending | Select-Object -First 15)
     Add-Table 'Top-Prozesse nach CPU (%, Stichprobe)' $rows
-    $avg = [int](($samples | Measure-Object -Average).Average)
+    $avg = [int][Math]::Max(0, (($samples | Measure-Object -Average).Average) - $ownShare)
     $top = ($rows | Select-Object -First 3 | ForEach-Object { "$($_.Prozess) $($_.CPU) %" }) -join ', '
     if ($avg -gt 25) { Add-Finding WARN "Durchschnitt $avg % ($top)" 'Hohe Grundlast ohne Spiel: Verursacher im Anhang prüfen (Messung läuft parallel zum Script).' }
     elseif ($avg -gt 10) { Add-Finding INFO "Durchschnitt $avg % ($top)" 'Leicht erhöhte Grundlast; der Prüflauf selbst trägt dazu bei.' }
@@ -2330,9 +2578,20 @@ Invoke-Check 'Programmabstürze' {
 Invoke-Check 'Dienstfehler' {
     $ev = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7000, 7001, 7009, 7011, 7022, 7023, 7024, 7026, 7031, 7034, 7038, 7043 } -Max 500)
     # Bei 7009/7011 (Zeitüberschreitung) steht zuerst die Wartezeit, dann der Dienst.
-    $rows = @($ev | Group-Object { ([string]$_.Properties[$(if ($_.Id -in 7009, 7011) { 1 } else { 0 })].Value).Trim() } | Sort-Object Count -Descending | Select-Object -First 10 | ForEach-Object { [pscustomobject]@{ Dienst = $_.Name; Anzahl = $_.Count } })
+    $rows = @($ev | Group-Object { ([string]$_.Properties[$(if ($_.Id -in 7009, 7011) { 1 } else { 0 })].Value).Trim() } | Sort-Object Count -Descending | Select-Object -First 15 | ForEach-Object {
+            $n = $_.Name
+            $note = ''
+            foreach ($p in $script:KnownHarmless.ServiceErrors.Keys) { if ($n -match $p) { $note = 'bekannt harmlos: ' + $script:KnownHarmless.ServiceErrors[$p]; break } }
+            # Gibt es den Dienst nicht mehr, stammen die Fehler aus der Zeit vor der Deinstallation
+            if (-not $note -and -not ($script:Services | Where-Object { $_.Name -eq $n -or $_.DisplayName -eq $n })) { $note = 'Dienst existiert nicht mehr (Fehler von vor der Deinstallation)' }
+            [pscustomobject][ordered]@{ Dienst = $n; Anzahl = $_.Count; Einordnung = $note }
+        })
     Add-Table 'Dienstfehler' $rows
-    if ($ev) { Add-Finding INFO ("$($ev.Count) Fehler: " + (($rows | Select-Object -First 3 | ForEach-Object { "$($_.Dienst) ($($_.Anzahl))" }) -join ', ')) 'Wiederkehrende Fehler eines Dienstes deuten auf Reste deinstallierter Software oder Treiberprobleme.' }
+    $open = @($rows | Where-Object { -not $_.Einordnung })
+    $explained = ($rows | Where-Object Einordnung | Measure-Object Anzahl -Sum).Sum
+    $explainedText = if ($explained) { "; $explained weitere bekannt harmlos bzw. von entfernten Diensten" } else { '' }
+    if ($open) { Add-Finding INFO ("$(($open | Measure-Object Anzahl -Sum).Sum) Fehler: " + (($open | Select-Object -First 3 | ForEach-Object { "$($_.Dienst) ($($_.Anzahl))" }) -join ', ') + $explainedText) 'Wiederkehrende Fehler eines Dienstes deuten auf Reste deinstallierter Software oder Treiberprobleme. Einzelne Fehler beim Start oder nach Updates sind normal.' }
+    elseif ($ev) { Add-Finding OK "$($ev.Count) Fehler, alle bekannt harmlos bzw. von inzwischen entfernten Diensten (Anhang)" }
     else { Add-Finding OK "Keine in $EventDays Tagen" }
 }
 
@@ -2361,7 +2620,8 @@ Invoke-Check 'Startdauer' {
     }
     $rows = @($rows)
     Add-Table 'Startdauer (letzte Messungen)' $rows
-    $slow = @(Get-RecentEvents @{ LogName = $log; Id = 101, 102, 103, 106, 109 } -Max 50 -AllTime)
+    # Startbremsen nur aus dem Auswertungszeitraum, sonst tauchen längst behobene Ursachen auf
+    $slow = @(Get-RecentEvents @{ LogName = $log; Id = 101, 102, 103, 106, 109 } -Max 50)
     $slowRows = @($slow | ForEach-Object {
             $d = Get-EventData $_
             [pscustomobject][ordered]@{ Zeit = Format-Date $_.TimeCreated; Art = @{ 101 = 'Programm'; 102 = 'Treiber'; 103 = 'Dienst'; 106 = 'Hintergrund'; 109 = 'Gerät' }[$_.Id]; Name = $(if ($d['FriendlyName']) { $d['FriendlyName'] } else { $d['Name'] }); VerzoegerungMs = [int]$d['DegradationTime'] }
@@ -2386,6 +2646,43 @@ Invoke-Check 'Zuverlässigkeitsindex' {
 
 #endregion
 
+#region Tipps und Anleitungen
+
+# Aus pc-check.hilfe.psd1: Erklärungen für den HTML-Bericht und je Prüfung Aufwand/Nutzen/Risiko plus Anleitung.
+# Ein Hinweis mit passendem Tipp-Eintrag wird zum Tipp (lohnende Optimierung); ohne Eintrag bleibt er reine Information.
+$script:Help = $null
+$helpFile = Join-Path $PSScriptRoot 'pc-check.hilfe.psd1'
+if (Test-Path -LiteralPath $helpFile) {
+    try { $script:Help = Import-PowerShellDataFile -LiteralPath $helpFile } catch { Write-Warning "Hilfetexte nicht lesbar: $($_.Exception.Message)" }
+}
+$script:LevelValue = @{ gering = 1; mittel = 2; hoch = 3 }
+
+# Reihenfolge der Tipps: Nutzen zählt doppelt, Aufwand und Risiko ziehen ab.
+function Get-TipScore {
+    param($F)
+    if (-not $F.Benefit) { return -99 }
+    $lv = $script:LevelValue
+    2 * $lv[$F.Benefit] - $lv[$F.Effort] - ($lv[$F.Risk] - 1)
+}
+
+if ($script:Help -and $script:Help.Tipps) {
+    foreach ($f in $script:Findings) {
+        if ($f.Status -notin 'CRIT', 'WARN', 'INFO') { continue }
+        $t = @($script:Help.Tipps[$f.Check]) | Where-Object { $_ -and (-not $_.Match -or $f.Value -match $_.Match) } | Select-Object -First 1
+        if (-not $t) { continue }
+        $f.Steps = @($t.Schritte | Where-Object { $_ })
+        if (-not $f.Command -and $t.Befehl) { $f.Command = [string]$t.Befehl }
+        # Reine Durchsicht (NurAnleitung) bleibt ein Hinweis, ebenso Tipps für ein anderes Profil
+        if ($f.Status -eq 'INFO' -and ($t.NurAnleitung -or ($t.Profile -and $script:Profile -notin @($t.Profile)))) { continue }
+        $f.Effort = [string]$t.Aufwand
+        $f.Benefit = [string]$t.Nutzen
+        $f.Risk = [string]$t.Risiko
+        if ($f.Status -eq 'INFO') { $f.Status = 'TIPP' }
+    }
+}
+
+#endregion
+
 #region Akzeptierte Abweichungen
 
 # Eine Regel greift nur, wenn Prüfung (Wildcards erlaubt) und Muster auf den Befund passen.
@@ -2396,7 +2693,7 @@ if (Test-Path -LiteralPath $AcceptedFile) {
     catch { Write-Warning "Akzeptanzliste nicht lesbar: $($_.Exception.Message)" }
 }
 foreach ($f in $script:Findings) {
-    if ($f.Status -notin 'CRIT', 'WARN', 'INFO') { continue }
+    if ($f.Status -notin 'CRIT', 'WARN', 'TIPP', 'INFO') { continue }
     foreach ($r in $acceptRules) {
         if ($f.Check -notlike $r.Check) { continue }
         if ($r.Match -and $f.Value -notmatch $r.Match) { continue }
@@ -2421,8 +2718,9 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $mdPath = Join-Path $OutputDir "pc-check_$stamp.md"
 $jsonPath = Join-Path $OutputDir "pc-check_$stamp.json"
 
-$label = @{ CRIT = '🔴 Kritisch'; WARN = '🟠 Warnung'; ACK = '✅ Akzeptiert'; INFO = '🔵 Hinweis'; OK = '🟢 OK'; SKIP = '⚪ Nicht geprüft' }
-$rank = @{ CRIT = 0; WARN = 1; INFO = 2; ACK = 3; SKIP = 4; OK = 5 }
+$label = @{ CRIT = '🔴 Kritisch'; WARN = '🟠 Warnung'; TIPP = '💡 Tipp'; ACK = '✅ Akzeptiert'; INFO = '🔵 Hinweis'; OK = '🟢 OK'; SKIP = '⚪ Nicht geprüft' }
+$rank = @{ CRIT = 0; WARN = 1; TIPP = 2; INFO = 3; ACK = 4; SKIP = 5; OK = 6 }
+$tips = @($script:Findings | Where-Object Status -EQ 'TIPP' | Sort-Object { - (Get-TipScore $_) }, Area, Category)
 
 function ConvertTo-MdCell {
     param($Text)
@@ -2461,8 +2759,10 @@ if ($prevFile) {
             $k = "$($f.Category)|$($f.Check)"
             $seen[$k] = $true
             $o = $old[$k]
+            # Hinweis und Tipp sind derselbe Befund, nur anders eingeordnet (Berichte vor 1.5.0 kennen keinen Tipp)
+            $same = $o -and (($o.Status -eq $f.Status) -or ((@($o.Status, $f.Status) | Where-Object { $_ -in 'INFO', 'TIPP' }).Count -eq 2 -and $o.Value -eq $f.Value))
             if (-not $o) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $f.Check; Vorher = 'neue Prüfung'; Jetzt = $label[$f.Status]; Befund = $f.Value }) }
-            elseif ($o.Status -ne $f.Status) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $f.Check; Vorher = $label[$o.Status]; Jetzt = $label[$f.Status]; Befund = $f.Value }) }
+            elseif (-not $same) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $f.Check; Vorher = $label[$o.Status]; Jetzt = $label[$f.Status]; Befund = $f.Value }) }
         }
         foreach ($k in $old.Keys) {
             if (-not $seen.ContainsKey($k)) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $old[$k].Check; Vorher = $label[$old[$k].Status]; Jetzt = 'entfällt'; Befund = $old[$k].Value }) }
@@ -2497,24 +2797,49 @@ if ($prevFile) {
     catch { Write-Warning "Vergleich mit $($prevFile.Name) nicht möglich: $($_.Exception.Message)" }
 }
 
+# Verlauf über die bisherigen Berichte: einige Kennzahlen je Lauf für kleine Diagramme im HTML-Bericht
+function Get-HistoryPoint {
+    param($Erstellt, $Findings, $Data)
+    $boot = @($Data.'Startdauer (letzte Messungen)' | Where-Object { $_ } | ForEach-Object { [double]$_.HauptpfadSek })
+    $rel = $Findings | Where-Object Check -EQ 'Zuverlässigkeitsindex' | Select-Object -First 1
+    $sysVol = @($Data.'Laufwerke (Volumes)' | Where-Object { $_.Laufwerk -eq $env:SystemDrive }) | Select-Object -First 1
+    [pscustomobject][ordered]@{
+        Datum    = [datetime]$Erstellt
+        StartSek = $(if ($boot) { [Math]::Round(($boot | Measure-Object -Average).Average, 1) } else { $null })
+        Index    = $(if ($rel -and $rel.Value -match '^([\d.,]+) von') { [double]($Matches[1] -replace ',', '.') } else { $null })
+        FreiC    = $(if ($sysVol) { [double]$sysVol.FreiProzent } else { $null })
+        Probleme = @($Findings | Where-Object { $_.Status -in 'CRIT', 'WARN' }).Count
+    }
+}
+$history = New-Object System.Collections.Generic.List[object]
+foreach ($hf in @(Get-ChildItem -LiteralPath $OutputDir -Filter 'pc-check_*.json' -ErrorAction SilentlyContinue | Where-Object FullName -NE $jsonPath | Sort-Object LastWriteTime | Select-Object -Last 11)) {
+    try {
+        $hj = Get-Content -LiteralPath $hf.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+        $history.Add((Get-HistoryPoint ([datetime]::Parse($hj.Meta.Erstellt, [Globalization.CultureInfo]::InvariantCulture)) @($hj.Findings) $hj.Data))
+    }
+    catch { Write-Verbose "Verlauf: $($hf.Name) nicht lesbar" }
+}
+$history.Add((Get-HistoryPoint (Get-Date) $script:Findings.ToArray() ([pscustomobject]$script:Tables)))
+
 $md = New-Object System.Text.StringBuilder
 function W { param([string]$Line = '') [void]$md.AppendLine($Line) }
 
-W "# pc-check: $env:COMPUTERNAME"
+W "# $ProductName – $($ProductTagline): $env:COMPUTERNAME"
 W ''
 W "- Erstellt: $(Get-Date -Format 'yyyy-MM-dd HH:mm') (Dauer $([int]$duration.TotalSeconds) s)"
 W "- Script-Version $ScriptVersion, PowerShell $($PSVersionTable.PSVersion)"
 W ('- Adminrechte: ' + $(if ($script:IsAdmin) { 'ja' } else { 'nein, einige Prüfungen fehlen' }))
 W "- Ereigniszeitraum: letzte $EventDays Tage"
+W "- Profil: $($script:Profile)$(if ($script:ProfileAuto) { ' (automatisch erkannt)' })"
 W "- Akzeptanzliste: $(if (Test-Path -LiteralPath $AcceptedFile) { "$AcceptedFile ($($acceptRules.Count) Regeln)" } else { 'keine (Vorlage zum Anlegen: accepted.example.psd1)' })"
 W ''
 W '## Zusammenfassung'
 W ''
-W '| Bereich | 🔴 Kritisch | 🟠 Warnung | ✅ Akzeptiert | 🔵 Hinweis | 🟢 OK | ⚪ Nicht geprüft |'
-W '|---|---|---|---|---|---|---|'
+W '| Bereich | 🔴 Kritisch | 🟠 Warnung | 💡 Tipp | ✅ Akzeptiert | 🔵 Hinweis | 🟢 OK | ⚪ Nicht geprüft |'
+W '|---|---|---|---|---|---|---|---|'
 foreach ($area in 'Sicherheit', 'Performance') {
     $f = @($script:Findings | Where-Object Area -EQ $area)
-    $c = foreach ($s in 'CRIT', 'WARN', 'ACK', 'INFO', 'OK', 'SKIP') { @($f | Where-Object Status -EQ $s).Count }
+    $c = foreach ($s in 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP') { @($f | Where-Object Status -EQ $s).Count }
     W "| $area | $($c -join ' | ') |"
 }
 W ''
@@ -2527,6 +2852,15 @@ if ($todo) {
     foreach ($f in $todo) { W "| $($label[$f.Status]) | $($f.Area) / $($f.Category) | $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) |" }
 }
 else { W '_Keine Warnungen oder kritischen Befunde._' }
+W ''
+W '## Tipps (lohnendste zuerst)'
+W ''
+if ($tips) {
+    W '| Prüfung | Befund | Empfehlung | Nutzen | Aufwand | Risiko |'
+    W '|---|---|---|---|---|---|'
+    foreach ($f in $tips) { W "| $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) | $($f.Benefit) | $($f.Effort) | $($f.Risk) |" }
+}
+else { W '_Keine._' }
 W ''
 W '## Akzeptierte Abweichungen'
 W ''
@@ -2571,7 +2905,9 @@ foreach ($area in 'Sicherheit', 'Performance') {
         W '| Status | Prüfung | Befund | Empfehlung | Anmerkung |'
         W '|---|---|---|---|---|'
         foreach ($f in ($script:Findings | Where-Object { $_.Area -eq $area -and $_.Category -eq $cat })) {
-            W "| $($label[$f.Status]) | $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) | $(ConvertTo-MdCell $f.Note) |"
+            $how = if (@($f.Steps).Count) { ' So geht''s: ' + ((@($f.Steps) | ForEach-Object -Begin { $n = 0 } -Process { $n++; "$n. $_" }) -join ' ') } else { '' }
+            if ($f.Command) { $how += " Befehl (Admin-PowerShell): ``$($f.Command -replace "`n", '; ')``" }
+            W "| $($label[$f.Status]) | $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell ($f.Recommendation + $how)) | $(ConvertTo-MdCell $f.Note) |"
         }
     }
 }
@@ -2586,17 +2922,18 @@ foreach ($title in $script:Tables.Keys) {
 
 $md.ToString() | Out-File -LiteralPath $mdPath -Encoding utf8
 [ordered]@{
-    Meta     = [ordered]@{ Computer = $env:COMPUTERNAME; Erstellt = (Get-Date).ToString('s'); Version = $ScriptVersion; Admin = $script:IsAdmin; EventDays = $EventDays; DauerSek = [int]$duration.TotalSeconds; StoreAppContainer = $script:PackagedFrom }
+    Meta     = [ordered]@{ Computer = $env:COMPUTERNAME; Erstellt = (Get-Date).ToString('s'); Version = $ScriptVersion; Admin = $script:IsAdmin; EventDays = $EventDays; DauerSek = [int]$duration.TotalSeconds; StoreAppContainer = $script:PackagedFrom; Profil = $script:Profile }
     Findings = $script:Findings
     Changes  = $changes
     Data     = $script:Tables
+    DataChecks = $script:TableChecks
 } | ConvertTo-Json -Depth 6 | Out-File -LiteralPath $jsonPath -Encoding utf8
 
 Write-Host ''
 Write-Host 'Ergebnis' -ForegroundColor Green
-$colors = @{ CRIT = 'Red'; WARN = 'Yellow'; ACK = 'DarkGreen'; INFO = 'Cyan'; OK = 'Green'; SKIP = 'Gray' }
-$names = @{ CRIT = 'Kritisch'; WARN = 'Warnung'; ACK = 'Akzeptiert'; INFO = 'Hinweis'; OK = 'OK'; SKIP = 'Nicht geprüft' }
-foreach ($s in 'CRIT', 'WARN', 'ACK', 'INFO', 'OK', 'SKIP') {
+$colors = @{ CRIT = 'Red'; WARN = 'Yellow'; TIPP = 'Magenta'; ACK = 'DarkGreen'; INFO = 'Cyan'; OK = 'Green'; SKIP = 'Gray' }
+$names = @{ CRIT = 'Kritisch'; WARN = 'Warnung'; TIPP = 'Tipp'; ACK = 'Akzeptiert'; INFO = 'Hinweis'; OK = 'OK'; SKIP = 'Nicht geprüft' }
+foreach ($s in 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP') {
     Write-Host ('  {0,-14} {1}' -f $names[$s], @($script:Findings | Where-Object Status -EQ $s).Count) -ForegroundColor $colors[$s]
 }
 if ($changes) {
@@ -2611,70 +2948,12 @@ Write-Host "Daten:   $jsonPath"
 
 #endregion
 
-#region Update-Dialog (nach dem Bericht, nur mit ausdrücklicher Auswahl)
-
-$candidates = @($script:WingetUpdates | Where-Object Kategorie -EQ 'Programm')
-$updateResults = $null   # $null = Dialog nicht gezeigt, leer = nichts ausgewählt (für den HTML-Bericht)
-# Nur fragen, wenn jemand an der Konsole sitzt (nicht bei umgeleiteter Eingabe oder -NonInteractive)
-$interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not ([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-NonI' })
-if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
-    Write-Host ''
-    Write-Host 'Für diese Programme gibt es Updates:' -ForegroundColor Yellow
-    for ($i = 0; $i -lt $candidates.Count; $i++) {
-        Write-Host ('  [{0}] {1}  {2} -> {3}' -f ($i + 1), $candidates[$i].Name, $candidates[$i].Installiert, $candidates[$i].Verfuegbar)
-    }
-    $skipped = @($script:WingetUpdates | Where-Object Kategorie -NE 'Programm')
-    if ($skipped) { Write-Host ("  Nicht angeboten: " + (($skipped | ForEach-Object { "$($_.Name) ($($_.Kategorie))" }) -join ', ')) -ForegroundColor DarkGray }
-    Write-Host '  winget lädt aus den Herstellerquellen und akzeptiert dabei die Lizenzbedingungen der Pakete.' -ForegroundColor DarkGray
-    $answer = Read-Host 'Welche aktualisieren? Nummern (z. B. 1,3), a = alle, Enter = keine'
-
-    $selected = @()
-    if ($answer -match '^\s*a\s*$') { $selected = $candidates }
-    elseif ($answer.Trim()) {
-        # Doppelte über die Nummer entfernen (Select-Object -Unique taugt für Objekte ohne Textdarstellung nicht)
-        $picked = @()
-        foreach ($tok in ($answer -split '[,;\s]+' | Where-Object { $_ })) {
-            if ($tok -match '^\d+$' -and [int]$tok -ge 1 -and [int]$tok -le $candidates.Count) { if ([int]$tok -notin $picked) { $picked += [int]$tok } }
-            else { Write-Host "  Ignoriert: '$tok'" -ForegroundColor DarkGray }
-        }
-        $selected = @($picked | ForEach-Object { $candidates[$_ - 1] })
-    }
-
-    $results = @()
-    if ($selected) {
-        $wg = (Get-Command winget.exe -ErrorAction SilentlyContinue).Source
-        foreach ($u in $selected) {
-            while ($true) {
-                Write-Host "`n=== Aktualisiere $($u.Name) ($($u.Installiert) -> $($u.Verfuegbar))" -ForegroundColor Cyan
-                & $wg upgrade --id $u.Id --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
-                $code = $LASTEXITCODE
-                if ($code -eq 0) { $result = 'aktualisiert'; break }
-                # 0x8A150006: Installer abgebrochen, meist weil das Programm noch läuft
-                if ($code -eq -1978335226) {
-                    Write-Host '  Der Installer hat abgebrochen, meist weil das Programm noch läuft (bei Git: Git-Bash-Fenster schließen).' -ForegroundColor Yellow
-                    if ((Read-Host '  Programm schließen und erneut versuchen? (j/n)') -match '^\s*j') { continue }
-                    $result = 'abgebrochen (Programm lief noch)'
-                }
-                else { $result = 'fehlgeschlagen (Code {0})' -f $code }
-                break
-            }
-            Write-Host "  -> $result" -ForegroundColor $(if ($result -eq 'aktualisiert') { 'Green' } else { 'Red' })
-            $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = $result }
-        }
-    }
-    else { Write-Host '  Keine Updates ausgewählt.' }
-    $updateResults = @($results)
-
-    # Ergebnis an den Bericht anhängen
-    $lines = @('', "## Updates nach dem Lauf ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))", '')
-    if ($results) { $lines += (ConvertTo-MdTable $results) } else { $lines += '_Keine Updates ausgewählt._' }
-    [IO.File]::AppendAllText($mdPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
-    Write-Host "`nUpdate-Ergebnis an den Bericht angehängt." -ForegroundColor Green
-}
-
-#endregion
 
 #region HTML-Bericht (Solarized Dark, eigenständig ohne Internetzugriff)
+
+$updateResults = $null   # $null = Dialog nicht gezeigt, leer = nichts ausgewählt (für den HTML-Bericht)
+# Nur fragen bzw. öffnen, wenn jemand an der Konsole sitzt (nicht bei umgeleiteter Eingabe oder -NonInteractive)
+$interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not ([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-NonI' })
 
 function ConvertTo-HtmlText { param($Text) [System.Net.WebUtility]::HtmlEncode([string]$Text) }
 
@@ -2695,13 +2974,9 @@ function Protect-Text {
 function Write-HtmlReport {
     param([Parameter(Mandatory)][string]$Path)
 
-    $help = $null
-    $helpFile = Join-Path $PSScriptRoot 'pc-check.hilfe.psd1'
-    if (Test-Path -LiteralPath $helpFile) {
-        try { $help = Import-PowerShellDataFile -LiteralPath $helpFile } catch { Write-Warning "Hilfetexte nicht lesbar: $($_.Exception.Message)" }
-    }
-    $statusName = @{ CRIT = 'Kritisch'; WARN = 'Warnung'; ACK = 'Akzeptiert'; INFO = 'Hinweis'; OK = 'OK'; SKIP = 'Nicht geprüft' }
-    $order = 'CRIT', 'WARN', 'ACK', 'INFO', 'OK', 'SKIP'
+    $help = $script:Help
+    $statusName = @{ CRIT = 'Kritisch'; WARN = 'Warnung'; TIPP = 'Tipp'; ACK = 'Akzeptiert'; INFO = 'Hinweis'; OK = 'OK'; SKIP = 'Nicht geprüft' }
+    $order = 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP'
     # ToArray statt @(): @() auf eine List[object] wirft in Windows PowerShell 5.1 "Argument types do not match"
     $findings = $script:Findings.ToArray()
     $count = @{}
@@ -2723,6 +2998,21 @@ function Write-HtmlReport {
         if (-not $TipHtml) { return '' }
         "<button type=`"button`" class=`"info`" aria-label=`"Erklärung`" aria-expanded=`"false`">i</button><span class=`"tip`" role=`"tooltip`">$TipHtml</span>"
     }
+    # Nutzen/Aufwand/Risiko als kleine Kennzeichen
+    function Get-Levels($F) {
+        if (-not $F.Benefit) { return '' }
+        $p = foreach ($x in @(@('Nutzen', $F.Benefit, 'n'), @('Aufwand', $F.Effort, 'a'), @('Risiko', $F.Risk, 'r'))) { if ($x[1]) { "<span class=`"lv lv-$($x[2])-$($x[1])`">$($x[0]): $($x[1])</span>" } }
+        "<div class=`"levels`">$($p -join '')</div>"
+    }
+    # Aufklappbare Anleitung: Klickweg und optional Befehl zum Kopieren
+    function Get-HowTo($F) {
+        $steps = @($F.Steps)
+        if (-not $steps.Count -and -not $F.Command) { return '' }
+        $h = '<details class="how"><summary>So geht''s</summary>'
+        if ($steps.Count) { $h += '<ol>' + (($steps | ForEach-Object { "<li>$(HEnc $_)</li>" }) -join '') + '</ol>' }
+        if ($F.Command) { $h += "<div class=`"cmd`"><div class=`"cmd-head`">Befehl für eine Administrator-PowerShell <button type=`"button`" class=`"copy`">Kopieren</button></div><pre>$(HEnc $F.Command)</pre></div>" }
+        $h + '</details>'
+    }
     function Get-Row($F, [string]$Id, [switch]$Summary) {
         $note = ''
         if ($F.Status -eq 'ACK') { $note = "<div class=`"note`">Ursprünglich: $(HEnc $statusName[$F.OriginalStatus]) · $(HEnc $F.Note)</div>" }
@@ -2733,11 +3023,35 @@ function Write-HtmlReport {
         $check = if ($Summary) { "<a href=`"#$Id`">$(HEnc $F.Check)</a>" } else { HEnc $F.Check }
         $hint = if ($Summary) { '<div class="cat-hint">' + (HEnc $F.Area) + ' · ' + (HEnc $F.Category) + '</div>' } else { '' }
         $infoBtn = Get-InfoButton (Get-Tip $F.Check $F.Category)
-        "<div class=`"$cls s-$($F.Status)`"$idAttr data-status=`"$($F.Status)`" data-text=`"$text`">" +
-        "<div class=`"c-status`"><span class=`"badge b-$($F.Status)`">$($statusName[$F.Status])</span></div>" +
+        $todo = if (-not $Summary -and $F.Status -in 'CRIT', 'WARN', 'TIPP') { '<div class="todo"><button type="button" data-mark="done" title="Als erledigt markieren; der nächste Lauf zeigt, ob es wirklich behoben ist">✔ erledigt</button><button type="button" data-mark="later" title="Für später vormerken">⏱ später</button></div>' } else { '' }
+        "<div class=`"$cls s-$($F.Status)`"$idAttr data-status=`"$($F.Status)`" data-check=`"$(HEnc $F.Check)`" data-text=`"$text`">" +
+        "<div class=`"c-status`"><span class=`"badge b-$($F.Status)`">$($statusName[$F.Status])</span>$todo</div>" +
         "<div class=`"c-check`">$check$infoBtn$hint</div>" +
         "<div class=`"c-value`">$(HEnc $F.Value)$note</div>" +
-        "<div class=`"c-rec`">$(HEnc $F.Recommendation)</div></div>"
+        "<div class=`"c-rec`">$(HEnc $F.Recommendation)$(Get-Levels $F)$(if (-not $Summary) { Get-HowTo $F })</div></div>"
+    }
+    # Kleines Liniendiagramm (SVG) für den Verlauf
+    function Get-Chart([string]$Title, [string]$Prop, [string]$Unit, [string]$Better) {
+        $pts = @($history | Where-Object { $null -ne $_.$Prop })
+        if ($pts.Count -lt 2) { return '' }
+        $w = 300; $h = 90; $padX = 8; $padY = 14
+        $vals = @($pts | ForEach-Object { [double]$_.$Prop })
+        $min = ($vals | Measure-Object -Minimum).Minimum; $max = ($vals | Measure-Object -Maximum).Maximum
+        if ($max -eq $min) { $max = $min + 1 }
+        $xy = for ($i = 0; $i -lt $pts.Count; $i++) {
+            $x = $padX + ($w - 2 * $padX) * $i / ($pts.Count - 1)
+            $y = $padY + ($h - 2 * $padY) * (1 - ($vals[$i] - $min) / ($max - $min))
+            [pscustomobject]@{ X = [Math]::Round($x, 1); Y = [Math]::Round($y, 1); V = $vals[$i]; D = $pts[$i].Datum.ToString('dd.MM.yy') }
+        }
+        $inv = [Globalization.CultureInfo]::InvariantCulture
+        $line = ($xy | ForEach-Object { $_.X.ToString($inv) + ',' + $_.Y.ToString($inv) }) -join ' '
+        $dots = ($xy | ForEach-Object { "<circle cx=`"$($_.X.ToString($inv))`" cy=`"$($_.Y.ToString($inv))`" r=`"3`"><title>$($_.D): $($_.V) $Unit</title></circle>" }) -join ''
+        $first = $vals[0]; $last = $vals[-1]
+        $trend = if ($last -eq $first) { 'gleich' } elseif (($last -lt $first) -eq ($Better -eq 'low')) { 'besser' } else { 'schlechter' }
+        $trendCls = @{ gleich = 'muted'; besser = 'add'; schlechter = 'rem' }[$trend]
+        "<div class=`"chart`"><div class=`"chart-head`"><span>$(HEnc $Title)</span><span class=`"$trendCls`">$last $Unit · $trend</span></div>" +
+        "<svg viewBox=`"0 0 $w $h`" role=`"img`" aria-label=`"$(HEnc $Title)`"><polyline points=`"$line`"/>$dots</svg>" +
+        "<div class=`"chart-foot`"><span>$($xy[0].D)</span><span>$($xy[-1].D)</span></div></div>"
     }
     function Get-Table($Rows, [int]$Max = 300) {
         $Rows = @($Rows | Where-Object { $null -ne $_ })
@@ -2760,19 +3074,28 @@ function Write-HtmlReport {
     # Ampel und die nächsten Schritte (Sicherheit vor Performance, Kritisch vor Warnung)
     if ($count.CRIT) { $amp = 'red'; $ampTitle = 'Kritische Punkte gefunden'; $ampSub = 'Bitte zuerst die rot markierten Punkte beheben.' }
     elseif ($count.WARN) { $amp = 'yellow'; $ampTitle = 'Einige Punkte prüfen'; $ampSub = 'Nichts Akutes, aber die orangefarbenen Punkte solltest du dir ansehen.' }
-    else { $amp = 'green'; $ampTitle = 'Alles in Ordnung'; $ampSub = 'Keine Warnungen. Hinweise sind optional.' }
+    else { $amp = 'green'; $ampTitle = 'Alles in Ordnung'; $ampSub = $(if ($count.TIPP) { "Keine Warnungen. $($count.TIPP) Tipps zeigen, was sich noch lohnt." } else { 'Keine Warnungen.' }) }
     $ids = @{}
     for ($i = 0; $i -lt $findings.Count; $i++) { $ids["$($findings[$i].Category)|$($findings[$i].Check)"] = "p$i" }
     $todo = @($findings | Where-Object { $_.Status -in 'CRIT', 'WARN' } | Sort-Object { $rank[$_.Status] }, { if ($_.Area -eq 'Sicherheit') { 0 } else { 1 } }, Category)
 
+    # Gaming-Check nur im Profil Gaming
+    $gamingChecks = 'Bildschirme und Bildwiederholrate', 'Grafikkarte und Treiber', 'Resizable BAR und PCIe-Anbindung', 'Arbeitsspeicher', 'Prozessor-Energieeinstellungen', 'Energieplan',
+    'Spielebibliotheken', 'Spielmodus', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'Hintergrundaufzeichnung (Game DVR)', 'Optimierungen für Spiele im Fenstermodus',
+    'Overlays und Hintergrund-Tools', 'Mausbeschleunigung', 'Netzwerkverbindung', 'Netzwerkkarte: Energiesparfunktionen', 'Virtualisierung und Spieleleistung'
+    $gamingRows = if ($script:Profile -eq 'Gaming') { @($gamingChecks | ForEach-Object { $c = $_; $findings | Where-Object Check -EQ $c | Select-Object -First 1 } | Where-Object { $_ }) } else { @() }
+    $charts = (Get-Chart 'Probleme (Kritisch + Warnung)' 'Probleme' '' 'low') + (Get-Chart 'Startdauer bis Desktop' 'StartSek' 's' 'low') +
+    (Get-Chart 'Zuverlässigkeitsindex' 'Index' 'von 10' 'high') + (Get-Chart "Freier Platz auf $env:SystemDrive" 'FreiC' '%' 'high')
+
     # Anonymisierte Kopiervorlage für einen KI-Assistenten
     $ki = New-Object System.Text.StringBuilder
-    [void]$ki.AppendLine('Ich habe meinen Windows-PC mit dem Prüfscript pc-check untersucht. Bitte erkläre mir die folgenden Befunde verständlich,')
+    [void]$ki.AppendLine('Ich habe meinen Windows-PC mit dem Prüfscript Morpheus (pc-check) untersucht. Bitte erkläre mir die folgenden Befunde verständlich,')
     [void]$ki.AppendLine('bewerte, wie dringend sie sind, und sag mir Schritt für Schritt, was ich tun sollte. Frag nach, wenn dir Angaben fehlen.')
     [void]$ki.AppendLine('')
-    [void]$ki.AppendLine("System: $($script:OS.Caption), Version $($script:CV.DisplayVersion); pc-check $ScriptVersion; Adminrechte: $(if ($script:IsAdmin) { 'ja' } else { 'nein' })")
-    [void]$ki.AppendLine("Übersicht: $($count.CRIT) kritisch, $($count.WARN) Warnungen, $($count.ACK) akzeptiert, $($count.INFO) Hinweise, $($count.OK) OK")
-    foreach ($s in 'CRIT', 'WARN', 'ACK', 'INFO') {
+    [void]$ki.AppendLine("System: $($script:OS.Caption), Version $($script:CV.DisplayVersion); $ProductName $ScriptVersion; Adminrechte: $(if ($script:IsAdmin) { 'ja' } else { 'nein' })")
+    [void]$ki.AppendLine("Nutzung: $($script:Profile)")
+    [void]$ki.AppendLine("Übersicht: $($count.CRIT) kritisch, $($count.WARN) Warnungen, $($count.TIPP) Tipps, $($count.ACK) akzeptiert, $($count.INFO) Hinweise, $($count.OK) OK")
+    foreach ($s in 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO') {
         $list = @($findings | Where-Object Status -EQ $s)
         if (-not $list) { continue }
         [void]$ki.AppendLine('')
@@ -2804,10 +3127,10 @@ header.top h1{font-size:24px;letter-spacing:.5px}header.top h1 span{color:var(--
 .amp-yellow{border-color:var(--orange)}.amp-yellow .dot{background:var(--orange);box-shadow:0 0 18px var(--orange)}
 .amp-green{border-color:var(--green)}.amp-green .dot{background:var(--green);box-shadow:0 0 18px var(--green)}
 .amp-title{color:var(--b1);font-size:19px;font-weight:600}.amp-sub{font-size:14px}
-.counters{flex:2 1 480px;display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.counters{flex:2 1 520px;display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
 .counter{background:var(--b02);border:0;border-top:4px solid;border-radius:8px;padding:10px 6px;color:var(--b0);font:inherit;cursor:pointer;text-align:center}
 .counter:hover{background:#0a4250}.counter .n{display:block;font-size:24px;font-weight:600;color:var(--b1)}.counter .l{font-size:12px}
-.c-CRIT{border-color:var(--red)}.c-WARN{border-color:var(--orange)}.c-ACK{border-color:var(--violet)}.c-INFO{border-color:var(--blue)}.c-OK{border-color:var(--green)}.c-SKIP{border-color:var(--b01)}
+.c-CRIT{border-color:var(--red)}.c-WARN{border-color:var(--orange)}.c-TIPP{border-color:var(--magenta)}.c-ACK{border-color:var(--violet)}.c-INFO{border-color:var(--blue)}.c-OK{border-color:var(--green)}.c-SKIP{border-color:var(--b01)}
 .layout{display:grid;grid-template-columns:230px 1fr;gap:24px;padding:0 28px 40px}
 nav.side{position:sticky;top:64px;align-self:start;max-height:calc(100vh - 80px);overflow:auto;padding-top:24px;font-size:14px}
 nav.side a{display:flex;justify-content:space-between;color:var(--b0);padding:3px 8px;border-radius:5px}
@@ -2825,12 +3148,34 @@ ol.steps{margin:0;padding-left:22px}ol.steps li{margin:8px 0}ol.steps .rec{font-
 .row{display:grid;grid-template-columns:110px minmax(180px,1fr) minmax(220px,1.6fr) minmax(220px,1.6fr);gap:14px;padding:10px 14px;border-left:4px solid transparent;border-bottom:1px solid var(--line);background:var(--b02)}
 .row:target{outline:2px solid var(--cyan)}.row.flash{animation:flash 1.6s}
 @keyframes flash{0%{background:#0f5566}100%{background:var(--b02)}}
-.s-CRIT{border-left-color:var(--red)}.s-WARN{border-left-color:var(--orange)}.s-ACK{border-left-color:var(--violet)}.s-INFO{border-left-color:var(--blue)}.s-OK{border-left-color:var(--green)}.s-SKIP{border-left-color:var(--b01)}
+.s-CRIT{border-left-color:var(--red)}.s-WARN{border-left-color:var(--orange)}.s-TIPP{border-left-color:var(--magenta)}.s-ACK{border-left-color:var(--violet)}.s-INFO{border-left-color:var(--blue)}.s-OK{border-left-color:var(--green)}.s-SKIP{border-left-color:var(--b01)}
 .c-check{color:var(--b1);font-weight:600;position:relative}.c-value{word-break:break-word}.c-rec{color:var(--b0);font-size:14px}
 .cat-hint{font-weight:400;font-size:12px;color:var(--b01)}
 .note{margin-top:4px;font-size:13px;color:var(--violet)}
 .badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:12px;font-weight:600;white-space:nowrap;color:var(--b3)}
-.b-CRIT{background:var(--red)}.b-WARN{background:var(--orange)}.b-ACK{background:var(--violet)}.b-INFO{background:var(--blue)}.b-OK{background:var(--green)}.b-SKIP{background:var(--b01)}
+.b-CRIT{background:var(--red)}.b-WARN{background:var(--orange)}.b-TIPP{background:var(--magenta)}.b-ACK{background:var(--violet)}.b-INFO{background:var(--blue)}.b-OK{background:var(--green)}.b-SKIP{background:var(--b01)}
+.levels{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
+.lv{font-size:11px;border-radius:8px;padding:1px 7px;background:var(--b03);border:1px solid var(--line);color:var(--b0)}
+.lv-n-hoch,.lv-a-gering,.lv-r-gering{color:var(--green)}.lv-n-mittel{color:var(--cyan)}.lv-a-mittel,.lv-r-mittel{color:var(--yellow)}.lv-a-hoch{color:var(--orange)}.lv-r-hoch{color:var(--red)}
+details.how{margin-top:6px}details.how>summary{cursor:pointer;color:var(--cyan);font-size:13px}
+details.how ol{margin:6px 0;padding-left:20px;font-size:13.5px;color:var(--b1)}
+.cmd{margin-top:6px;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.cmd-head{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;background:#0a3f4b;padding:4px 8px;color:var(--b1)}
+.cmd pre{margin:0;padding:8px;font:12.5px Consolas,monospace;white-space:pre-wrap;word-break:break-all;color:var(--b2);background:var(--b03)}
+button.copy{background:transparent;border:1px solid var(--b01);color:var(--b1);border-radius:4px;font:inherit;font-size:12px;padding:1px 8px;cursor:pointer}
+.todo{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.todo button{background:transparent;border:1px solid var(--line);color:var(--b01);border-radius:5px;font:inherit;font-size:11.5px;padding:1px 6px;cursor:pointer;text-align:left}
+.todo button:hover{color:var(--b1);border-color:var(--b01)}.todo button.on{background:var(--cyan);color:var(--b03);border-color:var(--cyan)}
+.row.m-done{opacity:.65}.mark-note{font-size:12px;color:var(--cyan);margin-top:4px}
+.gaming{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
+.g-item{background:var(--b03);border:1px solid var(--line);border-left:4px solid;border-radius:6px;padding:8px 10px;font-size:13.5px}
+.g-item a{color:var(--b1);font-weight:600}.g-item .v{color:var(--b0);font-size:12.5px;margin-top:2px;word-break:break-word}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.chart{background:var(--b03);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.chart-head,.chart-foot{display:flex;justify-content:space-between;font-size:12.5px}.chart-head{color:var(--b1)}.chart-foot{color:var(--b01);font-size:11px}
+.chart svg{width:100%;height:90px}.chart polyline{fill:none;stroke:var(--cyan);stroke-width:2}.chart circle{fill:var(--b2)}
+ul.checklist{margin:4px 0 0;padding-left:20px}ul.checklist li{margin:4px 0}
+ol.steps .levels{display:inline-flex;margin:0 0 0 6px;vertical-align:1px}
 details.cat{margin-bottom:10px;border-radius:10px;overflow:visible}
 details.cat>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;background:#0a3f4b;padding:10px 14px;border-radius:10px 10px 0 0;color:var(--b1);font-weight:600;position:relative}
 details.cat:not([open])>summary{border-radius:10px}
@@ -2929,18 +3274,84 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
       navigator.clipboard.writeText(ta.value).then(function () { done(true); }, function () { ta.select(); done(document.execCommand('copy')); });
     } else { ta.select(); done(document.execCommand('copy')); }
   });
+
+  // Befehle aus "So geht's" kopieren
+  document.querySelectorAll('button.copy').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var pre = b.closest('.cmd').querySelector('pre'), label = b.textContent;
+      function done(ok) { b.textContent = ok ? '✔ Kopiert' : 'Nicht möglich'; setTimeout(function () { b.textContent = label; }, 2500); }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).then(function () { done(true); }, function () { done(false); });
+      else done(false);
+    });
+  });
+
+  // Checkliste: Markierungen bleiben im Browser gespeichert (je PC) und werden mit jedem neuen Bericht abgeglichen
+  var store = null, key = 'pc-check:' + document.body.getAttribute('data-pc'), created = document.body.getAttribute('data-created');
+  try { store = window.localStorage; store.getItem(key); } catch (e) { store = null; }
+  var marks = {};
+  if (store) { try { marks = JSON.parse(store.getItem(key) || '{}') || {}; } catch (e) { marks = {}; } }
+  function save() { if (store) { try { store.setItem(key, JSON.stringify(marks)); } catch (e) {} } }
+  var byCheck = {};
+  rows.forEach(function (r) { byCheck[r.getAttribute('data-check')] = r; });
+  function li(list, text, cls, id) {
+    var e = document.createElement('li');
+    if (id) { var a = document.createElement('a'); a.href = '#' + id; a.textContent = text; a.addEventListener('click', function (ev) { ev.preventDefault(); reveal(id); }); e.appendChild(a); }
+    else e.textContent = text;
+    if (cls) { var s = document.createElement('span'); s.className = 'muted'; s.textContent = ' – ' + cls; e.appendChild(s); }
+    list.appendChild(e);
+  }
+  function render() {
+    rows.forEach(function (r) {
+      var m = marks[r.getAttribute('data-check')];
+      r.classList.toggle('m-done', !!(m && m.state === 'done'));
+      r.querySelectorAll('.todo button').forEach(function (b) { b.classList.toggle('on', !!(m && m.state === b.getAttribute('data-mark'))); });
+    });
+    var groups = { pending: [], open: [], fixed: [], later: [] };
+    Object.keys(marks).forEach(function (c) {
+      var m = marks[c], r = byCheck[c], s = r ? r.getAttribute('data-status') : 'OK';
+      var still = s === 'CRIT' || s === 'WARN' || s === 'TIPP';
+      var g = m.state === 'later' ? (still ? 'later' : 'fixed') : (!still ? 'fixed' : (m.report === created ? 'pending' : 'open'));
+      groups[g].push({ c: c, id: r ? r.id : '', d: m.date });
+    });
+    var box = document.getElementById('checklist-body');
+    if (!box) return;
+    box.innerHTML = '';
+    var titles = { open: 'Als erledigt markiert, aber weiterhin gemeldet', fixed: 'Behoben (bestätigt durch diesen Bericht)', pending: 'Als erledigt markiert (der nächste Lauf bestätigt es)', later: 'Für später vorgemerkt' };
+    var any = false;
+    ['open', 'fixed', 'pending', 'later'].forEach(function (g) {
+      if (!groups[g].length) return;
+      any = true;
+      var h = document.createElement('h3'); h.textContent = titles[g]; h.className = g === 'open' ? 'rem' : (g === 'fixed' ? 'add' : '');
+      var ul = document.createElement('ul'); ul.className = 'checklist';
+      groups[g].forEach(function (x) { li(ul, x.c, 'markiert am ' + x.d, x.id); });
+      box.appendChild(h); box.appendChild(ul);
+    });
+    if (!any) box.innerHTML = '<p class="muted">Noch nichts markiert. Bei Warnungen und Tipps kannst du „✔ erledigt“ oder „⏱ später“ anklicken.</p>';
+    if (!store) box.innerHTML += '<p class="muted">Dein Browser erlaubt hier keine Speicherung; Markierungen gehen beim Schließen verloren.</p>';
+  }
+  document.querySelectorAll('.todo button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var c = b.closest('.row').getAttribute('data-check'), st = b.getAttribute('data-mark');
+      if (marks[c] && marks[c].state === st) delete marks[c];
+      else marks[c] = { state: st, date: new Date().toLocaleDateString('de-DE'), report: created };
+      save(); render();
+    });
+  });
+  var reset = document.getElementById('checklist-reset');
+  if (reset) reset.addEventListener('click', function () { if (confirm('Alle Markierungen für diesen PC löschen?')) { marks = {}; save(); render(); } });
+  render();
 })();
 '@
 
-    $title = "pc-check · $env:COMPUTERNAME · $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+    $title = "$ProductName · $env:COMPUTERNAME · $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
     A '<!DOCTYPE html>'
     A '<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-    A "<title>$(HEnc $title)</title><style>$css</style></head><body>"
+    A "<title>$(HEnc $title)</title><style>$css</style></head><body data-pc=`"$(HEnc $env:COMPUTERNAME)`" data-created=`"$(Get-Date -Format 's')`">"
 
     # Kopf
     A '<header class="top"><div>'
-    A '<h1>pc-<span>check</span></h1>'
-    A ("<div class=`"meta`">{0} · {1} · Version {2} · Adminrechte: {3} · Dauer {4} s · Ereignisse der letzten {5} Tage</div>" -f (HEnc $env:COMPUTERNAME), (Get-Date -Format 'dd.MM.yyyy HH:mm'), $ScriptVersion, $(if ($script:IsAdmin) { 'ja' } else { 'nein (einige Prüfungen fehlen)' }), [int]$duration.TotalSeconds, $EventDays)
+    A "<h1>$ProductName <span>$ProductTagline</span></h1>"
+    A ("<div class=`"meta`">{0} · {1} · Version {2} · Adminrechte: {3} · Dauer {4} s · Ereignisse der letzten {5} Tage · Profil {6}</div>" -f (HEnc $env:COMPUTERNAME), (Get-Date -Format 'dd.MM.yyyy HH:mm'), $ScriptVersion, $(if ($script:IsAdmin) { 'ja' } else { 'nein (einige Prüfungen fehlen)' }), [int]$duration.TotalSeconds, $EventDays, $(if ($script:ProfileAuto) { "$($script:Profile) (automatisch)" } else { $script:Profile }))
     A '</div><div class="actions"><button type="button" class="btn" id="btn-ki" title="Kopiert die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage">🤖 Für KI-Assistent kopieren</button> <a class="btn" href="#anleitung">📖 So liest du den Bericht</a></div></header>'
 
     # Ampel und Zähler
@@ -2951,13 +3362,16 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
 
     # Werkzeugleiste
     A '<div class="toolbar"><div class="filters">'
-    A '<button type="button" data-filter="all" class="active">Alle</button><button type="button" data-filter="problem">Probleme</button><button type="button" data-filter="INFO">Hinweise</button><button type="button" data-filter="ACK">Akzeptiert</button><button type="button" data-filter="OK">OK</button><button type="button" data-filter="SKIP">Nicht geprüft</button>'
+    A '<button type="button" data-filter="all" class="active">Alle</button><button type="button" data-filter="problem">Probleme</button><button type="button" data-filter="TIPP">Tipps</button><button type="button" data-filter="INFO">Hinweise</button><button type="button" data-filter="ACK">Akzeptiert</button><button type="button" data-filter="OK">OK</button><button type="button" data-filter="SKIP">Nicht geprüft</button>'
     A '</div><input id="search" type="search" placeholder="Prüfungen durchsuchen …" aria-label="Prüfungen durchsuchen"></div>'
 
     # Navigation
     $cats = @($findings | ForEach-Object { "$($_.Area)|$($_.Category)" } | Select-Object -Unique)
     A '<div class="layout"><nav class="side">'
     A '<a href="#schritte">Nächste Schritte</a>'
+    A '<a href="#checkliste">Meine Checkliste</a>'
+    if ($gamingRows) { A '<a href="#gaming">Gaming-Check</a>' }
+    if ($charts) { A '<a href="#verlauf">Verlauf</a>' }
     if ($changes) { A '<a href="#aenderungen">Änderungen</a>' }
     if ($count.ACK) { A "<a href=`"#akzeptiert`">Akzeptiert <span class=`"cnt`" style=`"background:var(--violet)`">$($count.ACK)</span></a>" }
     if ($null -ne $updateResults) { A '<a href="#updates">Updates nach dem Lauf</a>' }
@@ -2982,7 +3396,35 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
         if ($todo.Count -gt 3) { A "<p class=`"muted`">Insgesamt $($todo.Count) Punkte mit Handlungsbedarf; alle zeigt der Filter „Probleme“.</p>" }
         A '</div>'
     }
-    else { A '<div class="card">Nichts zu tun. 🎉 Hinweise (blau) sind optionale Verbesserungen.</div>' }
+    else { A '<div class="card">Kein Handlungsbedarf. 🎉</div>' }
+    if ($tips) {
+        A '<div class="card"><h3 style="margin-bottom:6px">Lohnende Tipps</h3><p class="muted" style="margin:0 0 4px">Optional, sortiert nach Nutzen im Verhältnis zu Aufwand und Risiko. Die Anleitung steht jeweils unter „So geht''s“.</p><ol class="steps">'
+        foreach ($f in ($tips | Select-Object -First 5)) {
+            A "<li><a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a>$(Get-Levels $f)<div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
+        }
+        A '</ol>'
+        if ($tips.Count -gt 5) { A "<p class=`"muted`">Insgesamt $($tips.Count) Tipps; alle zeigt der Filter „Tipps“.</p>" }
+        A '</div>'
+    }
+
+    # Checkliste (wird im Browser aus den gespeicherten Markierungen aufgebaut)
+    A '<h2 id="checkliste">Meine Checkliste</h2><div class="card"><div id="checklist-body"><p class="muted">Lädt …</p></div>'
+    A '<p class="muted" style="margin-bottom:0">Markierungen speichert dein Browser für diesen PC. Öffnest du den nächsten Bericht im selben Browser, siehst du hier, was wirklich behoben ist. <button type="button" class="copy" id="checklist-reset">Markierungen löschen</button></p></div>'
+
+    # Gaming-Check: die spielerelevanten Prüfungen auf einen Blick
+    if ($gamingRows) {
+        A '<h2 id="gaming">Gaming-Check</h2><div class="card"><div class="gaming">'
+        foreach ($f in $gamingRows) {
+            $col = @{ CRIT = 'var(--red)'; WARN = 'var(--orange)'; TIPP = 'var(--magenta)'; ACK = 'var(--violet)'; INFO = 'var(--blue)'; OK = 'var(--green)'; SKIP = 'var(--b01)' }[$f.Status]
+            A "<div class=`"g-item`" style=`"border-left-color:$col`"><span class=`"badge b-$($f.Status)`">$($statusName[$f.Status])</span> <a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a><div class=`"v`">$(HEnc $f.Value)</div></div>"
+        }
+        A '</div></div>'
+    }
+
+    # Verlauf über die bisherigen Läufe
+    if ($charts) {
+        A "<h2 id=`"verlauf`">Verlauf</h2><div class=`"card`"><p class=`"muted`" style=`"margin-top:0`">Die letzten $($history.Count) Läufe. Punkte mit der Maus berühren für Datum und Wert.</p><div class=`"charts`">$charts</div></div>"
+    }
 
     # Änderungen seit dem letzten Lauf
     if ($changes) {
@@ -3028,7 +3470,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
         $okN = @($list | Where-Object Status -EQ 'OK').Count
         if ($okN) { $mini = @($mini) + "<span class=`"badge b-OK`">$okN OK</span>" }
         $catTip = if ($help -and $help.Kategorien[$cat]) { Get-InfoButton (HEnc $help.Kategorien[$cat]) } else { '' }
-        $open = if (@($list | Where-Object { $_.Status -in 'CRIT', 'WARN' }).Count) { ' open' } else { '' }
+        $open = if (@($list | Where-Object { $_.Status -in 'CRIT', 'WARN', 'TIPP' }).Count) { ' open' } else { '' }
         A "<details class=`"cat`" id=`"cat$i`"$open><summary>$(HEnc $cat)$catTip<span class=`"mini`">$($mini -join '')</span></summary>"
         foreach ($f in $list) { A (Get-Row $f $ids["$($f.Category)|$($f.Check)"]) }
         A '</details>'
@@ -3049,7 +3491,10 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
         A "<li><span class=`"badge b-$s`">$($statusName[$s])</span>$(HEnc $txt)</li>"
     }
     A '</ul><h3>So gehst du vor</h3><ol>'
-    A '<li>Oben zeigt die <b>Ampel</b> den Gesamtzustand, darunter stehen <b>die nächsten Schritte</b>, also die wichtigsten Punkte zuerst.</li>'
+    A '<li>Oben zeigt die <b>Ampel</b> den Gesamtzustand, darunter stehen <b>die nächsten Schritte</b>, also die wichtigsten Punkte zuerst, und die <b>lohnendsten Tipps</b>.</li>'
+    A '<li>Jeder Tipp trägt drei Kennzeichen: <b>Nutzen</b> (was es bringt), <b>Aufwand</b> (wie lange es dauert) und <b>Risiko</b> (was schiefgehen kann). Unter <b>„So geht''s“</b> steht der Weg durch die Einstellungen, oft mit einem Befehl zum Kopieren.</li>'
+    A '<li>Mit <b>„✔ erledigt“</b> und <b>„⏱ später“</b> baust du dir eine <b>Checkliste</b>. Öffnest du den nächsten Bericht im selben Browser, zeigt sie, was wirklich behoben ist.</li>'
+    A "<li>Die Empfehlungen richten sich nach dem <b>Profil</b> (hier: $(HEnc $script:Profile)). Passt es nicht, das Script mit <code>-Profil Gaming</code>, <code>Office</code> oder <code>Laptop</code> starten.</li>"
     A '<li>Klicke auf das <b>i-Symbol</b> neben einer Prüfung: Die Sprechblase erklärt, was geprüft wird, warum es wichtig ist und <b>wann eine Warnung harmlos ist</b>.</li>'
     A '<li>Ist eine Warnung bei dir bewusst so gewollt (z. B. ein Fernwartungsprogramm, das du nutzt), trag sie in <code>accepted.psd1</code> ein (Vorlage: <code>accepted.example.psd1</code>). Dann erscheint sie künftig als „Akzeptiert“.</li>'
     A '<li>Mit <b>Filter</b> und <b>Suche</b> oben blendest du alles aus, was gerade nicht interessiert. Ein Klick auf eine Zahl bei der Ampel filtert nach diesem Status.</li>'
@@ -3057,7 +3502,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
     A '<li>Vor Änderungen an BIOS, Treibern, BitLocker oder Sicherheitsfunktionen im Zweifel lieber jemanden fragen, der sich auskennt.</li>'
     A '</ol><p class="muted">Der Bericht enthält viele Details deines PCs. Gib ihn nicht unbedacht weiter.</p></div>'
 
-    A "</main></div><footer>pc-check $ScriptVersion · erstellt $(Get-Date -Format 'dd.MM.yyyy HH:mm') · Markdown- und JSON-Fassung liegen im selben Ordner.</footer>"
+    A "</main></div><footer>$ProductName – $ProductTagline $ScriptVersion · erstellt $(Get-Date -Format 'dd.MM.yyyy HH:mm') · Markdown- und JSON-Fassung liegen im selben Ordner.</footer>"
     A "<textarea id=`"ki-text`" readonly aria-hidden=`"true`">$(HEnc $ki.ToString())</textarea>"
     A "<script>$js</script></body></html>"
 
@@ -3072,5 +3517,66 @@ try {
     if (-not $NoOpen -and $interactive) { Start-Process explorer.exe -ArgumentList "`"$htmlPath`"" }
 }
 catch { Write-Warning "HTML-Bericht konnte nicht erstellt werden: $($_.Exception.Message)" }
+
+#endregion
+
+#region Update-Dialog (nach dem Bericht, nur mit ausdrücklicher Auswahl)
+
+$candidates = @($script:WingetUpdates | Where-Object Kategorie -EQ 'Programm')
+if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
+    Write-Host ''
+    Write-Host 'Für diese Programme gibt es Updates:' -ForegroundColor Yellow
+    for ($i = 0; $i -lt $candidates.Count; $i++) {
+        Write-Host ('  [{0}] {1}  {2} -> {3}' -f ($i + 1), $candidates[$i].Name, $candidates[$i].Installiert, $candidates[$i].Verfuegbar)
+    }
+    $skipped = @($script:WingetUpdates | Where-Object Kategorie -NE 'Programm')
+    if ($skipped) { Write-Host ("  Nicht angeboten: " + (($skipped | ForEach-Object { "$($_.Name) ($($_.Kategorie))" }) -join ', ')) -ForegroundColor DarkGray }
+    Write-Host '  winget lädt aus den Herstellerquellen und akzeptiert dabei die Lizenzbedingungen der Pakete.' -ForegroundColor DarkGray
+    $answer = Read-Host 'Welche aktualisieren? Nummern (z. B. 1,3), a = alle, Enter = keine'
+
+    $selected = @()
+    if ($answer -match '^\s*a\s*$') { $selected = $candidates }
+    elseif ($answer.Trim()) {
+        # Doppelte über die Nummer entfernen (Select-Object -Unique taugt für Objekte ohne Textdarstellung nicht)
+        $picked = @()
+        foreach ($tok in ($answer -split '[,;\s]+' | Where-Object { $_ })) {
+            if ($tok -match '^\d+$' -and [int]$tok -ge 1 -and [int]$tok -le $candidates.Count) { if ([int]$tok -notin $picked) { $picked += [int]$tok } }
+            else { Write-Host "  Ignoriert: '$tok'" -ForegroundColor DarkGray }
+        }
+        $selected = @($picked | ForEach-Object { $candidates[$_ - 1] })
+    }
+
+    $results = @()
+    if ($selected) {
+        $wg = (Get-Command winget.exe -ErrorAction SilentlyContinue).Source
+        foreach ($u in $selected) {
+            while ($true) {
+                Write-Host "`n=== Aktualisiere $($u.Name) ($($u.Installiert) -> $($u.Verfuegbar))" -ForegroundColor Cyan
+                & $wg upgrade --id $u.Id --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+                $code = $LASTEXITCODE
+                if ($code -eq 0) { $result = 'aktualisiert'; break }
+                # 0x8A150006: Installer abgebrochen, meist weil das Programm noch läuft
+                if ($code -eq -1978335226) {
+                    Write-Host '  Der Installer hat abgebrochen, meist weil das Programm noch läuft (bei Git: Git-Bash-Fenster schließen).' -ForegroundColor Yellow
+                    if ((Read-Host '  Programm schließen und erneut versuchen? (j/n)') -match '^\s*j') { continue }
+                    $result = 'abgebrochen (Programm lief noch)'
+                }
+                else { $result = 'fehlgeschlagen (Code {0})' -f $code }
+                break
+            }
+            Write-Host "  -> $result" -ForegroundColor $(if ($result -eq 'aktualisiert') { 'Green' } else { 'Red' })
+            $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = $result }
+        }
+    }
+    else { Write-Host '  Keine Updates ausgewählt.' }
+    $updateResults = @($results)
+
+    # Ergebnis an den Bericht anhängen
+    $lines = @('', "## Updates nach dem Lauf ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))", '')
+    if ($results) { $lines += (ConvertTo-MdTable $results) } else { $lines += '_Keine Updates ausgewählt._' }
+    [IO.File]::AppendAllText($mdPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
+    try { Write-HtmlReport -Path $htmlPath } catch { Write-Warning "HTML-Bericht konnte nicht aktualisiert werden: $($_.Exception.Message)" }
+    Write-Host "`nUpdate-Ergebnis an den Bericht angehängt (im Browser mit F5 neu laden)." -ForegroundColor Green
+}
 
 #endregion
