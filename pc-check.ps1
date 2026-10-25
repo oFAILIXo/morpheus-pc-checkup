@@ -57,7 +57,7 @@ param(
     [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto'
 )
 
-$ScriptVersion = '2.1.0'
+$ScriptVersion = '2.1.1'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
