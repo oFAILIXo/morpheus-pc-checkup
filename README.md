@@ -1,54 +1,205 @@
-# pc-check
+<p align="center">
+  <img src="docs/logo/morpheus-logo.png" alt="Morpheus – PC Check-up" width="480">
+</p>
 
-**Sicherheits- und Performance-Check für Windows-11-PCs – ein PowerShell-Script, ein verständlicher HTML-Bericht.**
+# Morpheus – PC Check-up
 
-pc-check prüft über 100 Punkte rund um Sicherheit, Leistung und Stabilität und erklärt jedes Ergebnis in Alltagssprache: *was* geprüft wird, *warum* es wichtig ist und *wann eine Warnung harmlos ist*. **Die Prüfung ändert nichts am System**, sie liest nur aus.
+Sicherheits- und Performance-Check für Windows-11-PCs mit Oberfläche. Die Prüfung liest nur. Empfehlungen lassen sich per Klick umsetzen, und jede Änderung ist durch einen Wiederherstellungspunkt abgesichert und einzeln rückgängig zu machen.
 
-> 🇬🇧 **English summary:** see [below](#english).
+> **Hinweis:** Die Prüfung ändert nichts am System. Die Oberfläche (GUI) ändert Einstellungen nur nach einem Klick und einer Bestätigung. Vor jeder Änderung wird ein Wiederherstellungspunkt angelegt.
 
-![Übersicht des HTML-Berichts mit Ampel und nächsten Schritten](docs/screenshots/01-uebersicht.png)
+![Übersicht der Oberfläche mit Zustandswert, nächsten Schritten, lohnenden Tipps und Live-Statusleiste](docs/screenshots/01-uebersicht.png)
 
-## Die interessantesten Features
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/02-sicherheit.png" alt="Bereich Sicherheit" width="260"><br><sub>Sicherheit</sub></td>
+    <td align="center"><img src="docs/screenshots/03-aenderungen.png" alt="Änderungsjournal mit Rückgängig" width="260"><br><sub>Änderungen</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/04-gaming.png" alt="Bereich Gaming" width="260"><br><sub>Gaming</sub></td>
+    <td align="center"><img src="docs/screenshots/05-berichte.png" alt="Liste aller Berichte" width="260"><br><sub>Berichte</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/06-rohdaten.png" alt="Rohdaten der Prüfungen" width="260"><br><sub>Rohdaten</sub></td>
+    <td></td>
+  </tr>
+</table>
 
-- **Ampel und „Nächste Schritte“** – auf einen Blick, ob der PC in Ordnung ist und was zuerst zu tun ist.
-- **Über 100 Prüfungen in 16 Kategorien** – von Defender, Firewall, Kernisolierung, Secure Boot (inkl. der neuen 2023er-Zertifikate), TPM und BitLocker über anfällige Treiber, Autostart, geplante Aufgaben und WMI-Persistenz bis zu RAM (XMP, Dual-Channel), Monitor-Bildwiederholrate, Energieplan, Gaming-Einstellungen und Bluescreens.
-- **Erklärung an jeder Prüfung** – das ⓘ-Symbol öffnet eine Sprechblase mit *Was / Warum / Wann harmlos*.
-- **Filter und Suche** – z. B. nur Probleme anzeigen oder gezielt nach „Treiber“ suchen.
-- **Vergleich mit dem letzten Lauf** – geänderte Ergebnisse sowie neue ➕ und verschwundene ➖ Dienste, Treiber, Autostarts, Firewall-Regeln, Programme, Browser-Erweiterungen, Konten und offene Ports. So fällt auf, wenn sich etwas Unbemerktes eingeschlichen hat.
-- **Akzeptanzliste** – bewusst gewollte Befunde (z. B. ein genutztes Fernwartungstool) als „Akzeptiert“ markieren, optional mit Ablaufdatum.
-- **„Für KI-Assistent kopieren“** – kopiert die Befunde **anonymisiert** (ohne PC-Name, Benutzer, IP-/MAC-Adressen, SIDs, E-Mail) in die Zwischenablage, um sie z. B. Claude oder ChatGPT zur Einschätzung zu geben.
-- **Update-Dialog am Ende** – listet verfügbare Programm-Updates (winget) und installiert nur, was du auswählst. Spiele, Launcher und selbstaktualisierende Programme bleiben außen vor.
-- **Offline und eigenständig** – eine einzelne HTML-Datei im Farbschema Solarized Dark, dazu Markdown und JSON.
+*Screenshots mit Demodaten (Gerät „DEMO-PC“), keine echten Ergebnisse.*
 
-| Kategorien mit Filter | Erklärung per ⓘ | Anleitung im Bericht |
-|---|---|---|
-| ![Kategorien](docs/screenshots/02-kategorien.png) | ![Erklärung](docs/screenshots/03-erklaerung.png) | ![Anleitung](docs/screenshots/04-anleitung.png) |
+## Schnellstart in 3 Schritten
 
-*Die Screenshots stammen aus einem Demo-Bericht mit anonymisierten Daten.*
+1. **Herunterladen und entpacken.** Auf GitHub **Code → Download ZIP** wählen. Zuerst **Rechtsklick auf das ZIP → Eigenschaften → unten „Zulassen“ anhaken → OK**, sonst blockiert Windows die Dateien. Dann das ZIP entpacken, z. B. nach `Dokumente\morpheus-pc-checkup`.
+2. **`pc-check-gui.cmd` doppelklicken** und die Adminabfrage (UAC) mit „Ja“ bestätigen. Beim ersten Start fragt Morpheus, ob es nach `C:\Program Files\Morpheus` installiert werden soll. **Enter = Ja.**
+3. **Künftig über das Startmenü starten:** „Morpheus – PC Check-up“.
 
-## Installation
+Zeigt Windows „Der Computer wurde durch Windows geschützt“: auf „Weitere Informationen“ → „Trotzdem ausführen“. Das erscheint bei Dateien ohne digitale Signatur.
 
-Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerShell 5.1 (vorinstalliert), Adminrechte empfohlen. winget (App-Installer) ist optional für die Update-Prüfung.
+**Warum installieren?** Die Oberfläche läuft mit Adminrechten. Deshalb muss der Code in einem Ordner liegen, den nur Administratoren ändern können. Ohne Installation, oder ohne Adminrechte, startet die GUI im **Nur-Lesen-Modus**: Anzeigen ja, Ändern und Scannen nein.
 
-**Variante A – ZIP (ohne Git):**
-
-1. Auf GitHub **Code → Download ZIP** wählen.
-2. **Rechtsklick auf das ZIP → Eigenschaften → unten „Zulassen“ anhaken → OK.** Sonst blockiert Windows die heruntergeladenen Dateien.
-3. ZIP entpacken, z. B. nach `Dokumente\pc-check`.
-
-**Variante B – Git:**
+Git-Variante:
 
 ```bash
-git clone https://github.com/oFAILIXo/pc-check.git
+git clone https://github.com/oFAILIXo/morpheus-pc-checkup.git
 ```
 
-## Nutzung
+Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerShell 5.1 (vorinstalliert), Microsoft Edge. Adminrechte werden empfohlen. winget (App-Installer) ist optional für die Update-Prüfung.
+
+## Features
+
+**Prüfen**
+- **Rund 100 Prüfungen** zu Sicherheit und Leistung: Updates, Virenschutz, Firewall, Treiber, Autostart, Hardware, Energie, Stabilität. Die Prüfung liest nur.
+- **Gaming-Check:** alle spielerelevanten Punkte auf einen Blick, z. B. Bildwiederholrate, HAGS, Spielebibliotheken.
+
+**Verstehen**
+- **Zustandswert 0–100:** wie gut der PC dasteht. Er ergibt sich aus den Befunden: 100 minus 20 je kritischem Befund, 5 je Warnung und 1 je Tipp.
+- **Erklärungen und Klickwege:** Jede Prüfung hat ein i-Symbol mit Erklärung. „So geht's“ zeigt den Klickweg oder einen Befehl zum Kopieren.
+- **„Für KI-Assistent kopieren“:** kopiert die Befunde **anonymisiert** (ohne PC-Name, Benutzer, IP- und MAC-Adressen, SIDs und E-Mail-Adressen) in die Zwischenablage. Den Text vor dem Einfügen trotzdem kurz durchlesen.
+
+**Verbessern**
+- **16 Anpassungen per Klick:** jede mit Bestätigungsdialog, Befehl zum Nachlesen und Erklärung.
+- **Checkliste:** Punkte als „erledigt“ oder „später“ markieren. Der nächste Lauf zeigt, was wirklich behoben ist.
+- **Update-Dialog am Ende:** listet Programm-Updates (winget) und installiert nur, was du auswählst.
+
+**Absichern**
+- **Wiederherstellungspunkt vor jeder Änderung**, Rückgängig für jede Änderung einzeln.
+- **Änderungsjournal** mit Verlauf aller Anpassungen.
+- **Akzeptanzliste** für Befunde, die bewusst so gewollt sind.
+- **24-Stunden-Sperre erkannt:** Die GUI zeigt ein Banner und erklärt, wie sie sich aufheben lässt.
+
+**Überwachen**
+- **Live-Statusleiste:** CPU, RAM, GPU mit Temperatur, Laufwerke, Netzwerk und Top-Prozesse. Dazu die Schutz-Ampeln aus dem Bericht. Auf Wunsch ein- und ausblendbar.
+- **Verlauf:** Probleme, Startdauer und freier Platz über die letzten Läufe.
+- **Berichtsvergleich:** zwei beliebige Berichte nebeneinander. Geänderte Ergebnisse sowie neue (➕) und verschwundene (➖) Dienste, Treiber, Autostarts, Firewall-Regeln, Programme, Browser-Erweiterungen, Konten und offene Ports fallen auf.
+
+## Bedienung
+
+| Bereich | Inhalt |
+|---|---|
+| Übersicht | Zustandswert, nächste Schritte, lohnendste Tipps, Verlauf |
+| Sicherheit | Befunde der Kategorien 1–10, je Befund mit passender Anpassung |
+| Leistung | Hardware, Laufwerke und Speicherplatz, Energie, Auslastung |
+| Gaming | Gaming-Check und Gaming & Grafik |
+| Stabilität | Abstürze, Hardwarefehler, Startdauer |
+| Alle Prüfungen | alle Prüfungen nach Bereich und Kategorie |
+| Checkliste | Punkte als „erledigt“ oder „später“ markieren |
+| Änderungen | Journal mit „↶ Rückgängig“ und Liste der Wiederherstellungspunkte |
+| Berichte | alle Läufe, Original-Bericht öffnen, zwei Berichte vergleichen |
+| Neuer Scan | Optionen, Start, Live-Protokoll; danach öffnet sich der neue Bericht |
+| Rohdaten | Detailtabellen hinter den Prüfungen |
+| Einstellungen | Profil, Zeitraum und Akzeptanzliste (Anzeige) |
+
+Die Suche liegt oben. Mit der Taste `/` springst du direkt dorthin.
+
+**Anpassung ausführen:** Die Karte bei einem Befund zeigt die Anpassung. „▸ Befehl zeigen und erklären“ zeigt den PowerShell-Befehl samt Erklärung. Dann „Ausführen“, im Dialog bestätigen und zum Schluss im Windows-Fenster „Morpheus – Änderung bestätigen“ auf „Ja“ klicken. Mehrere Anpassungen lassen sich gemeinsam ausführen. Ist das Ziel schon erreicht, steht dort „Bereits erledigt“. Mit „Daten ansehen“ springst du von einer Prüfung zur passenden Detailtabelle im Anhang.
+
+**Anpassung zurücknehmen:** Im Bereich **Änderungen** den Eintrag mit „↶ Rückgängig“ wählen. Hat sich der Zustand inzwischen anders geändert, fragt die GUI nach.
+
+**Berichte vergleichen:** Im Bereich **Berichte** zwei Zeilen ankreuzen und „Vergleichen“ wählen. Mit „Original-HTML“ öffnest du den unveränderten Bericht.
+
+**Neuer Scan:** Im Bereich **Neuer Scan** die Optionen wählen und starten. Das Live-Protokoll zeigt den Fortschritt. Danach öffnet sich der neue Bericht.
+
+**Den Bericht lesen:** Status je Prüfung: **Kritisch**, **Warnung**, **Tipp**, **Akzeptiert**, **Hinweis**, **OK**, **Nicht geprüft**. Ein Klick auf eine Zahl bei der Ampel filtert nach diesem Status. Tipps sind nach Nutzen im Verhältnis zu Aufwand und Risiko sortiert. Reine Informationen bleiben „Hinweis“.
+
+## Anpassungen per Klick
+
+Die Karten mit einer Anpassung erscheinen direkt beim passenden Befund.
+
+| Bereich | Anpassung | Neustart nötig |
+|---|---|---|
+| Sicherheit | Defender-Netzwerkschutz an | Nein |
+| Sicherheit | Schutz vor potenziell unerwünschten Apps an | Nein |
+| Sicherheit | ASR-Regeln für anfällige Treiber und LSASS-Diebstahl: blockieren oder nur protokollieren | Nein |
+| Sicherheit | Remoteunterstützung aus | Nein |
+| Sicherheit | Remotedesktop aus | Nein |
+| Sicherheit | LLMNR aus | Nein |
+| Sicherheit | Computerschutz (Wiederherstellungspunkte) einschalten | Nein |
+| Leistung | Schnellstart aus | Nein |
+| Sicherheit | LSA-Schutz an | Ja |
+| Sicherheit | Sperrliste anfälliger Treiber an | Ja |
+| Leistung | PCIe-Energieverwaltung (ASPM) aus | Nein |
+| Gaming | Spielmodus an | Nein |
+| Gaming | Hardwarebeschleunigte GPU-Planung an | Ja |
+| Gaming | Hintergrundaufnahme (Game DVR) aus | Nein |
+| Gaming | Mausbeschleunigung aus (wirkt nach Ab- und Anmelden) | Nein |
+| Gaming | Energiesparfunktionen der Netzwerkkarte aus (Verbindung ist kurz weg) | Nein |
+
+Neu gestartet wird nie automatisch. Bei Anpassungen mit Neustart zeigt die GUI einen Hinweis.
+
+**Nicht per Klick:** BIOS, Secure Boot, BitLocker, Treiber, Löschen, Konten und Firewall-Regeln gibt es nur als Anleitung. Sie lassen sich nicht sauber zurücknehmen.
+
+## Absicherung von Änderungen
+
+Jede Anpassung läuft in festen Schritten:
+
+1. Aktuellen Zustand lesen.
+2. Voraussetzungen prüfen.
+3. Wiederherstellungspunkt anlegen und prüfen. Fehlt er, wird nichts geändert.
+4. Eintrag im Änderungsjournal schreiben.
+5. Änderung ausführen.
+6. Kontrolle. Klappt sie nicht, wird sofort zurückgesetzt.
+
+**Rückgängig:** Jede Änderung lässt sich einzeln zurücknehmen und bekommt dafür einen eigenen Wiederherstellungspunkt. Rückgängig stellt exakt den alten Zustand her, auch wenn ein Wert vorher nicht existierte.
+
+**Alles zurück:** `rstrui.exe` startet die Systemwiederherstellung. Sie setzt auch Programme und Treiber zurück, die danach installiert wurden.
+
+### 24-Stunden-Sperre
+
+Windows legt standardmäßig höchstens einen Wiederherstellungspunkt pro 24 Stunden an. Die GUI zeigt dann ein Banner und lehnt Änderungen ab, für die kein neuer Punkt entsteht.
+
+Die Sperre lässt sich einmalig in einer Administrator-PowerShell aufheben:
+
+```powershell
+New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force
+```
+
+Rückgängig machen:
+
+```powershell
+Remove-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name SystemRestorePointCreationFrequency
+```
+
+Die GUI ändert diese Einstellung bewusst nicht selbst.
+
+**Ausnahme:** „Computerschutz einschalten“ läuft ohne Wiederherstellungspunkt, weil vorher keiner entstehen kann. Achtung: Dessen Rückgängig schaltet den Schutz aus und löscht alle Wiederherstellungspunkte.
+
+## Sicherheit der GUI
+
+Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
+
+- Der Server hört nur auf `127.0.0.1`.
+- Edge bekommt nur einen Einmal-Code. Die Oberfläche tauscht ihn gegen das Sitzungstoken. Das Token steht nie in einer Befehlszeile oder Adresse.
+- Host und Herkunft jeder Anfrage werden geprüft.
+- Die Oberfläche kann nur feste Aktionen aus dem Katalog auslösen, keine beliebigen Befehle.
+- Original-Berichte laufen im abgeschotteten Rahmen mit einmaliger Lesemarke.
+- Der Code liegt unter `C:\Program Files\Morpheus`, die Daten unter `C:\ProgramData\Morpheus`. Beides können nur Administratoren ändern.
+- Vor jeder Änderung wird ein Wiederherstellungspunkt geprüft. Jede Änderung lässt sich einzeln zurücknehmen.
+- **Jede Änderung und jedes Rückgängig bestätigt zusätzlich ein Windows-Dialog** („Morpheus – Änderung bestätigen“). Er gehört zum Prozess mit Adminrechten; Windows verhindert, dass Programme ohne Adminrechte darin klicken oder tippen. So kann auch ein Schadprogramm, das das Morpheus-Fenster fernsteuert, nichts ändern. „Nein“ ist vorbelegt.
+- Die Daten unter `C:\ProgramData\Morpheus` können nur Administratoren lesen und ändern. Berichte enthalten Programme, Konten und Netzwerkdetails; auch andere Benutzerkonten des PCs sehen sie nicht. Ansehen kannst du sie in Morpheus unter „Berichte“.
+- Der Server endet mit dem Fenster.
+
+## Wo liegen meine Daten?
+
+| Was | Installierte Fassung | Ohne Installation (Nur-Lesen) |
+|---|---|---|
+| Programm | `C:\Program Files\Morpheus` | Ordner, aus dem du startest |
+| Berichte | `C:\ProgramData\Morpheus\reports\` | Ordner `reports\` neben dem Script |
+| Änderungsjournal | `C:\ProgramData\Morpheus\changes\journal.json` | wie links, Ändern gesperrt |
+| Checkliste | `C:\ProgramData\Morpheus\state\checklist.json` | wie links |
+| Akzeptanzliste | `C:\ProgramData\Morpheus\accepted.psd1` | wie links |
+| Protokoll | `C:\ProgramData\Morpheus\state\gui.log` | wie links |
+
+Den Ordner können nur Administratoren lesen und ändern; Berichte siehst du in Morpheus unter „Berichte“. Vorhandene Berichte und die `accepted.psd1` übernimmt die Installation einmalig. Die Akzeptanzliste bearbeitest du nach der Installation als Administrator in `C:\ProgramData\Morpheus\accepted.psd1`.
+
+## Nur Scan (ohne Oberfläche)
+
+Gibt es eine aktuelle Installation unter `C:\Program Files\Morpheus`, startet `pc-check.cmd` den Scan aus dieser installierten Fassung. So bekommt Code aus einem Ordner, den auch Programme ohne Adminrechte ändern können, keine Adminrechte.
 
 1. **Doppelklick auf `pc-check.cmd`** und die Adminabfrage (UAC) mit „Ja“ bestätigen.
-   Zeigt Windows „Der Computer wurde durch Windows geschützt“: **Weitere Informationen → Trotzdem ausführen** (erscheint bei Dateien ohne digitale Signatur).
+   Zeigt Windows „Der Computer wurde durch Windows geschützt“: **Weitere Informationen → Trotzdem ausführen**.
 2. Der Lauf dauert etwa 4–6 Minuten.
 3. Am Ende fragt das Script, ob verfügbare Programm-Updates installiert werden sollen (`1,3`, `a` für alle, **Enter für keine**).
-4. Der **Bericht öffnet sich automatisch im Browser**. Er liegt im Unterordner `reports\` als `pc-check_<Datum>.html`, zusätzlich als `.md` und `.json`.
+4. Der **Bericht öffnet sich automatisch im Browser**. Er liegt im Unterordner `reports\` als `pc-check_<Datum>.html`, zusätzlich als `.md` (Text) und `.json` (für den Vergleich mit dem nächsten Lauf).
 
 Alternativ in einer **Administrator-PowerShell** im Ordner:
 
@@ -58,7 +209,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pc-check.ps1
 
 `-ExecutionPolicy Bypass` gilt nur für diesen Aufruf und ändert keine Einstellung. Ohne Adminrechte läuft das Script auch, lässt aber einige Prüfungen aus (BitLocker, TPM, Sicherheitsprotokoll …).
 
-### Parameter
+Die Dateien heißen aus Kompatibilitätsgründen weiterhin `pc-check.*`.
 
 | Parameter | Bedeutung |
 |---|---|
@@ -67,63 +218,103 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\pc-check.ps1
 | `-SkipUpdateSearch` | keine Online-Suche nach ausstehenden Windows-Updates |
 | `-SkipWinget` | keine Prüfung auf Software-Updates per winget |
 | `-NoUpdatePrompt` | keine Nachfrage nach Programm-Updates am Ende (rein lesender Lauf) |
-| `-CompareWith <json>` | mit diesem Bericht vergleichen statt mit dem jüngsten in `reports\` |
+| `-CompareWith <Pfad>` | mit diesem Bericht vergleichen statt mit dem jüngsten in `reports\` |
 | `-AcceptedFile <Pfad>` | andere Akzeptanzliste verwenden |
-| `-NoOpen` | HTML-Bericht nicht automatisch öffnen |
+| `-NoOpen` | HTML-Bericht am Ende nicht automatisch im Browser öffnen |
+| `-Profil Gaming` | Empfehlungen für `Gaming`, `Office` oder `Laptop` gewichten (Standard: automatisch, Laptop bei Akku, Gaming bei eigener Grafikkarte) |
 
-### Den Bericht lesen
+## Bewusst gewollte Befunde (`accepted.psd1`)
 
-Status je Prüfung: **Kritisch**, **Warnung**, **Akzeptiert**, **Hinweis**, **OK**, **Nicht geprüft**. Oben stehen Ampel und die wichtigsten nächsten Schritte, darunter die Änderungen seit dem letzten Lauf und alle Prüfungen nach Bereich. Ein Klick auf eine Zahl bei der Ampel filtert nach diesem Status. Unter jeder Kategorie lassen sich die **Rohdaten** aufklappen. Die Erklärungstexte stehen in `pc-check.hilfe.psd1`.
-
-### Bewusst gewollte Befunde (`accepted.psd1`)
+Manches ist auf deinem PC absichtlich so, z. B. ein genutztes Fernwartungsprogramm. Damit es nicht bei jedem Lauf als Warnung erscheint:
 
 1. `accepted.example.psd1` nach `accepted.psd1` kopieren.
 2. Einträge nach dem Beispiel in der Datei ergänzen; den Befund-Text aus dem eigenen Bericht übernehmen.
 
-Passende Befunde erscheinen dann als „Akzeptiert“. Ein enges Muster (`Match`) sorgt dafür, dass die Warnung zurückkehrt, sobald sich etwas ändert; mit `Until` meldet sich ein Punkt nach einem Datum wieder. `accepted.psd1` ist per `.gitignore` vom Repo ausgeschlossen.
+Passende Befunde erscheinen dann als „Akzeptiert“. Ein enges Muster (`Match`) sorgt dafür, dass die Warnung zurückkehrt, sobald sich etwas ändert. Mit `Until` meldet sich ein Punkt nach einem Datum wieder. `accepted.psd1` ist per `.gitignore` vom Repo ausgeschlossen.
 
-### Start aus einer Store-App
+## Update-Dialog am Ende
 
-Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse, die sie starten – auch mit Adminrechten. Wird pc-check aus so einer App heraus gestartet, können Ergebnisse unter `HKCU` abweichen; die Prüfung „Ausführungsumgebung“ warnt dann. Am besten per Doppelklick auf `pc-check.cmd` oder aus einem normalen PowerShell-Fenster starten.
+Nach dem fertigen Bericht listet das Script verfügbare **Programm**-Updates nummeriert auf und fragt, welche installiert werden sollen (`1,3`, `a` für alle, Enter für keine).
+
+- winget lädt die Updates aus den Herstellerquellen und **akzeptiert dabei die Lizenzbedingungen der Pakete**.
+- Nicht angeboten werden Spiele und Launcher, Programme mit eigener Update-Funktion (Edge, Teams, Outlook, VS Code, Autodesk Fusion) und Einträge, die winget kennt, Windows aber nicht mehr als installiert führt.
+- Bricht ein Installer ab, weil das Programm noch läuft, bietet der Dialog nach dem Schließen einen zweiten Versuch an.
+- Das Ergebnis wird als Abschnitt „Updates nach dem Lauf“ an den Bericht angehängt.
+
+## Start aus einer Store-App
+
+Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse, die sie starten, auch mit Adminrechten. Wird Morpheus aus so einer App heraus gestartet, können Ergebnisse unter `HKCU` abweichen. Die Prüfung „Ausführungsumgebung“ warnt dann. Am besten per Doppelklick auf `pc-check-gui.cmd` oder `pc-check.cmd` bzw. aus einem normalen PowerShell-Fenster starten.
 
 ## Datenschutz
 
 - Alles läuft **lokal**. Es werden keine Daten an den Autor oder Dritte geschickt.
 - Netzwerkzugriffe gibt es nur für die Windows-Update-Suche, winget und die UPnP-Abfrage am eigenen Router.
-- Der Bericht enthält viele Details deines PCs (Programme, Konten, Netzwerk, Treiber). Er bleibt im Ordner `reports\` und ist per `.gitignore` ausgeschlossen. **Nicht unbedacht weitergeben oder hochladen** – für Fragen an eine KI die anonymisierte Kopierfunktion nutzen und den Text vorher kurz durchlesen.
+- Der Bericht enthält viele Details deines PCs (Programme, Konten, Netzwerk, Treiber). Er bleibt lokal und ist per `.gitignore` ausgeschlossen. **Nicht unbedacht weitergeben oder hochladen.** Für Fragen an eine KI die anonymisierte Kopierfunktion nutzen und den Text vorher kurz durchlesen.
+
+## Was geprüft wird
+
+**Sicherheit:** Windows-Version und Updates, Defender (Status, Einstellungen, ASR-Regeln, Ausnahmen, Funde), Firewall und offene Ports, UPnP-Weiterleitungen am Router, SMB/Freigaben, Konten und Kennwortrichtlinie, UAC, Kernisolierung/Speicherintegrität, LSA-Schutz, Treiber-Sperrliste, Exploit-Schutz, Spectre-Tweaks, Secure Boot (inkl. 2023er-Zertifikate), TPM, BitLocker, BIOS, Fernzugriff (RDP, Fernwartungstools), Drittanbieter-Dienste und -Treiber (inkl. bekannt anfälliger Treiber), Dienstpfade, Autostart, geplante Aufgaben, WMI-Persistenz, Browser-Erweiterungen, veraltete Software, sicherheitsrelevante Ereignisse.
+
+**Performance:** CPU, RAM (XMP, Dual-Channel), GPU-Treiber, Bildwiederholrate der Monitore, Laufwerke (Typ, Zustand, Platz, TRIM), Auslagerungsdatei, Energieplan, Gaming-Einstellungen (Spielmodus, HAGS, Game DVR, Overlays), Resizable BAR und PCIe-Anbindung (NVIDIA), Spielebibliotheken (Laufwerk und Platz), Energiesparfunktionen der Netzwerkkarte, Grundlast, Autostart-Umfang, Netzwerk, Stabilität (Hardwarefehler, Bluescreens, Grafiktreiber-Abstürze, Drosselung, Programmabstürze, Startdauer).
 
 ## Nebenwirkungen (nicht am System)
 
 - `secedit` exportiert die Sicherheitsrichtlinie in eine Temp-Datei, die sofort gelöscht wird.
 - `Add-Type` kompiliert eine kleine Hilfsklasse zum Auslesen der Bildwiederholraten.
-- Nur der Update-Dialog installiert etwas – und nur, was du ausdrücklich auswählst. winget akzeptiert dabei die Lizenzbedingungen der Pakete.
+- Windows-Update-Suche, winget und die UPnP-Abfrage gehen ins Netz bzw. zum Router.
+- Nur der Update-Dialog installiert etwas, und nur, was du ausdrücklich auswählst.
 
-## Nutzung auf eigene Verantwortung
+## Tests
 
-pc-check ist ein privates Hilfsmittel ohne Gewähr. Die Empfehlungen im Bericht sind Hinweise, keine Anweisungen: Vor Änderungen an Treibern, BIOS, BitLocker oder Sicherheitsfunktionen im Zweifel nachlesen oder fachkundig nachfragen.
+Die Tests laufen mit Pester 3.4, das in Windows enthalten ist. Aufruf im Projektordner:
+
+```powershell
+Invoke-Pester .\tests
+```
+
+Die Tests ändern nichts am System. Wiederherstellungspunkte und Aktionen werden nur gelesen bzw. mit Attrappen geprüft.
+
+## Deinstallation
+
+Morpheus gibt es nicht als Installationsprogramm. So entfernst du es:
+
+1. Den Startmenü-Eintrag „Morpheus – PC Check-up“ löschen.
+2. Als Administrator die Ordner `C:\Program Files\Morpheus` und `C:\ProgramData\Morpheus` löschen. Der zweite Ordner enthält deine Berichte und dein Journal. Vorher sichern, falls du sie behalten willst.
+3. Den Ordner mit dem heruntergeladenen ZIP oder Git-Klon löschen.
+
+Änderungen am System, die Morpheus vorgenommen hat, bleiben beim Löschen bestehen. Vorher gegebenenfalls in den Bereichen **Änderungen** zurücknehmen oder mit `rstrui.exe` einen früheren Punkt wählen.
 
 ## Pflege (Stand: Oktober 2026)
 
-Einige Prüfungen enthalten feste Daten, die mit der Zeit veralten:
+Einige Prüfungen enthalten feste Daten, die mit der Zeit veralten und gelegentlich aktualisiert werden sollten:
 
-- Supportende der Windows-11-Versionen (bis 25H2)
+- Supportende der Windows-11-Versionen (Prüfung „Windows-Version“, bis 25H2)
 - Mindestversionen bzw. Supportende von Software (WinRAR, 7-Zip, Node.js, Python, Office …)
 - Liste bekannt anfälliger Treiber
-- Liste der Spiele-Launcher und selbstaktualisierenden Programme (`Get-UpdateCategory`)
-- Erklärungstexte (`pc-check.hilfe.psd1`)
+- Liste der Spiele-Launcher und selbstaktualisierenden Programme (Funktion `Get-UpdateCategory`)
+- Erklärungen, Tipps und Klickwege im HTML-Bericht (`pc-check.hilfe.psd1`)
+- Bekannt harmlose Ereignisse (`$script:KnownHarmless` im Script)
+- Aktionskatalog der GUI (`pc-check.aktionen.ps1`)
 
 Hinweise und Verbesserungen gern als Issue.
 
+## Nutzung auf eigene Verantwortung
+
+Morpheus ist ein privates Hilfsmittel ohne Gewähr. Die Empfehlungen im Bericht sind Hinweise, keine Anweisungen. Vor Änderungen an Treibern, BIOS, BitLocker oder Sicherheitsfunktionen im Zweifel nachfragen oder nachlesen. Die Prüfung selbst ändert nichts. Die GUI ändert Einstellungen nur auf ausdrückliche Klicks und nach Bestätigung.
+
 ---
 
-<a id="english"></a>
-## 🇬🇧 English
+## English
 
-**pc-check** is a read-only PowerShell script for Windows 11 that runs 100+ security, performance and stability checks (Defender, firewall, core isolation, Secure Boot, TPM, vulnerable drivers, autostart, scheduled tasks, RAM/XMP, refresh rate, power plan, gaming settings, crashes …) and produces a self-contained HTML report with a traffic-light summary, next steps, filter and search, a comparison with the previous run, and an anonymised “copy for AI assistant” button. At the end it optionally offers program updates via winget – nothing is installed unless you select it.
+**Morpheus – PC Check-up** is a security and performance check for Windows 11 PCs with a GUI. The scan reads only. It runs about 100 checks (Defender, firewall, core isolation, Secure Boot, TPM, vulnerable drivers, autostart, RAM/XMP, refresh rate, power plan, gaming settings, crashes …). The GUI applies recommendations per click. Every change is protected by a restore point and can be reverted individually. The report texts are currently German only.
 
-**Quick start:** download the ZIP (right-click → Properties → *Unblock*), extract it, double-click `pc-check.cmd` and confirm the UAC prompt. The report opens in your browser and is stored in `reports\`.
+**Quick start (3 steps):**
 
-> Note: the report texts and explanations are currently **German only**.
+1. Download the ZIP and extract it. First right-click the ZIP → Properties → tick *Unblock* → OK.
+2. Double-click `pc-check-gui.cmd`, confirm the UAC prompt and the installation (Enter = yes).
+3. Afterwards start it from the Start menu: "Morpheus – PC Check-up".
+
+Without installation or without admin rights the GUI runs in read-only mode. The scan-only script is `pc-check.cmd`. The files are still named `pc-check.*` for compatibility.
 
 ## Lizenz / License
 

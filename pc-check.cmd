@@ -9,7 +9,8 @@ if not exist "%PCCHECK%" (
     pause
     exit /b 1
 )
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -NoExit -File \"' + $env:PCCHECK + '\"')"
+rem Erst ohne Adminrechte: pc-check-start.ps1 waehlt die sichere Fassung (installiert unter Program Files, falls aktuell)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0pc-check-start.ps1"
 if errorlevel 1 (
     echo Der Start wurde abgebrochen, z. B. weil die Adminabfrage abgelehnt wurde.
     pause
