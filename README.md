@@ -61,7 +61,7 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 - **„Für KI-Assistent kopieren“:** kopiert die Befunde **anonymisiert** (ohne PC-Name, Benutzer, IP- und MAC-Adressen, SIDs und E-Mail-Adressen) in die Zwischenablage. Den Text vor dem Einfügen trotzdem kurz durchlesen.
 
 **Verbessern**
-- **16 Anpassungen per Klick:** jede mit Bestätigungsdialog, Befehl zum Nachlesen und Erklärung.
+- **17 Anpassungen per Klick:** jede mit Bestätigungsdialog, Befehl zum Nachlesen und Erklärung.
 - **Checkliste:** Punkte als „erledigt“ oder „später“ markieren. Der nächste Lauf zeigt, was wirklich behoben ist.
 - **Update-Dialog am Ende:** listet Programm-Updates (winget) und installiert nur, was du auswählst.
 
@@ -124,6 +124,7 @@ Die Karten mit einer Anpassung erscheinen direkt beim passenden Befund.
 | Sicherheit | Remotedesktop aus | Nein |
 | Sicherheit | LLMNR aus | Nein |
 | Sicherheit | Computerschutz (Wiederherstellungspunkte) einschalten | Nein |
+| Sicherheit | Speicher für Wiederherstellungspunkte auf 10 % vergrößern | Nein |
 | Leistung | Schnellstart aus | Nein |
 | Sicherheit | LSA-Schutz an | Ja |
 | Sicherheit | Sperrliste anfälliger Treiber an | Ja |
@@ -314,6 +315,7 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 
 ## Versionen
 
+- **2.3.2:** Prüfung „Wiederherstellung“ unterscheidet „Computerschutz aus“ und „Speicher zu klein“ (zeigt die Grenze und von Windows gelöschte Punkte); neue Anpassung „Speicher für Wiederherstellungspunkte vergrößern“; Warnung, wenn der Speicher zu klein ist; Zustände aller Anpassungen werden beim Start gelesen, „Ausführen“ erscheint nur noch bei offenen Punkten.
 - **2.3.1:** Befunde und unsignierte Systemdateien (je SHA256) in der GUI akzeptieren und zurücknehmen, nur nach Windows-Bestätigung; Prüfhilfe für unsignierte Systemdateien mit „Mit Defender prüfen“ je Datei, VirusTotal-Link und Hash kopieren; breites Layout für WQHD und größer; „Scan starten“ orange umrandet; Tabellen mit deckender Fläche, Zebra-Zeilen, festem Kopf und besserem Kontrast.
 - **2.3.0:** Sysinternals-Werkzeuge Autoruns und Sigcheck: Bezug nur auf Klick in „Werkzeuge“ mit Lizenz-Zustimmung und Windows-Bestätigung, Ablage nur für Administratoren, Signatur- und Hash-Prüfung vor jedem Start; drei neue Prüfungen (Autostart-Signaturen, beschreibbare Autostart-Pfade, unsignierte Systemdateien) mit Tabellen; Schalter `-SkipSysinternals`; neues Design.
 - **2.2.0:** Defender-Werkzeuge (Signaturen, Schnellscan, Offline-Scan mit doppelter Bestätigung und 15-s-Countdown, Knopf am Befund, Ansicht „Werkzeuge“); Prüfung „Datensicherung“; größte Speicherverbraucher je Laufwerk (Statusleiste, Scan mit `-SkipSpeicher`, „Neu berechnen“ in der GUI); Spieleliste für Steam, Epic, GOG, EA, Ubisoft und Xbox inkl. eigener Spiele-Ordner; Härtung: nur lokale Pfade aus Launcher-Dateien, keine Junctions.

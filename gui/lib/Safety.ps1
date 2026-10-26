@@ -445,6 +445,29 @@ function Get-PcCheckActionStates {
 }
 
 # Schnell (nur Registry und Journal, kein Get-ComputerRestorePoint)
+# Speichergrenze der Schattenkopien auf dem Systemlaufwerk (nur mit Adminrechten lesbar), 60 s zwischengespeichert,
+# weil /api/session häufig abgefragt wird. klein = unter 5 % bzw. 8 GB: Windows löscht dann ältere Punkte schnell.
+function PcCheckSafetyShadowLimit {
+    if ($script:PcCheckSafetyShadowCache -and (((Get-Date) - $script:PcCheckSafetyShadowCache.Zeit).TotalSeconds -lt 60)) { return $script:PcCheckSafetyShadowCache.Wert }
+    $res = $null
+    try {
+        $lw = $env:SystemDrive; if (-not $lw) { $lw = 'C:' }
+        $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$lw'" -ErrorAction Stop
+        $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { $_.Volume.DeviceID -eq $vol.DeviceID }) | Select-Object -First 1
+        if ($ss) {
+            $max = [uint64]$ss.MaxSpace
+            if ($max -eq [uint64]::MaxValue) { $res = [pscustomobject]@{ klein = $false; text = 'unbegrenzt' } }
+            else {
+                $pct = [Math]::Round(100 * [double]$max / [double]$vol.Capacity, 1)
+                $res = [pscustomobject]@{ klein = (($pct -lt 5) -or ([double]$max -lt 8GB)); text = ('{0:N1} GB ({1} %)' -f ([double]$max / 1GB), $pct) }
+            }
+        }
+    }
+    catch { $res = $null }
+    $script:PcCheckSafetyShadowCache = @{ Zeit = Get-Date; Wert = $res }
+    $res
+}
+
 function Get-PcCheckSafetyStatus {
     [CmdletBinding()]
     param([string]$Root, [string]$DataRoot)
@@ -464,6 +487,8 @@ function Get-PcCheckSafetyStatus {
     } catch { $last = $null }
     $sperre = $true
     if (($null -ne $freq) -and ([int64]$freq -eq 0)) { $sperre = $false }
+    $sp = $null
+    if (($interval -eq 1) -and ($disable -ne 1)) { $sp = PcCheckSafetyShadowLimit }
     [pscustomobject]@{
         schutzAn     = (($interval -eq 1) -and ($disable -ne 1))
         laufwerk     = $drive
@@ -471,6 +496,8 @@ function Get-PcCheckSafetyStatus {
         letzterPunkt = $last
         befehl       = (PcCheckSafetyCommandFrequency)
         befehlSchutz = (PcCheckSafetyCommandEnable)
+        speicherKlein = [bool]($sp -and $sp.klein)
+        speicherMax  = $(if ($sp) { $sp.text } else { $null })
     }
 }
 
