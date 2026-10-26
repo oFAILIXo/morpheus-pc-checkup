@@ -1,4 +1,7 @@
-/* Morpheus – PC Check-up: Design v2.1 (Solarized Dark, Vorlage docs/gui-design-v2.html) */
+/* Morpheus – PC Check-up: Design v3 (Solarized Dark)
+   Orange hat zwei Rollen: Warnung = getönte Fläche + oranger Text im Inhalt.
+   Marken-Akzent (--accent) = nur Linie, Rahmen oder Glow im Rahmen der App, Schrift nie orange,
+   höchstens 3 Stellen je Bildschirm: Neuer Scan, Menü-Überschriften/aktiver Punkt, Seitentitel. */
 :root{
   /* Solarized (unverändert) */
   --b03:#002b36;--b02:#073642;--b01:#586e75;--b00:#657b83;--b0:#839496;--b1:#93a1a1;--b2:#eee8d5;--b3:#fdf6e3;
@@ -12,6 +15,8 @@
   --mono:"Cascadia Mono",Consolas,monospace;
   /* helle Töne für Text auf getönten Flächen */
   --t-orange:#f07b4f;--t-magenta:#ec6aa8;--t-green:#a8bd2e;--t-blue:#5ab0f0;--t-cyan:#4fcfc2;--t-red:#f26462;--t-yellow:#e0b23a;--t-violet:#9a9ee0;
+  /* Marken-Akzent (nur Linie, Rahmen, Glow) */
+  --accent:var(--orange);--accent-soft:#cb4b1666;
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -28,24 +33,25 @@ svg.i{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-widt
 
 /* ---------------------------------------------------------------- Layout */
 .app{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh}
-.col{min-width:0}
+.col{min-width:0;background:linear-gradient(180deg,#00222bb0 0,#00222bd9 45%,#00222bf5 100%) fixed,url(assets/morpheus-backdrop.jpg) center top/cover no-repeat fixed,var(--bg)}
 aside.side{background:linear-gradient(180deg,#05303b,#032833);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow:auto}
-.logo{padding:20px 18px 10px}
-.logo img{display:block;width:212px;max-width:100%;height:auto}
+.logo{padding:18px 14px 8px}
+.logo img{display:block;width:220px;max-width:100%;height:auto}
 nav#nav{padding:0 0 6px}
 .navgroup{padding:2px 12px}
-.navh{margin:14px 10px 6px;font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--b01);font-weight:600}
+.navh{margin:14px 10px 6px;font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--b01);font-weight:600;display:flex;align-items:center;gap:8px}
+.navh::before{content:"";width:12px;height:2px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent-soft);flex:none}
 nav a{display:flex;align-items:center;gap:11px;padding:8px 10px;border-radius:var(--r-sm);color:var(--b1);font-size:13.5px;transition:background .15s,color .15s;text-decoration:none}
 nav a:hover{background:#ffffff08;color:var(--b2)}
-nav a.on{background:linear-gradient(90deg,#2aa19826,#2aa19808);color:var(--b3);box-shadow:inset 2px 0 0 var(--cyan)}
-nav a.on svg{color:var(--cyan)}
+nav a.on{background:linear-gradient(90deg,#ffffff12,#ffffff03);color:var(--b3);box-shadow:inset 2px 0 0 var(--accent),inset 10px 0 12px -10px var(--accent-soft)}
+nav a.on svg{color:var(--b2)}
 nav a .cnt{margin-left:auto;font-size:11px;font-weight:600;padding:1px 7px;border-radius:10px;white-space:nowrap}
 .cnt.c{background:#dc322f2e;color:var(--t-red)}.cnt.w{background:#cb4b1626;color:var(--t-orange)}.cnt.t{background:#d3368226;color:var(--t-magenta)}.cnt.n{background:#ffffff0d;color:var(--b0)}.cnt.i{background:#268bd226;color:var(--t-blue)}
 .side-foot{margin-top:auto;padding:14px 18px;border-top:1px solid var(--line);font-size:12px;color:var(--b01);display:flex;gap:10px;align-items:center}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px #85990026;flex:none}
 
 /* Kopfleiste */
-.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:12px 32px;background:#00222bd9;backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:12px 32px;background:#00222bb8;backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .crumb{color:var(--b01);font-size:13px;min-width:0}.crumb b{color:var(--b2);font-weight:600}
 .search{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line2);border-radius:10px;padding:6px 12px;width:260px;max-width:100%;color:var(--b01)}
 .search:focus-within{border-color:var(--cyan)}
@@ -61,12 +67,18 @@ nav a .cnt{margin-left:auto;font-size:11px;font-weight:600;padding:1px 7px;borde
 .btn.ghost{background:transparent}
 .btn.ghost[aria-pressed=true]{border-color:#2aa19860;color:var(--t-cyan)}
 .btn.sm{padding:5px 10px;font-size:12px;border-radius:7px}
-.btn.danger{border-color:var(--orange);color:var(--t-orange)}
+/* einziger Akzent-Button (Neuer Scan): dunkler Grund, oranger Rahmen und Glow, helle Schrift */
+.btn.brand{background:#06303a;border-color:var(--accent);color:var(--b3);box-shadow:0 0 18px -6px var(--accent),inset 0 0 14px -10px var(--accent)}
+.btn.brand svg{color:var(--accent)}
+.btn.brand:hover{background:#0b3944;border-color:var(--accent);color:var(--b3);box-shadow:0 0 24px -4px var(--accent),inset 0 0 14px -8px var(--accent)}
+.btn.danger{border-color:var(--red);color:var(--t-red)}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn.link{border:0;background:none;color:var(--blue);padding:0;box-shadow:none;font-weight:400}
 
 main{padding:28px 32px 60px;max-width:1240px;min-width:0;container-type:inline-size}
 h1{margin:0;color:var(--b3);font-size:26px;font-weight:600;letter-spacing:-.2px}
+main h1::after{content:"";display:block;width:32px;height:2px;margin-top:9px;border-radius:1px;background:var(--accent);box-shadow:0 0 8px var(--accent-soft)}
+.noaccent h1::after{display:none}
 .sub{color:var(--b01);margin:4px 0 22px;font-size:13px}
 h2{color:var(--b2);font-size:15px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 h2 .hint{margin-left:auto;font-weight:400;font-size:12px;color:var(--b01)}
@@ -218,6 +230,19 @@ td button,td .ok,td .rem,td .warn,td .muted,td .btn{white-space:nowrap}
 th{white-space:nowrap;color:var(--b1);font-weight:600;background:#0a3f4b;position:sticky;top:0}
 tr:last-child td{border-bottom:0}
 
+/* Datentabellen (#47): eigener Scrollbereich, deckende Fläche, Zebra, Kontrast >= 4.5:1
+   Text --b1 (#93a1a1): 5.60:1 auf --b03 (#002b36), 4.85:1 auf --b02 (#073642); Hover #0b4150 mit --b2: 9.1:1 */
+.tbl-scroll{overflow:auto;max-height:70vh;background:var(--b03);border:1px solid var(--line2);border-radius:8px;max-width:100%}
+.card>.tbl-scroll{margin-bottom:6px}
+.tbl-scroll table{width:100%;font-size:13px}
+.tbl-scroll th,.tbl-scroll td{color:var(--b1);border-bottom:1px solid var(--line)}
+.tbl-scroll th{position:sticky;top:0;z-index:2;background:#0a3f4b;color:var(--b2);box-shadow:0 1px 0 var(--line2)}
+.tbl-scroll tbody tr{background:var(--b03)}
+.tbl-scroll tbody tr:nth-child(even){background:var(--b02)}
+.tbl-scroll tbody tr:hover{background:#0b4150}
+.tbl-scroll tbody tr:hover td{color:var(--b2)}
+.tbl-scroll td.mono,.tbl-scroll th.mono,td.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere;word-break:break-all}
+
 /* Formulare */
 input,select,textarea{font:inherit;background:var(--b03);color:var(--b1);border:1px solid var(--line2);border-radius:7px;padding:5px 9px;max-width:100%}
 input[type=checkbox]{accent-color:var(--cyan);width:15px;height:15px;padding:0}
@@ -330,6 +355,15 @@ button.srow[disabled]:hover{background:none;color:var(--b1)}
   .app:not(.st-off) aside.status{display:block}
 }
 @media (max-width:1399px){#st-toggle{display:none}}
+/* breite Fenster (#46): bis 1920 px unverändert */
+@media (min-width:1921px){
+  .app:not(.st-off){grid-template-columns:248px minmax(0,1fr) clamp(280px,16vw,400px)}
+  main{max-width:1864px}
+}
+@container (min-width:1500px){
+  /* auto-fit: leere Spalten fallen weg, zwei Karten füllen die Breite, ab drei Karten gibt es drei Spalten */
+  .g-2{grid-template-columns:repeat(auto-fit,minmax(480px,1fr))}
+}
 @container (max-width:760px){
   .g-hero,.g-2{grid-template-columns:minmax(0,1fr)}
   .row{grid-template-columns:minmax(0,1fr) auto}
@@ -348,7 +382,7 @@ button.srow[disabled]:hover{background:none;color:var(--b1)}
   .navgroup{display:flex;flex-wrap:wrap;gap:2px;padding:0 8px 8px}
   .navh,.side-foot{display:none}
   nav a{padding:7px 9px;gap:6px;font-size:13px}
-  nav a.on{box-shadow:inset 0 -2px 0 var(--cyan)}
+  nav a.on{box-shadow:inset 0 -2px 0 var(--accent)}
   .top{position:static;flex-wrap:wrap;padding:10px 16px;gap:8px}
   .crumb{flex:1 1 100%}
   .search{order:5;flex:1 1 100%;margin-left:0;width:auto}
@@ -374,3 +408,45 @@ button.tile{all:unset;box-sizing:border-box;display:block;cursor:pointer;backgro
 button.tile:hover{border-color:var(--line2)}
 button.tile:focus-visible{outline:2px solid var(--cyan)}
 .section-title h3{position:relative}
+
+/* ---------------------------------------------------------------- Werkzeuge, Defender-Dialoge */
+.deftool{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;font-size:12.5px}
+label.chk{display:flex;align-items:flex-start;gap:9px;margin-top:14px;color:var(--b1);cursor:pointer}
+label.chk input{margin-top:3px}
+.cd-num{font-size:72px;font-weight:600;line-height:1.1;color:var(--t-orange);text-align:center;margin:10px 0 0;font-variant-numeric:tabular-nums}
+.cd-txt{text-align:center;color:var(--b1);margin:0 0 6px}
+.card.muted{font-size:12.5px;padding:14px 20px}
+
+/* ---------------------------------------------------------------- Speicher-Fenster an der Laufwerkskarte */
+.drow{cursor:pointer;border-radius:8px;padding:5px 6px;margin:0 -6px}
+.drow:hover{background:#ffffff08}
+.drow:focus-visible{outline:2px solid var(--cyan);outline-offset:0}
+.drow[aria-expanded=true]{background:#2aa1981a}
+.sp-pop{position:fixed;z-index:60;top:12px;left:12px;width:480px;max-width:calc(100vw - 16px);overflow:auto;background:var(--surface);border:1px solid var(--line2);border-radius:var(--r);box-shadow:0 24px 60px -16px #000,var(--shadow);padding:14px 16px;font-size:12.5px;color:var(--b0)}
+.sp-pop:focus-visible{outline:none}
+.sp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
+.sp-head b{color:var(--b3);font-size:14px;font-weight:600;min-width:0;overflow-wrap:anywhere}
+.sp-sec{margin-top:12px}
+.sp-sec h4{margin:0 0 4px;font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--b1);font-weight:600}
+button.sp-item{all:unset;box-sizing:border-box;display:block;width:100%;padding:5px 6px;margin:0 -6px;border-radius:7px;cursor:pointer;color:var(--b1)}
+button.sp-item:hover{background:#ffffff0a;color:var(--b3)}
+button.sp-item:focus-visible{outline:2px solid var(--cyan)}
+.sp-top{display:flex;align-items:center;gap:8px}
+.sp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-size{margin-left:auto;color:var(--b3);font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.sp-bar{display:block;height:4px;border-radius:2px;background:#ffffff12;margin-top:3px;overflow:hidden}
+.sp-bar i{display:block;height:100%;border-radius:2px;background:var(--cyan)}
+.sp-sub{display:block;font-size:11px;color:var(--b01);margin-top:2px}
+.sp-foot{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
+.sp-pop p{margin:8px 0}
+
+/* Eigene Spiele-Ordner (Abschnitt 14.8) */
+.spo-row{display:grid;grid-template-columns:120px 1fr auto;gap:8px;align-items:center;margin:6px 0}
+.spo-row input{min-width:0;width:100%}
+.spo-row select{width:100%}
+@media (max-width:640px){.spo-row{grid-template-columns:1fr auto}.spo-row select{grid-column:1 / -1}}
+
+/* Sysinternals (Abschnitt 15) */
+pre.log.eula{max-height:340px;min-height:120px}
+/* Scan-Protokoll: nutzt die Fensterhöhe unter den Optionen (2.3.1), mindestens 320 px */
+pre.log.scanlog{height:calc(100vh - 340px);min-height:320px;max-height:none;font-size:13.5px}

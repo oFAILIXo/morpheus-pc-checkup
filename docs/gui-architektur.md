@@ -1,6 +1,6 @@
 # pc-check GUI (v2.0): Architektur
 
-Stand: 25.10.2026 · Karte: oFAILIXo/pc-check-dev#24 · Branch `feature/v2.0-gui`
+Stand: 26.10.2026 (Version 2.3.1)
 
 Dieses Dokument ist der Vertrag für alle Teilaufgaben. Wer an einem Teil arbeitet, hält sich an Dateinamen, API und Schema. Abweichungen erst hier eintragen, dann umsetzen.
 
@@ -291,7 +291,7 @@ T1, T2 und T4 laufen parallel, da sie getrennte Dateien bearbeiten. T3 kommt nac
 
 | Methode und Pfad | Antwort / Zweck |
 |---|---|
-| `GET /assets/<name>.png\|svg` | Bilder aus `gui/assets/` (Name `^[a-z0-9-]+\.(png\|svg)$`), ohne Token; `/favicon.ico` = `morpheus-icon.png` |
+| `GET /assets/<name>.png\|svg\|jpg` | Bilder aus `gui/assets/` (Name `^[a-z0-9-]+\.(png\|svg\|jpg)$`), ohne Token; `/favicon.ico` = `morpheus-icon.png` |
 | `GET /api/live` | Letzter Schnappschuss `{ stand, cpu, ram, gpu, net, top, drives, verlauf }`; erster Abruf `{ stand: null }` |
 
 Den Schnappschuss sammelt ein Hintergrund-Runspace alle 2 s, aber nur, solange `/api/live` in den letzten 20 s abgefragt wurde. Der Server-Thread blockiert dabei nie.
@@ -305,3 +305,326 @@ Die GUI führt ihren Code mit Adminrechten aus. Deshalb gilt:
 - `pc-check-gui.ps1`: sicher -> normaler Betrieb; unsicher + Admin -> Rückfrage „Installieren? [J/n]“, bei Nein oder ohne Adminrechte **Nur-Lesen-Modus** (`-ReadOnly` erzwingt ihn, `-NoInstallPrompt` für Tests). Im Nur-Lesen-Modus bleiben die Datenpfade beim Quellordner.
 - `GET /api/session` liefert zusätzlich `readOnly`, `readOnlyReason`, `dataRoot`. Im Nur-Lesen-Modus antworten `POST /api/actions/run`, `POST /api/journal/<id>/undo` und `POST /api/scan` mit 403.
 - Safety: alle Journal-Funktionen nehmen `-DataRoot` (Standard `-Root`). `Undo-PcCheckChange` prüft vor dem Ausführen, dass `vorher.zustand` zur Form passt, die `Lesen` liefert (gleiche Eigenschaftsnamen und Grundformen), sonst „Journal-Eintrag passt nicht zur Aktion“.
+
+## 14. Ergänzungen v2.2 (Vertrag für alle Teilaufgaben)
+
+
+
+### 14.1 Neue Dateien
+
+Alle unter `gui\lib\` und damit automatisch in `Get-MorpheusCodeFiles` (Muster `gui\lib\*.ps1`). UTF-8 mit BOM, Windows PowerShell 5.1. **Keine Funktion ändert etwas am System**, außer den drei Defender-Funktionen in 14.4.
+
+| Datei | Inhalt | geladen von |
+|---|---|---|
+| `gui\lib\Speicher.ps1` | Speicherverbraucher (#36) und Spieleliste (#38) | `pc-check.ps1` (Dot-Source), Job `speicher` |
+| `gui\lib\Sicherung.ps1` | Datensicherung erkennen und bewerten (#35) | `pc-check.ps1` (Dot-Source) |
+| `gui\lib\Defender.ps1` | Defender-Stand, Signaturen, Schnellscan, Offline-Scan (#34) | `pc-check-gui.ps1` (Dot-Source), Job `defender` |
+
+`pc-check.ps1` lädt seine beiden Dateien per `. (Join-Path $PSScriptRoot 'gui\lib\<Datei>')`. Fehlt eine, ergibt die Prüfung `SKIP` mit „gui\lib\<Datei> fehlt“, und der Scan läuft weiter.
+
+Kein `Add-Type` in den neuen Dateien: Der C#-Compiler schreibt in das %TEMP% des Benutzers.
+
+### 14.2 Speicher.ps1
+
+Ordner werden **ohne Verfolgen von Reparse Points** aufgezählt: Ordner mit `[IO.FileAttributes]::ReparsePoint` nicht betreten, Dateien mit dem Attribut nicht zählen. Aufzählung per `[IO.DirectoryInfo]` mit eigenem Stapel, `EnumerateFiles()`/`EnumerateDirectories()` je Ordner, kein `-Recurse`, kein `Get-ChildItem` in Schleifen. Ordner ohne Zugriff überspringen und zählen.
+
+| Funktion | Rückgabe |
+|---|---|
+| `Get-MorpheusFesteLaufwerke` | `string[]` wie `'C:'`, `'F:'`: `Win32_LogicalDisk` mit `DriveType=3`, ohne Laufwerke auf Datenträgern mit `BusType` `USB` (wenn ermittelbar) |
+| `Measure-MorpheusOrdnerGroesse -Pfad <string>` | `{ bytes:[double], dateien:[int], uebersprungen:[int] }` |
+| `Select-MorpheusTopOrdner -Groessen <hashtable Pfad→Bytes> [-Top 10] [-Anteil 0.75]` | Array `{ pfad, bytes }`, absteigend. **Reine Funktion** ohne Dateizugriff, Algorithmus unten |
+| `Measure-MorpheusLaufwerk -Laufwerk 'C:' [-Tiefe 3] [-Top 10] [-Anteil 0.75] [-Fortschritt <scriptblock>]` | Laufwerksobjekt (unten) |
+| `ConvertFrom-MorpheusVdf -Text <string>` | verschachtelte Hashtable (Valve-KeyValues: `"key" "value"` und `"key" { … }`, Escapes `\\` und `\"`) |
+| `Get-MorpheusSteamSpiele [-SteamPfad]` | Spiele-Array. Standard: `HKCU:\Software\Valve\Steam` `SteamPath`, sonst `HKLM:\SOFTWARE\WOW6432Node\Valve\Steam` `InstallPath` |
+| `Get-MorpheusEpicSpiele [-ManifestOrdner]` | Spiele-Array. Standard `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests\*.item` |
+| `Get-MorpheusGogSpiele`, `Get-MorpheusEaSpiele`, `Get-MorpheusUbisoftSpiele` | Spiele-Array aus der Registry (siehe unten) |
+| `Get-MorpheusXboxSpiele [-Laufwerke]` | Spiele-Array: `<LW>\.GamingRoot` vorhanden → Unterordner von `<LW>\XboxGames` außer `GameSave` |
+| `Get-MorpheusSpiele [-Laufwerke]` | alle Plattformen zusammen; doppelte Pfade (ohne Groß-/Kleinschreibung) nur einmal; absteigend nach `bytes` |
+| `Get-MorpheusSpeicher [-Laufwerke] [-Fortschritt <scriptblock>] [-OhneSpiele]` | Gesamtobjekt (unten) |
+
+`-Fortschritt` bekommt einen Text (`param($Text)`), z. B. „C: wird gezählt …“, „C:\Windows“, „Spiele werden gesucht …“. Aufruf je Laufwerk, je Ordner der obersten Ebene und je Plattform.
+
+**Ordner ohne Doppelzählung (`Select-MorpheusTopOrdner`):** Die Schlüssel sind volle Pfade der Ordner in Tiefe 1 bis `-Tiefe` (Tiefe 1 = `C:\Windows`). Der Wert ist die Gesamtgröße inklusive aller Unterordner, auch der tieferen.
+1. Ein Ordner, dessen größter direkter Unterordner (unter den Schlüsseln) mindestens `Anteil` × seiner Größe ausmacht, wird entfernt; der Unterordner vertritt ihn. Das gilt über mehrere Ebenen.
+2. Die übrigen absteigend nach Größe. Ein Ordner wird übersprungen, wenn schon ein Vorfahr oder Nachfahr gewählt ist.
+3. Höchstens `Top` Einträge, nie Ordner mit 0 Bytes.
+
+Festlegung (25.10.2026): **Anteil 0,75**.
+
+**Laufwerksobjekt** (JSON-Namen klein wie in der API):
+```json
+{ "laufwerk": "C:", "bezeichnung": "System", "groesse": 1000202039296, "frei": 300000000000,
+  "ordner":  [ { "pfad": "C:\\Users\\Demo\\AppData", "bytes": 81234567890 } ],
+  "dateien": [ { "pfad": "C:\\pagefile.sys", "bytes": 17179869184, "windows": true, "geaendert": "2026-10-25T09:12:00" } ],
+  "gezaehlt": 812345, "uebersprungen": 224, "dauerSek": 94, "fehler": null }
+```
+`windows` ist `true` genau für `pagefile.sys`, `hiberfil.sys` und `swapfile.sys` im Stammordner. `fehler` enthält einen Text, wenn das ganze Laufwerk nicht lesbar war, sonst `null`.
+
+**Spiel:**
+```json
+{ "plattform": "Steam", "name": "Demo Game", "pfad": "F:\\SteamLibrary\\steamapps\\common\\Demo Game", "laufwerk": "F:",
+  "bytes": 98765432100, "zuletztGespielt": "2026-10-20T21:14:03", "groesseUnsicher": false }
+```
+- `plattform` ∈ `Steam`, `Epic`, `GOG`, `EA`, `Ubisoft`, `Xbox`.
+- **Steam:** `libraryfolders.vdf` (alle Bibliotheken), je Bibliothek `steamapps\appmanifest_*.acf`: `name`, `installdir` (→ `steamapps\common\<installdir>`), `SizeOnDisk`, `LastPlayed` (Unix-Sekunden, 0 = nie → `null`). „Steamworks Common Redistributables“ (AppID 228980) weglassen.
+- **Epic:** `DisplayName`, `InstallLocation`, `InstallSize`; ohne „zuletzt gespielt“.
+- **GOG:** `HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games\*` (`gameName`, `path`); Größe gemessen.
+- **EA app:** Deinstallationseinträge (`HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*` und unter `WOW6432Node`) mit `Publisher` „Electronic Arts“ und vorhandenem `InstallLocation`, ohne die EA app selbst; Größe gemessen.
+- **Ubisoft:** `HKLM:\SOFTWARE\WOW6432Node\Ubisoft\Launcher\Installs\*` (`InstallDir`); Name aus dem Deinstallationseintrag „Uplay Install <Id>“, sonst Ordnername; Größe gemessen.
+- **Xbox:** Name aus `Content\MicrosoftGame.config` (`ShellVisuals/@DefaultDisplayName`), wenn lesbar, sonst Ordnername; Größe gemessen; `groesseUnsicher = $true`, wenn dabei Ordner übersprungen wurden.
+- Gemessen wird mit `Measure-MorpheusOrdnerGroesse`. Ordner, die nicht existieren, kommen nicht in die Liste.
+
+**Gesamtobjekt** (auch Cache-Datei `state\speicher.json` und Feld `Speicher` im JSON-Bericht):
+```json
+{ "version": 1, "stand": "2026-10-25T14:02:11", "laufwerke": [ "<Laufwerksobjekt>" ], "spiele": [ "<Spiel>" ] }
+```
+
+### 14.3 Sicherung.ps1 (#35)
+
+| Funktion | Rückgabe |
+|---|---|
+| `Get-MorpheusDateiversionsverlauf [-ConfigOrdner] [-RegistryPfad]` | `{ art:'Dateiversionsverlauf', gefunden, aktiv, ziel, letzteSicherung, hinweis }` |
+| `Get-MorpheusOneDriveSicherung` | wie oben mit `art:'OneDrive-Ordnersicherung'`, zusätzlich `ordner` (die gesicherten aus Desktop, Dokumente, Bilder) |
+| `Get-MorpheusSystemabbild [-Laufwerke] [-IsAdmin]` | wie oben mit `art:'Systemabbild'` |
+| `Get-MorpheusSicherung` | Array der drei Objekte |
+| `Get-MorpheusSicherungBewertung -Eintraege <Array> [-Jetzt <datetime>]` | `{ status:'OK'\|'WARN', wert, empfehlung }`. **Reine Funktion** |
+
+`letzteSicherung` ist ein ISO-Text (`yyyy-MM-ddTHH:mm:ss`) oder `$null`.
+
+- **Dateiversionsverlauf:** `%LOCALAPPDATA%\Microsoft\Windows\FileHistory\Configuration\Config*.xml`: Ziel (`TargetUrl`/`TargetName`), an/aus. Letzte Sicherung aus `HKCU:\Software\Microsoft\Windows\CurrentVersion\FileHistory` `ProtectedUpToTime` (FILETIME), sonst Änderungszeit der Konfiguration. Ohne Konfiguration: `gefunden=$false`.
+- **OneDrive:** Stammordner aus `HKCU:\Software\Microsoft\OneDrive\Accounts\*` (`UserFolder`). Ein Ordner gilt als gesichert, wenn sein Pfad aus `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders` (`Desktop`, `Personal`, `My Pictures`, Umgebungsvariablen aufgelöst) darin liegt. Das deckt die App „Windows-Sicherung“ mit ab, sie sichert Ordner über OneDrive; `hinweis` sagt das. Letzte Sicherung: unbekannt (`$null`).
+- **Systemabbild:** Ordner `<LW>\WindowsImageBackup\*` auf allen Laufwerken mit Buchstaben (letzte Sicherung = jüngste Änderungszeit darin); mit Adminrechten zusätzlich `wbadmin get versions` (deutsche und englische Ausgabe). Älter als 180 Tage: `aktiv=$false`, Hinweis „veraltet“.
+- **Bewertung:** OK, wenn mindestens ein Eintrag `gefunden` und `aktiv` ist und die letzte Sicherung, sofern bekannt, höchstens 30 Tage zurückliegt (Systemabbild 180 Tage). Sonst **WARN**. `wert` fasst alle drei zusammen, z. B. „Dateiversionsverlauf aus; OneDrive: Desktop, Dokumente; kein Systemabbild“. Die Empfehlung bei WARN nennt Dateiversionsverlauf bzw. OneDrive und ausdrücklich: „Sicherst du mit einem anderen Programm oder auf ein NAS, trag den Befund in die Akzeptanzliste (accepted.psd1) ein.“
+
+### 14.4 Defender.ps1 (#34)
+
+Testbar über `$script:MorpheusDefenderImpl`, eine Hashtable von Scriptblöcken (Standard = echte Cmdlets): `Status` (`Get-MpComputerStatus`), `Signaturen` (`Update-MpSignature -ErrorAction Stop`), `Schnellscan` (`Start-MpScan -ScanType QuickScan -ErrorAction Stop`), `Funde` (`param($Seit)`: `Get-MpThreatDetection` ab `$Seit`, Namen aus `Get-MpThreat`), `Offline` (`Start-MpWDOScan -ErrorAction Stop`). Tests ersetzen die Einträge.
+
+| Funktion | Rückgabe |
+|---|---|
+| `Get-MorpheusDefenderStand` | `{ modus, signaturen (ISO), signaturVersion, signaturAlterTage, schnellscan (ISO von QuickScanEndTime), schnellscanAlterTage, echtzeit }`; bei Fehler `{ fehler: Text }` |
+| `Invoke-MorpheusDefenderAktion -Art 'signaturen'\|'schnellscan'` | `{ art, vorher:<Stand>, nachher:<Stand>, funde:[{ zeit, name, aktion, erfolg, dateien }], dauerSek, meldung }` |
+| `Start-MorpheusDefenderOffline` | ruft `Offline` auf; der PC startet danach neu |
+
+- Fortschritt per `Write-Information "[HH:mm:ss] …" -InformationAction Continue`. Das Ergebnis ist das einzige Objekt auf der Ausgabe (wie in Abschnitt 11).
+- Andere Werte als `signaturen`/`schnellscan` → `throw`.
+- Funde werden nur angezeigt. Quarantäne und Entfernen bleiben in Windows-Sicherheit; `meldung` sagt das, wenn es Funde gibt.
+- Kein Journal-Eintrag (keine Einstellungsänderung), aber die Windows-Bestätigung im Admin-Prozess vor jeder der drei Funktionen.
+
+### 14.5 Scan (`pc-check.ps1`)
+
+- Neuer Schalter `-SkipSpeicher` (wie `-SkipWinget`). Die GUI übergibt ihn bei `skipSpeicher: true` in `POST /api/scan`.
+- Abschnitt „Laufwerke & Speicherplatz“, nach „Freier Speicherplatz“: `Invoke-Check 'Größte Speicherverbraucher'` → `Get-MorpheusSpeicher` (Fortschritt als `Write-Host`-Zeile), Ergebnis in `$script:Speicher`. Tabellen `Speicherverbraucher: Ordner` (`Laufwerk, Pfad, Groesse, Bytes`) und `Speicherverbraucher: Dateien` (`Laufwerk, Pfad, Groesse, Bytes, Windows`). Befund `INFO` mit dem größten Ordner je Laufwerk; mit `-SkipSpeicher` `SKIP 'Übersprungen (-SkipSpeicher)'`.
+- In „Spielebibliotheken“ zusätzlich die Tabelle `Installierte Spiele` (`Plattform, Name, Laufwerk, Groesse, Bytes, ZuletztGespielt, Pfad, Hinweis`) aus `$script:Speicher.spiele`, sonst aus `Get-MorpheusSpiele`. Die bisherige Auswertung bleibt.
+- Abschnitt „Verschlüsselung & Firmware“, nach „Wiederherstellung“: `Invoke-Check 'Datensicherung'` → Tabelle `Datensicherung` (`Art, Gefunden, Aktiv, Ziel, LetzteSicherung, Hinweis`) und ein Befund aus `Get-MorpheusSicherungBewertung`.
+- JSON-Bericht: neues Feld `Speicher` (Gesamtobjekt oder `null`).
+
+### 14.6 API
+
+| Methode und Pfad | Antwort / Zweck |
+|---|---|
+| `GET /api/speicher` | Inhalt von `<DataRoot>\state\speicher.json` (Gesamtobjekt) oder `{ "stand": null }` |
+| `POST /api/speicher/refresh` | Job `speicher` → `{ jobId }`; läuft schon einer, dessen `jobId`. Der Job schreibt den Cache atomar; Ergebnis `{ stand }` |
+| `GET /api/defender` | `{ stand:<Defender-Stand>, laufend:<jobId\|null>, offline:<Offline-Zustand> }` |
+| `POST /api/defender/run` | Body `{ art: "signaturen"\|"schnellscan" }` → Windows-Bestätigung → Job `defender` → `{ jobId }`; 409, wenn schon eine Defender-Aufgabe läuft |
+| `POST /api/defender/offline` | Body `{ bestaetigt: true }` (sonst 400) → Windows-Bestätigung → Countdown 15 s → `<Offline-Zustand>` |
+| `GET /api/defender/offline` | `<Offline-Zustand>`; jeder Abruf gilt als Lebenszeichen des Fensters |
+| `POST /api/defender/offline/abbrechen` | Countdown beenden → `<Offline-Zustand>` |
+| `POST /api/defender/offline/jetzt` | nur während des Countdowns: sofort starten → `<Offline-Zustand>` |
+
+`<Offline-Zustand>` = `{ status: "keiner"|"countdown"|"abgebrochen"|"gestartet"|"fehler", rest: <Sekunden>, meldung }`.
+
+- Im Nur-Lesen-Modus antworten `POST /api/speicher/refresh`, `POST /api/defender/run` und alle `POST /api/defender/offline*` mit 403, weil der Job Code aus einem ungesicherten Ordner mit Adminrechten ausführen würde. `Start-GuiJob` sperrt `speicher` und `defender` zusätzlich.
+- **Countdown im Server:** Zustand in `$script:Gui.Offline`. Die Hauptschleife prüft ihn bei jedem Durchlauf (höchstens alle 500 ms) und während des Countdowns jede Sekunde die Edge-Prozesse. Abbruch, wenn (a) seit 3 s kein `GET /api/defender/offline` kam, (b) kein Edge-Prozess mit dem Profil mehr läuft oder (c) die Schleife endet. Erst bei `rest = 0` bzw. „jetzt“ ruft der Server `Start-MorpheusDefenderOffline`. Jeder Zustandswechsel steht in `gui.log`.
+- Die Texte im Windows-Bestätigungsdialog nennen genau, was passiert. Beim Offline-Scan: „Der PC startet nach 15 Sekunden neu und wird ca. 15 Minuten lang offline gescannt. Vorher alles speichern.“
+
+### 14.7 Oberfläche
+
+- **Neue Ansicht `#/werkzeuge` „Werkzeuge“** (Navigation, Symbol `i-tool`): Karte „Microsoft Defender“ mit Stand (Signaturen, Alter, letzter Schnellscan) und drei Knöpfen „Signaturen aktualisieren“, „Schnellscan starten“, „Offline-Scan …“. Ergebnisdialog: Stand vorher → nachher, Funde (oder „Keine Funde“) mit Hinweis auf Windows-Sicherheit > Schutzverlauf.
+- **Knopf am Befund:** „Defender: Signaturen“ → „Signaturen aktualisieren“, „Defender: Scans“ → „Schnellscan starten“, jeweils wenn der Status nicht `OK` ist (Festlegung 25.10.2026). Gleicher Dialog wie unter „Werkzeuge“.
+- **Offline-Scan:** Dialog mit Warnung und Häkchen („Ich habe alles gespeichert …“), erst dann „Weiter“ → Windows-Bestätigung → Countdown-Dialog (große Zahl, „Abbrechen“ vorbelegt, „Jetzt neu starten“), Abfrage jede Sekunde.
+- **Speicher-Fenster:** Jede Zeile der Live-Karte „Laufwerke“ ist fokussierbar (`tabindex=0`, `role=button`, `aria-haspopup=dialog`). Hover (300 ms Verzögerung), Klick, Enter oder Leertaste öffnen ein Fenster links neben der Statusleiste. Escape oder ein Klick daneben schließt es; die Maus darf hineinwandern. Inhalt für das Laufwerk: „Stand: …“ (Datum und Quelle: Bericht oder neu berechnet), Ordner (10), Dateien (10; Systemdateien mit Kennzeichen „Windows“ und Erklärung), Spiele (10; Plattform, Größe, zuletzt gespielt, ggf. „Größe eingeschränkt lesbar“). Ein Klick auf einen Eintrag kopiert den Pfad (`navigator.clipboard`) und zeigt „Pfad kopiert“. Fußzeile: „Neu berechnen“ (Job mit Fortschritt, gesperrt im Nur-Lesen-Modus), „Alle Spiele“ (→ Rohdaten `Installierte Spiele`), Hinweis „Deinstallieren nur über die Plattform; Morpheus löscht nichts.“
+- **Datenquelle:** das jüngere von `S.report.Speicher` und `GET /api/speicher` (Feld `stand`). Geladen beim Start, nach „Neu berechnen“ und nach einem Scan. **Der Hover lädt und rechnet nichts.**
+- Kein `innerHTML`; alle Texte über `h()`.
+
+### 14.8 Eigene Spiele-Ordner (Ergänzung zu #38)
+
+Findet die automatische Erkennung eine Bibliothek nicht, trägt man sie selbst ein: je Eintrag eine **Plattform** und ein **Ordner**. Der Ordner gilt als **Bibliothek**: Jeder direkte Unterordner ist ein Spiel (Name = Ordnername, Größe gemessen, kein „zuletzt gespielt“). Eingabe als **Pfad im Textfeld** (kein Ordnerdialog, der würde mit Adminrechten laufen). Das Laufwerk ergibt sich aus dem Pfad.
+
+- **Datei:** `<DataRoot>\state\spielordner.json` = `[{ "plattform": "Steam", "pfad": "G:\\Games\\Steam" }]`. Höchstens 50 Einträge. `plattform` ∈ `Steam`, `Epic`, `GOG`, `EA`, `Ubisoft`, `Xbox`, `Andere`.
+- **Speicher.ps1:**
+  - `Read-MorpheusSpielordner -Datei <string>` → bereinigtes Array (unbekannte Plattform, ungültige oder nicht lokale Pfade fallen weg, fehlende/kaputte Datei = leeres Array).
+  - `Get-MorpheusManuelleSpiele -Eintraege <Array>` → Spiele-Array. Pfad über `MorpheusSpeicherPfadNorm` (nur `X:\…`), Ordner muss existieren und darf kein Reparse Point sein; Unterordner, die Reparse Points sind, werden übersprungen.
+  - `Get-MorpheusSpiele` und `Get-MorpheusSpeicher` bekommen `-Manuell <Array>`. Doppelte Pfade: der automatisch erkannte Eintrag gewinnt (er hat ggf. „zuletzt gespielt“).
+- **Scan:** `pc-check.ps1 -SpielOrdnerFile <Pfad>`, Standard `Join-Path (Split-Path -Parent $OutputDir) 'state\spielordner.json'` (GUI und `pc-check-start.ps1` landen damit in `<DataRoot>\state`). Die Datei wird nur gelesen.
+- **API:**
+  - `GET /api/spielordner` → Array (leer, wenn die Datei fehlt).
+  - `POST /api/spielordner` Body `{ "eintraege": [ { "plattform", "pfad" } ] }` → prüft jeden Eintrag (Plattform per `-cin` aus der Liste; `pfad` Text ≤ 260 Zeichen, `^[A-Za-z]:\\`, keine Steuerzeichen, keine Segmente `.`/`..`, Ordner existiert und ist kein Reparse Point) → 400 mit dem Namen des fehlerhaften Eintrags, sonst atomar speichern und das gespeicherte Array zurückgeben. Im Nur-Lesen-Modus 403. Keine Windows-Bestätigung (keine Systemänderung; die Datei liegt im Datenordner nur für Admins).
+  - Der Job `speicher` liest die Datei und übergibt `-Manuell`.
+- **Oberfläche:** In „Werkzeuge“ eine Karte „Spiele-Ordner“: Liste der Einträge (Plattform-Auswahl, Pfadfeld, „Entfernen“), „Ordner hinzufügen“, „Speichern“; Erklärung „Ordner, in dem jeder Unterordner ein Spiel ist, z. B. F:\Games. Pfad im Explorer kopieren (Adressleiste) und hier einfügen.“ Nach dem Speichern Hinweis mit Knopf „Jetzt neu berechnen“ (startet den Speicher-Job). Im Speicher-Fenster in der Fußzeile der Link „Spiele-Ordner festlegen …“ (→ `#/werkzeuge`). Im Nur-Lesen-Modus gesperrt.
+
+## 15. Ergänzungen v2.3: Sysinternals (Vertrag für alle Teilaufgaben)
+
+Werkzeuge: `autorunsc64.exe` (alle Autostarts) und `sigcheck64.exe` (Signaturen) von Microsoft Sysinternals. **Kein VirusTotal** (`-v`, `-vt`, `-vr`, `-vs` sind verboten; `-u` nur ohne VirusTotal), weil dabei Daten den PC verlassen.
+
+### 15.1 Grundsätze
+
+- **Bezug nur auf Klick** in der Ansicht „Werkzeuge“: Lizenz zeigen → Nutzer nimmt ausdrücklich an (Häkchen) → Windows-Bestätigung im Admin-Prozess → Job lädt herunter. Einzige neue Netzadressen: `https://download.sysinternals.com/files/Autoruns.zip` und `…/Sigcheck.zip` (feste Konstanten, keine Weiterleitungen, höchstens 20 MB).
+- **Ablage** `<DataRoot>\tools` (= `C:\ProgramData\Morpheus\tools`), angelegt mit `New-MorpheusSecureDirectory` (fertige Rechte, nur Administratoren und SYSTEM). Ein vorhandener, unsicherer `tools`-Ordner wird nicht benutzt (Fehler).
+- **ZIP:** Nur Einträge, deren `FullName` exakt (`-ceq`) `autorunsc64.exe`, `sigcheck64.exe` bzw. `Eula.txt` lautet (kein Pfadanteil, damit kein Zip-Slip), je höchstens 30 MB entpackt. Alles andere bleibt im ZIP; das ZIP wird danach gelöscht.
+- **Vertrauensprüfung vor jedem Start** (nicht nur nach dem Download), im selben Ablauf wie der Start (siehe 15.3): Datei vorhanden und kein Reparse Point; `Test-MorpheusSecurePath` (Datei mit Elternordnern) sicher; SHA256 gleich dem Eintrag in `tools\werkzeuge.json`; `Get-AuthenticodeSignature` = `Valid`; Signierer-Zertifikat mit `O=Microsoft Corporation`; Kette endet an einer der Microsoft-Wurzeln `3B1EFD3A66EA28B16697394703A72CA340A05BD5` (Root CA 2010) oder `8F43288AD272F3103B6FB1428485EA3014C0BCFE` (Root CA 2011). Schlägt eine Prüfung fehl: nicht starten, Grund melden.
+- **TOCTOU:** Der Start öffnet die EXE vorher mit `FileShare.Read` (kein Schreiben, Umbenennen, Löschen durch andere), berechnet den Hash aus diesem Handle, prüft die Signatur und startet den Prozess, während das Handle offen bleibt. Erst nach Prozessende wird es geschlossen.
+- **Lizenz-Zustimmung:** `<DataRoot>\state\sysinternals.json` = `{ "version": 1, "eulaAkzeptiert": true, "zeit": "yyyy-MM-ddTHH:mm:ss", "benutzer": "<Name>" }`. Gilt nur, wenn die Datei sicher liegt (`Test-MorpheusSecurePath`). `-accepteula` wird nur übergeben, wenn die Zustimmung gilt; ohne Zustimmung startet kein Werkzeug (sonst hinge es am Lizenzdialog).
+- **Scan bleibt lesend.** Er startet die Werkzeuge nur, wenn sie vorhanden und geprüft sind, mit festen Argumenten (keine freien Argumente von außen). Fehlen sie oder fehlt die Zustimmung: `SKIP` mit Hinweis auf „Werkzeuge“. Sind sie vorhanden, aber die Prüfung schlägt fehl: `WARN` „nicht ausgeführt“ mit Grund.
+- **Ausgaben sind Daten:** CSV robust parsen (eigener RFC-4180-Parser), Steuerzeichen entfernen, Felder auf 2048 Zeichen und Zeilen auf 5000 begrenzen. Angezeigt wird nur über `h()`/`textContent` bzw. die vorhandene HTML-Kodierung der Berichte.
+- Kein `Add-Type` mit C#-Code in den neuen Dateien. `Add-Type -AssemblyName System.IO.Compression.FileSystem` (lädt nur eine vorhandene Assembly) ist erlaubt.
+
+### 15.2 Neue Dateien
+
+| Datei | Inhalt | geladen von |
+|---|---|---|
+| `gui\lib\Sysinternals.ps1` | Bezug, Zustimmung, Vertrauensprüfung, gesicherter Start | `pc-check.ps1`, `pc-check-gui.ps1`, Job `sysinternals` |
+| `gui\lib\SysinternalsAuswertung.ps1` | Ausgabe dekodieren, CSV parsen, Bewertung (ohne Netz) | wie oben |
+
+`Sysinternals.ps1` lädt `Install.ps1` und `SysinternalsAuswertung.ps1` (gleicher Ordner) per Dot-Source, falls deren Funktionen fehlen. Beide liegen unter `gui\lib\*.ps1` und sind damit in `Get-MorpheusCodeFiles`.
+
+### 15.3 Sysinternals.ps1
+
+Konstanten: `$script:MorpheusSysWerkzeuge` (geordnet) mit `autorunsc = @{ Zip='Autoruns.zip'; Url='https://download.sysinternals.com/files/Autoruns.zip'; Exe='autorunsc64.exe'; Titel='Autoruns' }` und `sigcheck = @{ Zip='Sigcheck.zip'; Url='https://download.sysinternals.com/files/Sigcheck.zip'; Exe='sigcheck64.exe'; Titel='Sigcheck' }`, `$script:MorpheusSysWurzeln` (die zwei Fingerabdrücke), `$script:MorpheusSysLizenzUrl = 'https://learn.microsoft.com/sysinternals/license-terms'`.
+
+Testbar über `$script:MorpheusSysImpl` (Hashtable von Scriptblöcken, nur gesetzt, wenn noch nicht vorhanden): `Download` (`param($Url, $Ziel, $MaxBytes)`, HttpWebRequest, TLS 1.2, `AllowAutoRedirect = $false`, Status 200 Pflicht, Abbruch über `$MaxBytes`, Zeitlimit 120 s), `Signatur` (`param($Pfad)` → Objekt mit `Status`, `SignerCertificate`), `Wurzel` (`param($Zertifikat)` → Fingerabdruck der Wurzel oder `$null`; `X509Chain` ohne Sperrprüfung, `IgnoreNotTimeValid`), `SicherPfad` (`param($Pfad)` → `Test-MorpheusSecurePath`), `Admin` (→ bool). Tests ersetzen die Einträge; **Tests laden nie etwas herunter**.
+
+| Funktion | Rückgabe |
+|---|---|
+| `Get-MorpheusSysZustimmung -DataRoot` | `{ akzeptiert:[bool], zeit, benutzer }` (fehlende, kaputte oder unsicher liegende Datei → `akzeptiert = $false`) |
+| `Set-MorpheusSysZustimmung -DataRoot -Akzeptiert [bool]` | schreibt atomar (`.tmp` + Replace/Move) bzw. löscht die Datei; gibt den neuen Stand zurück |
+| `Test-MorpheusSysWerkzeug -DataRoot -Name autorunsc\|sigcheck` | `{ name, titel, datei, pfad, vorhanden, geprueft, grund, signierer, version, sha256, geladen }`. `grund` ist bei `geprueft = $false` ein deutscher Satz, sonst `$null`. Nur lesend, < 1 s |
+| `Get-MorpheusSysStand -DataRoot` | `{ zustimmung:<Zustimmung>, werkzeuge:[<Werkzeug>, <Werkzeug>], ordner, lizenzUrl }` |
+| `Invoke-MorpheusSysWerkzeug -DataRoot -Auftrag autostarts\|system32\|treiber [-TimeoutSek 900]` | `{ ok:[bool], auftrag, code, text, fehler, dauerSek, nichtVertrauenswuerdig:[bool], nichtEingerichtet:[bool] }`. Wirft nie. `nichtVertrauenswuerdig = $true`, wenn die Vertrauensprüfung einer vorhandenen Datei fehlschlug; `nichtEingerichtet = $true`, wenn die Datei oder die Zustimmung fehlt (`fehler` = Grund) |
+| `Install-MorpheusSysWerkzeuge -DataRoot` | Job: lädt beide Werkzeuge, prüft, entpackt; `{ werkzeuge:[<Werkzeug>…], meldung }`. Wirft (deutsch) ohne Adminrechte oder ohne Zustimmung |
+| `Remove-MorpheusSysWerkzeuge -DataRoot` | löscht EXEs, `*-Eula.txt`, `werkzeuge.json` und die Zustimmung; gibt `Get-MorpheusSysStand` zurück |
+| `Get-MorpheusSysEula -DataRoot -Name` | Text aus `tools\<name>-Eula.txt` (höchstens 64 KB) oder `$null` |
+
+**Aufträge (feste Argumente, sonst nichts):**
+
+| Auftrag | Werkzeug | Argumente |
+|---|---|---|
+| `autostarts` | autorunsc | `-accepteula -nobanner -a * -c -s *` (letztes `*` = alle Benutzerprofile) |
+| `system32` | sigcheck | `-accepteula -nobanner -c -u -e -r "%SystemRoot%\System32"` (`-r` = keine Online-Sperrlistenprüfung) |
+| `treiber` | sigcheck | `-accepteula -nobanner -c -u -e -r "%SystemRoot%\System32\drivers"` |
+
+**Nachträge nach Review und Sicherheitsprüfung**: Die Vertrauensprüfung verlangt zusätzlich, dass die Versionsinfo `Sysinternals` als Firma oder Produkt nennt (Impl `Herkunft`). Die Kette wird mit den Zertifikaten aus der eingebetteten Signatur als `ExtraStore` gebaut (Impl `Wurzel` mit `param($Zertifikat, $Pfad)`). ZIP-Namen werden ohne Groß-/Kleinschreibung verglichen, weiterhin ohne Pfadanteil. `Remove` löscht zuerst die EXEs und bricht ab, wenn eine benutzt wird. `install`/`entfernen` antworten 409, solange ein Scan läuft, und umgekehrt. `Test-MorpheusSysKopf -Text -Art autoruns|sigcheck` erkennt Ausgaben ohne CSV-Kopf (dann SKIP statt OK). Aufgaben (`Tasks`/`Scheduled Tasks`) gelten nur als erhöht, wenn sie laut `Get-ScheduledTask` als SYSTEM, Dienstkonto oder mit höchsten Rechten laufen (`-Aufgaben`). Dienste und Treiber ergeben in den Autoruns-Befunden höchstens INFO, weil eigene Prüfungen sie bewerten. Für den Elternordner zählt nur die Maske für Löschen, Ersetzen und Rechte ändern. Die drei Prüfungen brauchen Adminrechte.
+
+**Start (`MorpheusSysStart`, privat):** `System.Diagnostics.Process`, `UseShellExecute = $false`, `CreateNoWindow`, Standardausgabe und Fehlerausgabe umgeleitet und als **Bytes** gelesen (asynchron, damit nichts blockiert), Zeitlimit → Prozess beenden, `ok = $false`. Text über `ConvertFrom-MorpheusSysAusgabe`. Arbeitsordner = `tools`.
+
+**`tools\werkzeuge.json`** = `{ "version": 1, "werkzeuge": { "autorunsc": { "datei": "autorunsc64.exe", "sha256": "…", "version": "14.11", "geladen": "…" }, "sigcheck": { … } } }`, atomar geschrieben vom Install-Job.
+
+**Install-Ablauf je Werkzeug:** ZIP nach `tools\<Zip>.download` laden → Einträge prüfen → EXE nach `tools\<name>.neu.exe` entpacken → Vertrauensprüfung dieser Datei (ohne Hash-Vergleich) → an den endgültigen Namen verschieben (vorhandene ersetzen) → SHA256 und Dateiversion in `werkzeuge.json` → `Eula.txt` als `tools\<name>-Eula.txt` → ZIP und Reste löschen (auch bei Fehlern, `finally`). Fortschritt per `Write-Information "[HH:mm:ss] …"`, einziges Ausgabeobjekt ist das Ergebnis.
+
+### 15.4 SysinternalsAuswertung.ps1
+
+| Funktion | Rückgabe |
+|---|---|
+| `ConvertFrom-MorpheusSysAusgabe -Bytes [byte[]]` | Text: BOM `FF FE` → UTF-16LE, `EF BB BF` → UTF-8; sonst UTF-16LE, wenn in den ersten 400 Bytes ≥ 30 % der ungeraden Stellen 0 sind; sonst UTF-8 (streng), bei ungültigen Bytes ANSI (`[Text.Encoding]::Default`). Leer/`$null` → `''` |
+| `ConvertFrom-MorpheusCsvText -Text [-Trenner ',']` | Liste von `string[]` (RFC 4180: Anführungszeichen, `""`, Zeilenumbrüche in Feldern, CRLF/LF/CR) |
+| `ConvertFrom-MorpheusAutorunsCsv -Text` | Einträge `{ Ort, Eintrag, Aktiv:[bool], Kategorie, Profil, Beschreibung, Signierer, Verifiziert:[bool], Firma, Pfad, DateiFehlt:[bool], Version, Befehl, Sha256 }` |
+| `ConvertFrom-MorpheusSigcheckCsv -Text` | Einträge `{ Pfad, Verifiziert, Signiert:[bool], Datum, Herausgeber, Firma, Beschreibung, Produkt, Version, Typ }` |
+| `Test-MorpheusPfadBenutzerBeschreibbar -Pfad` | `$true`/`$false`, `$null` wenn die Datei fehlt |
+| `Test-MorpheusAutorunsErhoeht -Eintrag` | bool |
+| `Get-MorpheusAutorunsSignaturBefund -Eintraege` | `{ status, wert, empfehlung, liste }` |
+| `Get-MorpheusAutorunsPfadBefund -Eintraege [-Beschreibbar <scriptblock>]` | `{ status, wert, empfehlung, liste }` |
+| `Get-MorpheusSystemdateienBefund -System32 -Treiber` | `{ status, wert, empfehlung, liste }` |
+
+- **Autoruns-CSV:** Kopfzeile = erste Zeile mit den Spalten `Entry Location` und `Image Path` (Groß-/Kleinschreibung egal), Spalten über den Namen zuordnen (`Entry Location`, `Entry`, `Enabled`, `Category`, `Profile`, `Description`, `Signer`, `Company`, `Image Path`, `Version`, `Launch String`, `SHA-256`); fehlende Spalten = `''`. Zeilen ohne `Entry` und ohne `Image Path` entfallen. `Aktiv` = `Enabled` ist `enabled`. `Verifiziert` = `Signer` beginnt mit `(Verified)`. `Image Path` mit Präfix `File not found: ` → Präfix entfernen, `DateiFehlt = $true`. Ohne Kopfzeile: leeres Array.
+- **Sigcheck-CSV:** Kopfzeile = erste Zeile, deren erstes Feld `Path` ist; Spalten `Path`, `Verified`, `Date`, `Publisher`, `Company`, `Description`, `Product`, `File version`, `Machine type`. `Signiert` = `Verified` ist `Signed`.
+- **Beschreibbar:** Datei und Elternordner; Besitzer nicht Administratoren/SYSTEM/TrustedInstaller → `$true`; ein Allow-Eintrag (nicht nur vererbend) mit Schreibbits (wie `$script:MorpheusWriteMask` in `Install.ps1`) für eine andere SID als Administratoren, SYSTEM, TrustedInstaller, ERSTELLER-BESITZER (`S-1-3-0`), BESITZERRECHTE (`S-1-3-4`) → `$true`.
+- **Erhöht** (läuft als SYSTEM, Dienst oder Kernel): Kategorie (ohne Leerzeichen, Groß-/Kleinschreibung egal) ∈ `Services`, `Drivers`, `ScheduledTasks`, `Winlogon`, `BootExecute`, `LSAProviders`, `PrintMonitors`, `KnownDLLs`, `WinsockProviders`, `NetworkProviders`, `WMI`, `ImageHijacks`, `AppInit`. Alles andere (z. B. `Logon`, `Explorer`) läuft als angemeldeter Benutzer.
+- **Signatur-Befund** (nur `Aktiv`, nicht `DateiFehlt`, nicht `Verifiziert`): erhöhte vorhanden → `WARN`; nur Benutzer-Ebene → `INFO`; keine → `OK`. `wert` z. B. „2 Dienste/Treiber/Aufgaben ohne verifizierte Signatur: A, B; 3 weitere Autostarts ohne Signatur“ (höchstens 5 Namen je Gruppe, dann „…“). `liste` = betroffene Einträge.
+- **Pfad-Befund** (nur `Aktiv`, nicht `DateiFehlt`, `Beschreibbar` = `$true`): erhöhte → `WARN` (ein Benutzerprogramm könnte die Datei austauschen und so SYSTEM-Rechte erlangen); nur Benutzer-Ebene → `INFO` (üblich bei Programmen in AppData, kein Rechtegewinn); keine → `OK`.
+- **Systemdateien-Befund:** unsignierte in `System32` oder `drivers` → `WARN` mit Anzahl und bis zu 5 Dateinamen, sonst `OK`.
+
+### 15.5 Scan (`pc-check.ps1`)
+
+- Neuer Schalter `-SkipSysinternals` (wie `-SkipWinget`); die GUI übergibt ihn bei `skipSysinternals: true` in `POST /api/scan`.
+- DataRoot des Scans = `Split-Path -Parent $OutputDir` (wie `SpielOrdnerFile`).
+- Abschnitt „Autostart & Persistenz“, nach „Autostart-Einträge“: `Invoke-Check 'Autostarts: Signaturen (Autoruns)'` und `Invoke-Check 'Autostarts: beschreibbare Pfade (Autoruns)'`. Autoruns läuft einmal (Ergebnis in `$script:Autoruns`). Tabelle `Autostarts (Autoruns, ohne Microsoft)` mit `Kategorie, Eintrag, Aktiv, Signierer, Verifiziert, Beschreibbar, Erhoeht, Pfad, Ort, Befehl` (Einträge, die nicht verifiziert von Microsoft signiert sind).
+- Abschnitt „Systemhärtung“, am Ende: `Invoke-Check 'Systemdateien: Signaturen (Sigcheck)'` (Aufträge `system32` und `treiber`), Tabelle `Unsignierte Systemdateien (Sigcheck)` mit `Ordner, Datei, Firma, Beschreibung, Version, Datum, Pfad`.
+- SKIP-Texte: „Übersprungen (-SkipSysinternals)“; „Sysinternals nicht eingerichtet: in Morpheus unter Werkzeuge herunterladen“ (fehlende Datei oder Zustimmung); Zeitüberschreitung/Fehler: „Fehler: …“. Vertrauensprüfung fehlgeschlagen: `WARN` „<Werkzeug> nicht ausgeführt: <Grund>“ mit Empfehlung „Unter Werkzeuge neu herunterladen; bleibt die Meldung, die Datei nicht verwenden.“
+
+### 15.6 API
+
+| Methode und Pfad | Antwort / Zweck |
+|---|---|
+| `GET /api/sysinternals` | `Get-MorpheusSysStand` plus `laufend:<jobId\|null>` |
+| `POST /api/sysinternals/install` | Body `{ eulaAkzeptiert: true }` (genau Boolean `true`, sonst 400) → 409, wenn ein `sysinternals`-Job läuft → Windows-Bestätigung → Job `sysinternals` (speichert erst dort die Zustimmung, dann `Install-MorpheusSysWerkzeuge`) → `{ jobId }` |
+| `POST /api/sysinternals/entfernen` | 409 bei laufendem Job → Windows-Bestätigung → `Remove-MorpheusSysWerkzeuge` → Stand |
+| `GET /api/sysinternals/eula?name=autorunsc\|sigcheck` | `{ name, text }` (`text` = `$null`, wenn nicht vorhanden); `name` per `-cin` aus der Liste, sonst 400 |
+
+- Nur-Lesen-Modus: beide `POST` → 403; `Start-GuiJob` sperrt `sysinternals` zusätzlich und verlangt einen Bestätigungstext.
+- Bestätigungstext Install: „Sysinternals-Werkzeuge Autoruns und Sigcheck von download.sysinternals.com (Microsoft) herunterladen? Du nimmst damit die Sysinternals-Lizenzbedingungen an. Die Dateien landen in <Ordner> und werden vor jedem Start auf eine gültige Microsoft-Signatur geprüft. Hast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'.“
+
+### 15.7 Oberfläche
+
+- Ansicht „Werkzeuge“: neue Karte „Sysinternals (Microsoft)“ unter „Microsoft Defender“. Je Werkzeug eine Zeile mit Zustand (geprüft: „Signiert von Microsoft Corporation · Version · geladen am“; sonst Grund) und Lizenzstand.
+- Nicht eingerichtet: Knopf „Herunterladen …“ (türkis, Primär) → Dialog: was passiert (Quelle, Größe ca. 4 MB, Ablage, Signaturprüfung vor jedem Start, kein VirusTotal, keine Daten verlassen den PC außer der Download-Anfrage), kurze Zusammenfassung der Lizenz mit Link „Lizenzbedingungen lesen“ (`lizenzUrl`, `target=_blank`, `rel=noopener noreferrer`), Häkchen „Ich habe die Sysinternals-Lizenzbedingungen gelesen und nehme sie an.“; „Herunterladen“ erst mit Häkchen aktiv → Job-Fortschritt → Ergebnis.
+- Eingerichtet: „Neu herunterladen …“ (gleicher Ablauf), „Lizenztext“ (Dialog mit dem Text aus `GET /api/sysinternals/eula`, `white-space: pre-wrap`), „Entfernen …“ (`.btn.danger`, rot). Hinweis: „Die Ergebnisse erscheinen nach dem nächsten Scan unter Sicherheit.“
+- Befunde der drei neuen Prüfungen mit Status `SKIP` bekommen den Link „Sysinternals einrichten →“ (`#/werkzeuge`).
+- Neuer Scan: Häkchen „Sysinternals-Prüfungen überspringen“ (`skipSysinternals`).
+- **Design v3:** keine neue Akzent-Stelle, keine orange Schrift; Primärknöpfe türkis, Entfernen rot. Kein `innerHTML` mit Daten.
+
+## 16. Ergänzungen v2.3.1 (Vertrag für alle Teilaufgaben)
+
+Prüfhilfe für unsignierte Systemdateien, Akzeptieren in der GUI, breites Layout, Kontrast der Tabellen. Tester-Feedback (26.10.2026).
+
+**Grundsatz:** Der Browser schickt **nie** Muster, Prüfungsnamen-Wildcards oder freie Pfade, die der Server ungeprüft übernimmt. Der Server baut jede Regel und jeden Scan-Pfad aus einem gespeicherten Bericht (`reports\`, nur Admins) und prüft ihn selbst. Jedes Schreiben der Akzeptanzliste und jeder Defender-Einzelscan läuft erst nach der Windows-Bestätigung im Admin-Prozess.
+
+### 16.1 Akzeptanzliste (`gui\lib\Akzeptanz.ps1`, neu)
+
+Datei bleibt `<DataRoot>\accepted.psd1` (Format wie `accepted.example.psd1`). Neue optionale Felder je Regel: `Id` (8 Hex-Zeichen, von der GUI vergeben), `Datei` (voller Pfad) und `Sha256` (64 Hex klein) für Datei-Regeln, `Erstellt` (`yyyy-MM-ddTHH:mm:ss`).
+
+| Funktion | Rückgabe |
+|---|---|
+| `Read-MorpheusAkzeptanz -Datei` | Array `{ id, check, match, reason, until, datei, sha256, erstellt, quelle:'gui'\|'hand', abgelaufen:[bool] }`; fehlende Datei → `@()`; unlesbar → throw. `id` = `Id` oder, bei Regeln ohne `Id`, `'h' + ` erste 11 Hex des SHA256 über `check\|match\|reason\|until\|datei\|sha256` |
+| `ConvertTo-MorpheusAkzeptanzPsd1 -Regeln` | psd1-Text: Kopfkommentar (Hinweis „wird von Morpheus geschrieben; Handänderungen bleiben als Regeln erhalten, Kommentare nicht“), `@{ Accepted = @( … ) }`, jedes Feld als `'…'` mit verdoppeltem `'`. Wirft bei Steuerzeichen (U+0000–U+001F, U+007F) in einem Wert |
+| `Add-MorpheusAkzeptanz -Datei -Regel <hashtable>` | prüft (unten), vergibt `Id` und `Erstellt`, schreibt atomar (vorher Kopie nach `accepted.psd1.bak`), gibt die neue Regel zurück |
+| `Remove-MorpheusAkzeptanz -Datei -Id` | entfernt genau eine Regel (unbekannte Id → throw), schreibt atomar mit `.bak`, gibt die entfernte Regel zurück |
+| `Add-MorpheusAkzeptanzHistorie -Datei <state\akzeptanz-historie.json> -Art 'akzeptiert'\|'zurueckgenommen' -Regel -Benutzer` | hängt `{ zeit, art, regel, benutzer }` an (höchstens 1000 Einträge, älteste fallen weg), atomar |
+| `Find-MorpheusAkzeptanzDatei -Regeln -Pfad -Sha256 [-Heute]` | passende, nicht abgelaufene Datei-Regel (Pfad ohne Groß-/Kleinschreibung, Hash gleich) oder `$null`. **Rein** |
+
+**Prüfregeln in `Add`:** `Check` 1–200 Zeichen; `Reason` 3–300 Zeichen; `Until` leer oder `^\d{4}-\d{2}-\d{2}$`, gültiges Datum, ≥ heute, ≤ heute + 5 Jahre; `Match` ≤ 2000 Zeichen und als Regex gültig; `Datei` nur zusammen mit `Sha256` (`^[0-9a-f]{64}$`), Pfad `^[A-Za-z]:\\`, ≤ 260 Zeichen; in keinem Feld Steuerzeichen. Höchstens 500 Regeln.
+
+### 16.2 Scan (`pc-check.ps1`)
+
+- Die allgemeine Akzeptanz-Schleife überspringt Regeln mit `Datei` (die gelten nur für Datei-Zeilen).
+- **Sigcheck:** Für jede unsignierte Datei SHA256 berechnen (`Get-FileHash -Algorithm SHA256`, Fehler → leer). Tabelle `Unsignierte Systemdateien (Sigcheck)` bekommt die Spalten `Sha256` und `Akzeptiert` (Begründung der passenden Regel bzw. `''`). Bewertet werden nur nicht akzeptierte Zeilen: Bleiben welche, `WARN` mit diesen (Wert endet auf `; k akzeptiert`, wenn k > 0). Sind alle akzeptiert, wird der Befund `ACK` (`OriginalStatus = 'WARN'`, `Note` = „n Dateien akzeptiert (je SHA256)“). Ändert sich eine Datei, passt der Hash nicht mehr und sie zählt wieder.
+- `pc-check.hilfe.psd1`, Abschnitt `Tipps`, Eintrag `'Systemdateien: Signaturen (Sigcheck)'`: Schritte (Herkunft klären: Firma, Datum, `pnputil /enum-drivers`; Signatur von Hand: Eigenschaften > Digitale Signaturen; Hash selbst bei VirusTotal nachschlagen, Morpheus sendet nichts; alten Treiber über Geräte-Manager bzw. `pnputil /delete-driver` entfernen, nur wenn das Gerät nicht mehr genutzt wird; in Morpheus je Datei „Mit Defender prüfen“ und „Akzeptieren“), `Befehl = 'pnputil /enum-drivers'`, `NurAnleitung = $true`, Nutzen/Aufwand/Risiko mittel/gering/gering.
+- `$ScriptVersion = '2.3.1'`.
+
+### 16.3 Defender-Einzelscan (#44)
+
+- `Defender.ps1`: Impl-Eintrag `Datei = { param($Pfad) Start-MpScan -ScanType CustomScan -ScanPath $Pfad -ErrorAction Stop }`. `Invoke-MorpheusDefenderAktion -Art 'datei' -Pfad <string>`; `Pfad` Pflicht bei `datei`, sonst verboten; Ergebnis wie bisher plus `pfad`. Funde nur ab Start, nur anzeigen.
+- Server-Hilfsfunktion `Resolve-GuiSigcheckDatei -Bericht <name> -Pfad <string>` → `{ pfad, sha256 }` oder `Stop-GuiRequest 400/404/409`: Berichtsname wie bisher geprüft; Bericht-JSON laden; Zeile in `Data.'Unsignierte Systemdateien (Sigcheck)'` mit `Pfad -ieq`; Pfad per `GetFullPath` unter `%SystemRoot%\System32\` (Präfix, ohne Groß-/Kleinschreibung), keine `..`, Datei existiert, kein Reparse Point; `Sha256` der Zeile `^[0-9a-f]{64}$`; aktueller SHA256 gleich (sonst 409 „Die Datei hat sich seit dem Scan geändert. Bitte neu scannen.“).
+
+### 16.4 API
+
+| Methode und Pfad | Antwort / Zweck |
+|---|---|
+| `GET /api/akzeptanz` | `{ regeln:[…Read-MorpheusAkzeptanz…], datei, bearbeitbar:[bool] }` |
+| `POST /api/akzeptanz` | Body `{ art:'befund', bericht:'pc-check_….json', check, begruendung, bis? }` oder `{ art:'datei', bericht, pfad, begruendung, bis? }` → 403 im Nur-Lesen-Modus → **befund:** Befund mit `Check -ceq check` im Bericht, Status (bzw. `OriginalStatus`) ∈ CRIT/WARN/TIPP/INFO, nicht `Systemdateien: Signaturen (Sigcheck)` (dort je Datei); Regel `Check = [WildcardPattern]::Escape(check)`, `Match = '^' + [regex]::Escape(Value) + '$'`. **datei:** `Resolve-GuiSigcheckDatei`; Regel `Check = 'Systemdateien: Signaturen (Sigcheck)'`, `Datei`, `Sha256`. → Windows-Bestätigung (Text nennt Prüfung bzw. Datei, Begründung, Ablauf; „Hast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'.“) → `Add` + Historie → `{ regel, regeln }`. Fehler der Prüfregeln → 400 mit Text |
+| `POST /api/akzeptanz/<id>/entfernen` | `<id>` `^h?[0-9a-f]{8,11}$`; 403 Nur-Lesen; Windows-Bestätigung; `Remove` + Historie → `{ regeln }` |
+| `POST /api/defender/datei` | Body `{ bericht, pfad }` → `Resolve-GuiSigcheckDatei` → 409 bei laufender Defender-Aufgabe/Countdown → Windows-Bestätigung (Text nennt die Datei) → Job `defender` mit `Art 'datei'` → `{ jobId }` |
+
+`Start-GuiJob`: Job `defender` bekommt für `datei` den Pfad als weiteres Argument (Job-Script `param($Root, $DefenderPath, $Art, $Pfad)`).
+
+### 16.5 Oberfläche (#44, #45)
+
+- **Tabelle `Unsignierte Systemdateien (Sigcheck)`** (überall, wo „Daten ansehen“ sie zeigt): je Zeile „Mit Defender prüfen“ (Job-Dialog wie Defender, Ergebnis: Funde oder „Keine Funde“), „Akzeptieren …“, Link „VirusTotal ↗“ (`https://www.virustotal.com/gui/file/<sha256>`, `target=_blank`, `rel=noopener noreferrer`, `title`: „Öffnet deinen Browser; dabei geht nur der Hash an VirusTotal.“), „Hash kopieren“. Zeilen mit `Akzeptiert` zeigen einen Chip „akzeptiert“ (Text = Begründung im `title`). Nur für den angezeigten Bericht; im Nur-Lesen-Modus gesperrt.
+- **Akzeptieren-Dialog:** Begründung (Pflicht, 3–300 Zeichen), „Gilt bis“ (optional, `input type=date`), Erklärung: Befund → „Gilt, solange der Befund genau so lautet. Ändert er sich, kommt die Warnung zurück.“; Datei → „Gilt nur für genau diese Datei (SHA256 …). Ändert sie sich, kommt die Warnung zurück.“ Danach Hinweis „Wirkt ab dem nächsten Scan“ mit Knopf „Neuer Scan“.
+- **Befundkarten** mit Status CRIT/WARN/TIPP/INFO (außer der Sigcheck-Prüfung) bekommen einen kleinen Knopf „Akzeptieren …“ neben „erledigt/später“.
+- **Einstellungen > Akzeptanzliste:** Tabelle aller Regeln (Prüfung, Datei bzw. Muster, Begründung, gilt bis, Quelle, abgelaufen) mit „Zurücknehmen …“ je Regel. Regeln von Hand (`quelle = 'hand'`) lassen sich ebenso zurücknehmen.
+
+### 16.6 Layout und Tabellen (#46, #47)
+
+- **Breite:** Bis 1920 px Fensterbreite bleibt alles wie heute. Darüber wächst die Mittelspalte bis ca. 1800 px; die rechte Leiste ist `clamp(280px, 16vw, 400px)`; Kartenraster (Tipps, Übersicht, Werkzeuge) bekommen ab ca. 2200 px eine Spalte mehr. Tabellen nutzen die volle Breite der Mittelspalte.
+- **Neuer Scan:** „Scan starten“ ist `.btn.brand` (oranger Rahmen und Glow wie „Neuer Scan“ oben). Die Häkchen bleiben türkis. Die Ansicht trägt die Klasse `noaccent`, damit die Linie unter dem Seitentitel dort entfällt (höchstens 3 Akzent-Stellen).
+- **Tabellen** (Rohdaten und „Daten ansehen“): `app.js` packt jede Datentabelle in `div.tbl-scroll` (eigener Scrollbereich) und gibt Zellen von Spalten, deren Name auf `Pfad|Path|Befehl|Ort|Datei|Sha256|Launch` passt, die Klasse `mono`. `app.css`: deckende dunkle Fläche (kein Backdrop durchscheinend), Zebra-Zeilen, Schrift mit Kontrast ≥ 4.5:1 zur Fläche, Kopf `position: sticky`, Hover-Zeile, `.mono` in Monospace mit Umbruch an beliebiger Stelle. Kein Orange in Tabellen.

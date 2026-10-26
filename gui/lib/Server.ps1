@@ -55,7 +55,7 @@ function Assert-GuiWritable {
 function Assert-GuiFn {
     # Fehlt eine Safety-Funktion, antwortet der Endpunkt mit 501.
     param([string[]]$Name)
-    if (-not (Test-GuiFn $Name)) { Stop-GuiRequest 501 'Diese Funktion ist noch nicht verfügbar (Safety.ps1 fehlt oder ist unvollständig).' }
+    if (-not (Test-GuiFn $Name)) { Stop-GuiRequest 501 'Diese Funktion ist noch nicht verfügbar (Safety.ps1 bzw. Defender.ps1 fehlt oder ist unvollständig).' }
 }
 
 function New-GuiSecret {
@@ -145,6 +145,75 @@ function Resolve-GuiReportPath {
     return $full
 }
 
+$script:GuiSigcheckTitel = 'Unsignierte Systemdateien (Sigcheck)'
+$script:GuiSigcheckCheck = 'Systemdateien: Signaturen (Sigcheck)'
+# Wurzel für erlaubte Dateien; Tests überschreiben sie (Standard: %SystemRoot%\System32)
+$script:GuiSystem32Root = $null
+
+function Read-GuiReportJson {
+    # Liest einen Bericht (voller Pfad aus Resolve-GuiReportPath) als Objekt.
+    param([string]$Full)
+    $bytes = [IO.File]::ReadAllBytes($Full)
+    $start = 0
+    if (($bytes.Length -ge 3) -and ($bytes[0] -eq 0xEF) -and ($bytes[1] -eq 0xBB) -and ($bytes[2] -eq 0xBF)) { $start = 3 }
+    $text = [Text.Encoding]::UTF8.GetString($bytes, $start, $bytes.Length - $start)
+    try { return ($text | ConvertFrom-Json -ErrorAction Stop) }
+    catch { Stop-GuiRequest 400 'Der Bericht ist nicht lesbar.' }
+}
+
+function Resolve-GuiBerichtDatei {
+    # Prüft den Berichtsnamen (nur Dateiname im festen Muster) und liefert den vollen Pfad der JSON-Datei.
+    param($Bericht)
+    if (($Bericht -isnot [string]) -or ($Bericht -cnotmatch $script:GuiReportRx)) { Stop-GuiRequest 400 'bericht ist kein gültiger Berichtsname.' }
+    $full = Resolve-GuiReportPath $Bericht 'json'
+    if (-not $full) { Stop-GuiRequest 404 'Bericht nicht gefunden.' }
+    return $full
+}
+
+function Get-GuiDateiSha256 {
+    param([string]$Pfad)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $fs = New-Object IO.FileStream($Pfad, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        try { $hash = $sha.ComputeHash($fs) } finally { $fs.Dispose() }
+    }
+    finally { $sha.Dispose() }
+    return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function Resolve-GuiSigcheckDatei {
+    # Liefert { pfad; sha256 } einer Datei aus der Sigcheck-Tabelle des Berichts oder bricht mit 400/404/409 ab (Abschnitt 16.3).
+    param($Bericht, $Pfad)
+    $berichtFull = Resolve-GuiBerichtDatei $Bericht
+    if (($Pfad -isnot [string]) -or ($Pfad.Length -lt 4) -or ($Pfad.Length -gt 260) -or ($Pfad -match '[\x00-\x1f\x7f]')) { Stop-GuiRequest 400 'pfad ist ungültig.' }
+    if (($Pfad -split '[\\/]') -contains '..') { Stop-GuiRequest 400 'pfad ist ungültig.' }
+    $wurzel = $script:GuiSystem32Root
+    if (-not $wurzel) { $wurzel = Join-Path $env:SystemRoot 'System32' }
+    try {
+        $wurzel = [IO.Path]::GetFullPath($wurzel).TrimEnd('\') + '\'
+        $full = [IO.Path]::GetFullPath($Pfad)
+    }
+    catch { Stop-GuiRequest 400 'pfad ist ungültig.' }
+    if (-not $full.StartsWith($wurzel, [StringComparison]::OrdinalIgnoreCase)) { Stop-GuiRequest 400 'Es sind nur Dateien aus dem Windows-Ordner System32 erlaubt.' }
+    $bericht = Read-GuiReportJson $berichtFull
+    $tabelle = Get-GuiProp (Get-GuiProp $bericht 'Data') $script:GuiSigcheckTitel
+    $zeile = $null
+    foreach ($z in @($tabelle)) {
+        $zp = Get-GuiProp $z 'Pfad'
+        if (($zp -is [string]) -and ($zp -ieq $Pfad)) { $zeile = $z; break }
+    }
+    if (-not $zeile) { Stop-GuiRequest 404 'Die Datei steht nicht in der Sigcheck-Tabelle dieses Berichts.' }
+    if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { Stop-GuiRequest 404 'Die Datei gibt es nicht mehr.' }
+    $item = Get-Item -LiteralPath $full -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { Stop-GuiRequest 400 'Verknüpfungen (Reparse Points) sind nicht erlaubt.' }
+    $soll = Get-GuiProp $zeile 'Sha256'
+    if (($soll -isnot [string]) -or ($soll -cnotmatch '^[0-9a-f]{64}$')) { Stop-GuiRequest 409 'Der Bericht enthält keinen Hash zu dieser Datei. Bitte neu scannen.' }
+    try { $ist = Get-GuiDateiSha256 $full }
+    catch { Stop-GuiRequest 409 'Die Datei lässt sich nicht lesen.' }
+    if ($ist -cne $soll) { Stop-GuiRequest 409 'Die Datei hat sich seit dem Scan geändert. Bitte neu scannen.' }
+    return [ordered]@{ pfad = $full; sha256 = $ist }
+}
+
 function Get-GuiReportList {
     # Liest je Bericht nur Meta und zählt die Befunde (pro Datei nach Name + Änderungszeit gecacht).
     $dir = Join-Path $script:Gui.DataRoot 'reports'
@@ -209,6 +278,102 @@ function Save-GuiTextAtomic {
 
 #endregion
 
+#region Eigene Spiele-Ordner (Abschnitt 14.8)
+
+$script:GuiSpielordnerPlattformen = @('Steam', 'Epic', 'GOG', 'EA', 'Ubisoft', 'Xbox', 'Andere')
+
+function Get-GuiSpielordnerFehler {
+    # Prüft einen Eintrag { plattform, pfad }. Gibt den Grund als Text zurück oder $null, wenn alles passt.
+    # -NurSyntax: ohne Zugriff auf das Dateisystem (für das Lesen; ein getrenntes Laufwerk soll den Eintrag nicht löschen).
+    param($Eintrag, [switch]$NurSyntax)
+    if (($null -eq $Eintrag) -or ($Eintrag -isnot [pscustomobject])) { return 'Der Eintrag muss ein Objekt mit plattform und pfad sein.' }
+    $pl = Get-GuiProp $Eintrag 'plattform'
+    $pf = Get-GuiProp $Eintrag 'pfad'
+    if (($pl -isnot [string]) -or ($script:GuiSpielordnerPlattformen -cnotcontains $pl)) { return 'Unbekannte Plattform. Erlaubt: ' + ($script:GuiSpielordnerPlattformen -join ', ') + '.' }
+    if (($pf -isnot [string]) -or ($pf.Length -eq 0)) { return 'Der Pfad fehlt.' }
+    if ($pf.Length -gt 260) { return 'Der Pfad ist länger als 260 Zeichen.' }
+    if ($pf -cnotmatch '^[A-Za-z]:\\') { return 'Der Pfad muss mit einem Laufwerk beginnen, z. B. F:\Games.' }
+    if ($pf -match '[\x00-\x1f"<>|*?]') { return 'Der Pfad enthält ungültige Zeichen.' }
+    $norm = Get-GuiSpielordnerPfadNorm $pf
+    $rest = $norm.Substring(3)
+    if ($rest.Length -gt 0) {
+        if ($rest.Contains(':')) { return 'Der Pfad enthält ungültige Zeichen.' }
+        foreach ($seg in ($rest -split '\\')) {
+            if (($seg -eq '.') -or ($seg -eq '..')) { return 'Der Pfad darf kein . oder .. enthalten.' }
+            if ($seg.Length -eq 0) { return 'Der Pfad enthält einen leeren Ordnernamen.' }
+        }
+    }
+    if ($NurSyntax) { return $null }
+    if (-not (Test-Path -LiteralPath $norm -PathType Container)) { return 'Der Ordner existiert nicht.' }
+    try {
+        if ((Get-Item -LiteralPath $norm -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) { return 'Der Ordner ist ein Link (Junction oder Symlink) und wird nicht verwendet.' }
+    }
+    catch { return 'Der Ordner ist nicht lesbar.' }
+    return $null
+}
+
+function Get-GuiSpielordnerPfadNorm {
+    # / zu \, abschließendes \ weg (außer bei X:\)
+    param([string]$Pfad)
+    $p = $Pfad.Replace('/', '\')
+    if ($p.Length -gt 3) { $p = $p.TrimEnd('\') }
+    if ($p -match '^[A-Za-z]:$') { $p += '\' }
+    return $p
+}
+
+function Test-GuiSpielordnerEintraege {
+    # Prüft die Liste für POST /api/spielordner; Fehler -> 400 "Eintrag N (<pfad>): <Grund>".
+    # Rückgabe: bereinigtes Array von { plattform, pfad } (normalisiert, doppelte Pfade nur einmal).
+    param($Eintraege)
+    if (($null -eq $Eintraege) -or ($Eintraege -isnot [array])) { Stop-GuiRequest 400 'eintraege muss ein Array sein.' }
+    $liste = @($Eintraege)
+    if ($liste.Count -gt 50) { Stop-GuiRequest 400 'Höchstens 50 Einträge erlaubt.' }
+    $clean = @()
+    $gesehen = @{}
+    $n = 0
+    foreach ($e in $liste) {
+        $n++
+        $fehler = Get-GuiSpielordnerFehler $e
+        if ($fehler) {
+            $zeigen = ''
+            $pf = Get-GuiProp $e 'pfad'
+            if ($pf -is [string]) { $zeigen = $pf -replace '[\x00-\x1f]', '?'; if ($zeigen.Length -gt 80) { $zeigen = $zeigen.Substring(0, 80) + '…' } }
+            Stop-GuiRequest 400 ("Eintrag {0} ({1}): {2}" -f $n, $zeigen, $fehler)
+        }
+        $norm = Get-GuiSpielordnerPfadNorm ([string]$e.pfad)
+        $k = $norm.ToLowerInvariant()
+        if ($gesehen.ContainsKey($k)) { continue }
+        $gesehen[$k] = $true
+        $clean += [pscustomobject][ordered]@{ plattform = [string]$e.plattform; pfad = $norm }
+    }
+    return @($clean)
+}
+
+function Read-GuiSpielordner {
+    # Liest state\spielordner.json tolerant (fehlend/leer/kaputt = @()), behält nur Einträge, die die Syntaxprüfung bestehen.
+    param([string]$Datei)
+    $clean = @()
+    try {
+        if (-not (Test-Path -LiteralPath $Datei -PathType Leaf)) { return @() }
+        $text = [IO.File]::ReadAllText($Datei, [Text.Encoding]::UTF8)
+        if ([string]::IsNullOrWhiteSpace($text)) { return @() }
+        $gesehen = @{}
+        foreach ($e in @($text | ConvertFrom-Json -ErrorAction Stop | ForEach-Object { $_ })) {
+            if ($clean.Count -ge 50) { break }
+            if (Get-GuiSpielordnerFehler $e -NurSyntax) { continue }
+            $norm = Get-GuiSpielordnerPfadNorm ([string]$e.pfad)
+            $k = $norm.ToLowerInvariant()
+            if ($gesehen.ContainsKey($k)) { continue }
+            $gesehen[$k] = $true
+            $clean += [pscustomobject][ordered]@{ plattform = [string]$e.plattform; pfad = $norm }
+        }
+    }
+    catch { return @() }
+    return @($clean)
+}
+
+#endregion
+
 #region Jobs
 
 $script:GuiJobScripts = @{
@@ -250,6 +415,46 @@ $script:GuiJobScripts = @{
         $name = $null; if ($neu) { $name = $neu.BaseName }
         [pscustomobject]@{ exitCode = $code; bericht = $name }
     }
+    # Speicherverbraucher und Spiele zählen; Cache atomar nach state\speicher.json (Save-GuiTextAtomic gibt es im Job nicht)
+    speicher = {
+        param($Root, $DataRoot)
+        $lib = Join-Path $Root 'gui\lib\Speicher.ps1'
+        if (-not (Test-Path -LiteralPath $lib -PathType Leaf)) { throw 'gui\lib\Speicher.ps1 wurde nicht gefunden.' }
+        . $lib
+        $manuell = @(Read-MorpheusSpielordner -Datei (Join-Path $DataRoot 'state\spielordner.json'))
+        $x = Get-MorpheusSpeicher -Manuell $manuell -Fortschritt { param($Text) Write-Information -MessageData "[$(Get-Date -Format HH:mm:ss)] $Text" -InformationAction Continue }
+        $json = ConvertTo-Json -InputObject $x -Depth 8 -Compress
+        $p = Join-Path $DataRoot 'state\speicher.json'
+        $dir = Split-Path -Parent $p
+        if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir -Force) }
+        $tmp = $p + '.tmp'
+        [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding $false))
+        if (Test-Path -LiteralPath $p) { [IO.File]::Replace($tmp, $p, $null) }
+        else { Move-Item -LiteralPath $tmp -Destination $p -Force }
+        [pscustomobject]@{ stand = $x.stand }
+    }
+    defender = {
+        param($Root, $DefenderPath, $Art, $Pfad)
+        . $DefenderPath
+        if ($Art -ceq 'datei') { Invoke-MorpheusDefenderAktion -Art $Art -Pfad $Pfad }
+        else { Invoke-MorpheusDefenderAktion -Art $Art }
+    }
+    sysinternals = {
+        param($Root, $SysPath, $DataRoot)
+        . $SysPath
+        # Die Zustimmung wird erst hier gespeichert, also nach der Windows-Bestätigung
+        $null = Set-MorpheusSysZustimmung -DataRoot $DataRoot -Akzeptiert $true
+        Install-MorpheusSysWerkzeuge -DataRoot $DataRoot
+    }
+}
+
+function Format-GuiDialogWert {
+    # Werte aus Berichten/Eingaben für den Windows-Bestätigungsdialog: keine Steuer- und Bidi-Zeichen, gekürzt.
+    param([AllowNull()]$Text, [int]$Max = 200)
+    $s = [string]$Text
+    $s = [regex]::Replace($s, '[\u0000-\u001F\u007F\u2028\u2029\u202A-\u202E\u2066-\u2069]', ' ')
+    if ($s.Length -gt $Max) { $s = $s.Substring(0, $Max) + [string][char]0x2026 }
+    return $s
 }
 
 function Confirm-GuiElevated {
@@ -268,8 +473,8 @@ function Confirm-GuiElevated {
 function Start-GuiJob {
     param([string]$Art, [object[]]$JobArgs, [bool]$Mutating, [string]$Confirm)
     # Verteidigung in der Tiefe: Im Nur-Lesen-Modus startet kein ändernder Job und kein Scan, egal wer fragt
-    if ($script:Gui.ReadOnly -and ($Art -in 'run', 'undo', 'scan')) { Stop-GuiRequest 403 (Get-GuiReadOnlyMessage) }
-    if ($Art -in 'run', 'undo') {
+    if ($script:Gui.ReadOnly -and ($Art -in 'run', 'undo', 'scan', 'speicher', 'defender', 'sysinternals')) { Stop-GuiRequest 403 (Get-GuiReadOnlyMessage) }
+    if ($Art -in 'run', 'undo', 'defender', 'sysinternals') {
         if (-not $Confirm) { Stop-GuiRequest 500 'Interner Fehler: Bestätigungstext fehlt.' }
         Write-GuiLog "Warte auf Bestätigung im Windows-Dialog ($Art)"
         $ok = Confirm-GuiElevated $Confirm
@@ -332,6 +537,7 @@ function Update-GuiJobs {
                     $out = @($out | ForEach-Object { Remove-GuiJobNoise $_ })
                     if ($state -eq 'Completed') {
                         $rec.Status = 'done'
+                        # speicher/defender: wie die anderen Arten das letzte Objekt (Ausgabe ist je nur ein Objekt)
                         if ($rec.Art -eq 'run') { $rec.Ergebnis = @($out) }
                         elseif ($out.Count -gt 0) { $rec.Ergebnis = $out[$out.Count - 1] }
                         if (($rec.Art -eq 'refresh') -and ($rec.Ergebnis -is [System.Collections.IDictionary])) { $script:Gui.ActionStates = $rec.Ergebnis }
@@ -363,6 +569,56 @@ function Update-GuiJobs {
 function Get-GuiRunningJobs {
     param([switch]$MutatingOnly)
     return @($script:Gui.Jobs.Values | Where-Object { ($_.Status -eq 'running') -and ((-not $MutatingOnly) -or $_.Mutating) })
+}
+
+function Get-GuiRunningDefenderJob {
+    return @($script:Gui.Jobs.Values | Where-Object { ($_.Status -eq 'running') -and ($_.Art -eq 'defender') }) | Select-Object -First 1
+}
+
+function Get-GuiRunningScanJob {
+    return @($script:Gui.Jobs.Values | Where-Object { ($_.Status -eq 'running') -and ($_.Art -eq 'scan') }) | Select-Object -First 1
+}
+
+function Get-GuiRunningSysJob {
+    return @($script:Gui.Jobs.Values | Where-Object { ($_.Status -eq 'running') -and ($_.Art -eq 'sysinternals') }) | Select-Object -First 1
+}
+
+#endregion
+
+#region Offline-Scan (Countdown)
+
+function Get-GuiOfflineState {
+    # Zustand für die API: status keiner|countdown|abgebrochen|gestartet|fehler, rest = ganze Sekunden (nur im Countdown)
+    $o = $script:Gui.Offline
+    if ($null -eq $o) { return [ordered]@{ status = 'keiner'; rest = 0; meldung = '' } }
+    $rest = 0
+    if ($o.Status -eq 'countdown') { $rest = [Math]::Max(0, [int][Math]::Ceiling(($o.Ende - (Get-Date)).TotalSeconds)) }
+    return [ordered]@{ status = [string]$o.Status; rest = $rest; meldung = [string]$o.Meldung }
+}
+
+function Set-GuiOfflineState {
+    param([string]$Status, [string]$Meldung)
+    $script:Gui.Offline.Status = $Status
+    $script:Gui.Offline.Meldung = $Meldung
+    Write-GuiLog ("Offline-Scan: {0} {1}" -f $Status, $Meldung)
+}
+
+function Invoke-GuiOfflineStart {
+    # Status steht VOR dem Aufruf auf 'gestartet', damit nichts ein zweites Mal auslöst.
+    Set-GuiOfflineState 'gestartet' 'Der Offline-Scan wird gestartet, der PC startet neu.'
+    try { Start-MorpheusDefenderOffline }
+    catch { Set-GuiOfflineState 'fehler' ('Der Offline-Scan konnte nicht gestartet werden: ' + $_.Exception.Message) }
+}
+
+function Update-GuiOffline {
+    # Wird bei jedem Durchlauf der Hauptschleife aufgerufen und blockiert nie. EdgeCount -1 = unbekannt (kein Abbruch).
+    param([int]$EdgeCount = -1)
+    $o = $script:Gui.Offline
+    if (($null -eq $o) -or ($o.Status -ne 'countdown')) { return }
+    $now = Get-Date
+    if (($now - $o.LetzterAbruf).TotalSeconds -gt 3) { Set-GuiOfflineState 'abgebrochen' 'Abgebrochen: Das Morpheus-Fenster antwortet nicht mehr.'; return }
+    if ($EdgeCount -eq 0) { Set-GuiOfflineState 'abgebrochen' 'Abgebrochen: Das Morpheus-Fenster wurde geschlossen.'; return }
+    if ($now -ge $o.Ende) { Invoke-GuiOfflineStart }
 }
 
 #endregion
@@ -597,7 +853,7 @@ function Send-GuiStatic {
         Stop-GuiRequest 404 'Nicht gefunden.'
     }
     $types = @{ '.html' = 'text/html; charset=utf-8'; '.js' = 'text/javascript; charset=utf-8'; '.css' = 'text/css; charset=utf-8'
-        '.json' = 'application/json; charset=utf-8'; '.svg' = 'image/svg+xml'; '.png' = 'image/png'; '.ico' = 'image/x-icon' }
+        '.json' = 'application/json; charset=utf-8'; '.svg' = 'image/svg+xml'; '.png' = 'image/png'; '.jpg' = 'image/jpeg'; '.ico' = 'image/x-icon' }
     $ct = $types[[IO.Path]::GetExtension($full).ToLowerInvariant()]
     if (-not $ct) { $ct = 'application/octet-stream' }
     Send-GuiBytes $Res 200 $ct ([IO.File]::ReadAllBytes($full))
@@ -606,6 +862,7 @@ function Send-GuiStatic {
 function Invoke-GuiScanStart {
     param($Body)
     Assert-GuiWritable
+    if (Get-GuiRunningSysJob) { Stop-GuiRequest 409 'Die Sysinternals-Werkzeuge werden gerade eingerichtet. Bitte warten, bis das fertig ist, und den Scan dann starten.' }
     $profil = 'Auto'
     $p = Get-GuiProp $Body 'profil'
     if ($null -ne $p) {
@@ -621,7 +878,7 @@ function Invoke-GuiScanStart {
         $days = [int]$d
     }
     $flags = @{}
-    foreach ($n in 'skipWinget', 'skipUpdateSearch') {
+    foreach ($n in 'skipWinget', 'skipUpdateSearch', 'skipSpeicher', 'skipSysinternals') {
         $v = Get-GuiProp $Body $n
         if ($null -eq $v) { $flags[$n] = $false }
         elseif ($v -is [bool]) { $flags[$n] = $v }
@@ -635,6 +892,8 @@ function Invoke-GuiScanStart {
         '-OutputDir', (Join-Path $script:Gui.DataRoot 'reports'), '-AcceptedFile', (Join-Path $script:Gui.DataRoot 'accepted.psd1'))
     if ($flags['skipWinget']) { $a += '-SkipWinget' }
     if ($flags['skipUpdateSearch']) { $a += '-SkipUpdateSearch' }
+    if ($flags['skipSpeicher']) { $a += '-SkipSpeicher' }
+    if ($flags['skipSysinternals']) { $a += '-SkipSysinternals' }
     return (Start-GuiJob 'scan' @($script:Gui.Root, [string[]]$a, $script:Gui.DataRoot) $false)
 }
 
@@ -686,7 +945,7 @@ function Invoke-GuiRoute {
         if (($Path -eq '/') -or ($Path -eq '/index.html')) { Send-GuiStatic $Res 'index.html'; return }
         if ($Path -in '/app.js', '/app.css') { Send-GuiStatic $Res $Path.TrimStart('/'); return }
         # Bilder: nur feste Namensform aus gui\assets\ (Regex + Präfix-Prüfung in Send-GuiStatic), ohne Token (keine Daten)
-        if ($Path -cmatch '^/assets/([a-z0-9-]+\.(png|svg))\z') { Send-GuiStatic $Res ('assets\' + $Matches[1]); return }
+        if ($Path -cmatch '^/assets/([a-z0-9-]+\.(png|svg|jpg))\z') { Send-GuiStatic $Res ('assets\' + $Matches[1]); return }
         if ($Path -eq '/favicon.ico') { Send-GuiStatic $Res 'assets\morpheus-icon.png'; return }
         if ($Path -cmatch '^/dev/[A-Za-z0-9._-]+\z') { Send-GuiStatic $Res $Path.TrimStart('/'); return }
         Stop-GuiRequest 404 'Nicht gefunden.'
@@ -884,6 +1143,302 @@ function Invoke-GuiRoute {
         Send-GuiBytes $Res 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json))
         return
     }
+    if ($Path -eq '/api/speicher') {
+        if (-not $isGet) { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        $sp = Join-Path $g.DataRoot 'state\speicher.json'
+        $bytes = $null
+        if (Test-Path -LiteralPath $sp -PathType Leaf) {
+            if ((Get-Item -LiteralPath $sp).Length -gt 20MB) { Write-GuiLog 'speicher.json ist größer als 20 MB und wird ignoriert.' }
+            else {
+                $bytes = [IO.File]::ReadAllBytes($sp)
+                if (($bytes.Length -ge 3) -and ($bytes[0] -eq 0xEF) -and ($bytes[1] -eq 0xBB) -and ($bytes[2] -eq 0xBF)) { $bytes = $bytes[3..($bytes.Length - 1)] }
+                if ($bytes.Length -lt 2) { $bytes = $null }
+            }
+        }
+        if ($null -eq $bytes) { Send-GuiJson $Res 200 ([ordered]@{ stand = $null }); return }
+        Send-GuiBytes $Res 200 'application/json; charset=utf-8' $bytes
+        return
+    }
+    if ($Path -eq '/api/speicher/refresh') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        $running = @($g.Jobs.Values | Where-Object { ($_.Status -eq 'running') -and ($_.Art -eq 'speicher') })
+        if ($running.Count -gt 0) { Send-GuiJson $Res 200 ([ordered]@{ jobId = $running[0].Id }); return }
+        $id = Start-GuiJob 'speicher' @($g.Root, $g.DataRoot) $false
+        Send-GuiJson $Res 200 ([ordered]@{ jobId = $id })
+        return
+    }
+    if ($Path -eq '/api/spielordner') {
+        $sf = Join-Path $g.DataRoot 'state\spielordner.json'
+        if ($isGet) {
+            # ConvertTo-Json -InputObject (in Send-GuiJson) liefert auch bei 0/1 Einträgen ein Array
+            Send-GuiJson $Res 200 @(Read-GuiSpielordner $sf)
+            return
+        }
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        # Direkt aus der Eigenschaft lesen: Get-GuiProp würde leere/einelementige Arrays in der Pipeline auflösen
+        $ein = $null
+        $einProp = $body.PSObject.Properties['eintraege']
+        if ($einProp) { $ein = $einProp.Value }
+        $clean = @(Test-GuiSpielordnerEintraege $ein)
+        Save-GuiTextAtomic $sf (ConvertTo-Json -InputObject $clean -Depth 4 -Compress)
+        Write-GuiLog ("Spiele-Ordner gespeichert ({0} Einträge)" -f $clean.Count)
+        Send-GuiJson $Res 200 $clean
+        return
+    }
+    if ($Path -eq '/api/defender') {
+        if (-not $isGet) { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        $stand = $null
+        if (Test-GuiFn 'Get-MorpheusDefenderStand') {
+            try { $stand = Get-MorpheusDefenderStand } catch { $stand = [ordered]@{ fehler = $_.Exception.Message } }
+        }
+        else { $stand = [ordered]@{ fehler = 'Die Defender-Werkzeuge sind nicht verfügbar (gui\lib\Defender.ps1 fehlt).' } }
+        $lj = Get-GuiRunningDefenderJob
+        $laufend = $null; if ($lj) { $laufend = $lj.Id }
+        Send-GuiJson $Res 200 ([ordered]@{ stand = $stand; laufend = $laufend; offline = (Get-GuiOfflineState) })
+        return
+    }
+    if ($Path -eq '/api/defender/run') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        Assert-GuiFn 'Get-MorpheusDefenderStand', 'Invoke-MorpheusDefenderAktion'
+        $art = Get-GuiProp $body 'art'
+        if (($art -isnot [string]) -or (@('signaturen', 'schnellscan') -cnotcontains $art)) { Stop-GuiRequest 400 'art muss signaturen oder schnellscan sein.' }
+        if (Get-GuiRunningDefenderJob) { Stop-GuiRequest 409 'Es läuft bereits eine Defender-Aufgabe.' }
+        if (($g.Offline -and ($g.Offline.Status -eq 'countdown'))) { Stop-GuiRequest 409 'Es läuft bereits ein Offline-Scan-Countdown.' }
+        if ($art -ceq 'signaturen') {
+            $text = "Microsoft Defender: Virensignaturen jetzt aktualisieren?`n`nEs werden keine Einstellungen geändert.`n`nHast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'."
+        }
+        else {
+            $text = "Microsoft Defender: Schnellscan jetzt starten?`n`nDer Scan dauert meist einige Minuten. Funde zeigt Morpheus nur an; Quarantäne und Entfernen bleiben in Windows-Sicherheit.`n`nHast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'."
+        }
+        $id = Start-GuiJob 'defender' @($g.Root, $g.DefenderPath, $art) $false $text
+        Send-GuiJson $Res 200 ([ordered]@{ jobId = $id })
+        return
+    }
+    if ($Path -eq '/api/defender/datei') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        Assert-GuiFn 'Get-MorpheusDefenderStand', 'Invoke-MorpheusDefenderAktion'
+        $dat = Resolve-GuiSigcheckDatei (Get-GuiProp $body 'bericht') (Get-GuiProp $body 'pfad')
+        if (Get-GuiRunningDefenderJob) { Stop-GuiRequest 409 'Es läuft bereits eine Defender-Aufgabe.' }
+        if (($g.Offline -and ($g.Offline.Status -eq 'countdown'))) { Stop-GuiRequest 409 'Es läuft bereits ein Offline-Scan-Countdown.' }
+        $text = "Microsoft Defender: Diese Datei jetzt prüfen?`n`n" + (Format-GuiDialogWert $dat.pfad 260) + "`n`nDefender wendet bei einem Fund seine üblichen Maßnahmen an (z. B. Quarantäne); das kann bei Treibern Folgen haben. Morpheus ändert selbst keine Einstellungen.`n`nHast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'."
+        $id = Start-GuiJob 'defender' @($g.Root, $g.DefenderPath, 'datei', $dat.pfad) $false $text
+        Send-GuiJson $Res 200 ([ordered]@{ jobId = $id })
+        return
+    }
+    if ($Path -eq '/api/akzeptanz') {
+        $akzDatei = Join-Path $g.DataRoot 'accepted.psd1'
+        if ($isGet) {
+            Assert-GuiFn 'Read-MorpheusAkzeptanz'
+            try { $regeln = @(Read-MorpheusAkzeptanz -Datei $akzDatei) }
+            catch { Stop-GuiRequest 500 ('Die Akzeptanzliste ist nicht lesbar: ' + $_.Exception.Message) }
+            Send-GuiJson $Res 200 ([ordered]@{ regeln = $regeln; datei = $akzDatei; bearbeitbar = (-not [bool]$g.ReadOnly) })
+            return
+        }
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        Assert-GuiFn 'Read-MorpheusAkzeptanz', 'Add-MorpheusAkzeptanz', 'Add-MorpheusAkzeptanzHistorie', 'Test-MorpheusAkzeptanzRegel'
+        $art = Get-GuiProp $body 'art'
+        if (($art -isnot [string]) -or (@('befund', 'datei') -cnotcontains $art)) { Stop-GuiRequest 400 'art muss befund oder datei sein.' }
+        $begr = Get-GuiProp $body 'begruendung'
+        if (($begr -isnot [string]) -or ($begr.Length -gt 1000)) { Stop-GuiRequest 400 'begruendung muss ein Text sein.' }
+        $bis = Get-GuiProp $body 'bis'
+        if (($null -ne $bis) -and (($bis -isnot [string]) -or ($bis.Length -gt 20))) { Stop-GuiRequest 400 'bis muss ein Datum als Text sein.' }
+        $regel = @{ Reason = $begr }
+        if (-not [string]::IsNullOrWhiteSpace($bis)) { $regel['Until'] = $bis }
+        if ($art -ceq 'befund') {
+            $chk = Get-GuiProp $body 'check'
+            if (($chk -isnot [string]) -or ($chk.Length -lt 1) -or ($chk.Length -gt 200)) { Stop-GuiRequest 400 'check muss ein Text mit 1 bis 200 Zeichen sein.' }
+            if ($chk -ceq $script:GuiSigcheckCheck) { Stop-GuiRequest 400 'Diese Prüfung wird je Datei akzeptiert, nicht als Ganzes.' }
+            $bfull = Resolve-GuiBerichtDatei (Get-GuiProp $body 'bericht')
+            $bericht = Read-GuiReportJson $bfull
+            $treffer = $null
+            foreach ($fd in @(Get-GuiProp $bericht 'Findings')) {
+                if ($null -eq $fd) { continue }
+                $fc = Get-GuiProp $fd 'Check'
+                if (($fc -isnot [string]) -or ($fc -cne $chk)) { continue }
+                $st = [string](Get-GuiProp $fd 'Status')
+                if ($st -ceq 'ACK') { $st = [string](Get-GuiProp $fd 'OriginalStatus') }
+                if (@('CRIT', 'WARN', 'TIPP', 'INFO') -ccontains $st) { $treffer = $fd; break }
+            }
+            if (-not $treffer) { Stop-GuiRequest 404 'Diesen Befund gibt es in diesem Bericht nicht (oder er lässt sich nicht akzeptieren).' }
+            $wert = [string](Get-GuiProp $treffer 'Value')
+            $regel['Check'] = [Management.Automation.WildcardPattern]::Escape($chk)
+            $regel['Match'] = '^' + [regex]::Escape($wert) + '$'
+            $was = 'Prüfung: ' + (Format-GuiDialogWert $chk 200) + "`nBefund: " + (Format-GuiDialogWert $wert 300) + "`nGilt nur, solange der Befund genau so lautet."
+        }
+        else {
+            $dat = Resolve-GuiSigcheckDatei (Get-GuiProp $body 'bericht') (Get-GuiProp $body 'pfad')
+            $regel['Check'] = $script:GuiSigcheckCheck
+            $regel['Datei'] = $dat.pfad
+            $regel['Sha256'] = $dat.sha256
+            $was = 'Datei: ' + (Format-GuiDialogWert $dat.pfad 260)
+        }
+        $ablauf = 'unbegrenzt'; if ($regel.ContainsKey('Until')) { $ablauf = Format-GuiDialogWert $regel['Until'] 20 }
+        # Prüfen VOR dem Windows-Dialog
+        $fehl = Test-MorpheusAkzeptanzRegel -Datei $akzDatei -Regel $regel
+        if ($fehl) {
+            $code = 400; if ([string]$fehl -match 'bereits akzeptiert') { $code = 409 }
+            Stop-GuiRequest $code ([string]$fehl)
+        }
+        $text = "In die Akzeptanzliste aufnehmen?`n`n" + $was + "`nBegründung: " + (Format-GuiDialogWert $begr 300) + "`nGilt bis: " + $ablauf + "`n`nAkzeptierte Befunde zählen ab dem nächsten Scan nicht mehr als Warnung.`n`nHast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'."
+        Write-GuiLog 'Warte auf Bestätigung im Windows-Dialog (Akzeptieren)'
+        $ok = Confirm-GuiElevated $text
+        $g.LastHeartbeat = Get-Date
+        if (-not $ok) {
+            Write-GuiLog 'Im Windows-Dialog abgelehnt (Akzeptieren)'
+            Stop-GuiRequest 403 'Im Windows-Bestätigungsdialog abgelehnt. Es wurde nichts geändert.'
+        }
+        try { $neu = Add-MorpheusAkzeptanz -Datei $akzDatei -Regel $regel }
+        catch { Stop-GuiRequest 500 ('Die Akzeptanzliste konnte nicht gespeichert werden: ' + $_.Exception.Message) }
+        try { Add-MorpheusAkzeptanzHistorie -Datei (Join-Path $g.DataRoot 'state\akzeptanz-historie.json') -Art 'akzeptiert' -Regel $neu -Benutzer ([Environment]::UserName) }
+        catch { Write-GuiLog ('Akzeptanz-Historie: ' + $_.Exception.Message) }
+        Write-GuiLog 'Akzeptanzregel hinzugefügt'
+        $regelnNeu = @()
+        try { $regelnNeu = @(Read-MorpheusAkzeptanz -Datei $akzDatei) } catch { Write-GuiLog ('Akzeptanzliste nach dem Speichern nicht lesbar: ' + $_.Exception.Message) }
+        Send-GuiJson $Res 200 ([ordered]@{ regel = $neu; regeln = $regelnNeu })
+        return
+    }
+    if ($Path -cmatch '^/api/akzeptanz/([^/]+)/entfernen\z') {
+        $rid = $Matches[1]
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        Assert-GuiFn 'Read-MorpheusAkzeptanz', 'Remove-MorpheusAkzeptanz', 'Add-MorpheusAkzeptanzHistorie', 'Get-MorpheusAkzeptanzRegel'
+        if ($rid -cnotmatch '^h?[0-9a-f]{8,11}\z') { Stop-GuiRequest 400 'Ungültige Regel-Id.' }
+        $akzDatei = Join-Path $g.DataRoot 'accepted.psd1'
+        $alteRegel = Get-MorpheusAkzeptanzRegel -Datei $akzDatei -Id $rid
+        if (-not $alteRegel) { Stop-GuiRequest 404 'Diese Regel gibt es nicht (mehr).' }
+        $was = 'Prüfung: ' + (Format-GuiDialogWert (Get-GuiProp $alteRegel 'check') 200)
+        $rd = [string](Get-GuiProp $alteRegel 'datei')
+        $rm = [string](Get-GuiProp $alteRegel 'match')
+        if ($rd) { $was += "`nDatei: " + (Format-GuiDialogWert $rd 260) }
+        elseif ($rm) { $was += "`nBefundmuster: " + (Format-GuiDialogWert $rm 200) }
+        $was += "`nBegründung: " + (Format-GuiDialogWert (Get-GuiProp $alteRegel 'reason') 300)
+        $text = "Diese Regel aus der Akzeptanzliste entfernen (Id " + $rid + ")?`n`n" + $was + "`n`nDie Warnung kommt ab dem nächsten Scan zurück.`n`nHast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'."
+        Write-GuiLog 'Warte auf Bestätigung im Windows-Dialog (Akzeptanz zurücknehmen)'
+        $ok = Confirm-GuiElevated $text
+        $g.LastHeartbeat = Get-Date
+        if (-not $ok) {
+            Write-GuiLog 'Im Windows-Dialog abgelehnt (Akzeptanz zurücknehmen)'
+            Stop-GuiRequest 403 'Im Windows-Bestätigungsdialog abgelehnt. Es wurde nichts geändert.'
+        }
+        try { $alt = Remove-MorpheusAkzeptanz -Datei $akzDatei -Id $rid }
+        catch { Stop-GuiRequest 500 ('Die Akzeptanzliste konnte nicht gespeichert werden: ' + $_.Exception.Message) }
+        try { Add-MorpheusAkzeptanzHistorie -Datei (Join-Path $g.DataRoot 'state\akzeptanz-historie.json') -Art 'zurueckgenommen' -Regel $alt -Benutzer ([Environment]::UserName) }
+        catch { Write-GuiLog ('Akzeptanz-Historie: ' + $_.Exception.Message) }
+        Write-GuiLog 'Akzeptanzregel entfernt'
+        $regelnNeu = @()
+        try { $regelnNeu = @(Read-MorpheusAkzeptanz -Datei $akzDatei) } catch { Write-GuiLog ('Akzeptanzliste nach dem Entfernen nicht lesbar: ' + $_.Exception.Message) }
+        Send-GuiJson $Res 200 ([ordered]@{ regeln = $regelnNeu })
+        return
+    }
+    if ($Path -eq '/api/defender/offline') {
+        if ($isGet) {
+            if ($g.Offline) { $g.Offline.LetzterAbruf = Get-Date }
+            Send-GuiJson $Res 200 (Get-GuiOfflineState)
+            return
+        }
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        Assert-GuiFn 'Start-MorpheusDefenderOffline'
+        $b = Get-GuiProp $body 'bestaetigt'
+        if (($b -isnot [bool]) -or (-not $b)) { Stop-GuiRequest 400 'Bitte zuerst bestätigen, dass alles gespeichert ist.' }
+        if (Get-GuiRunningDefenderJob) { Stop-GuiRequest 409 'Es läuft bereits eine Defender-Aufgabe.' }
+        if (($g.Offline -and ($g.Offline.Status -eq 'countdown'))) { Stop-GuiRequest 409 'Der Countdown läuft bereits.' }
+        $text = "Microsoft Defender Offline-Scan starten?`n`nDer PC startet nach 15 Sekunden neu und wird ca. 15 Minuten lang offline gescannt. Vorher alles speichern.`n`nDu kannst den Countdown in Morpheus noch abbrechen. Hast du das gerade nicht selbst angeklickt, wähle 'Nein'."
+        Write-GuiLog 'Warte auf Bestätigung im Windows-Dialog (Offline-Scan)'
+        $ok = Confirm-GuiElevated $text
+        $g.LastHeartbeat = Get-Date
+        if (-not $ok) {
+            Write-GuiLog 'Im Windows-Dialog abgelehnt (Offline-Scan)'
+            Stop-GuiRequest 403 'Im Windows-Bestätigungsdialog abgelehnt. Es wurde nichts gestartet.'
+        }
+        $g.Offline = @{ Status = 'countdown'; Ende = (Get-Date).AddSeconds(15); LetzterAbruf = (Get-Date); Meldung = '' }
+        Write-GuiLog 'Offline-Scan: Countdown gestartet (15 s)'
+        Send-GuiJson $Res 200 (Get-GuiOfflineState)
+        return
+    }
+    if ($Path -eq '/api/defender/offline/abbrechen') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        if ($g.Offline -and ($g.Offline.Status -eq 'countdown')) { Set-GuiOfflineState 'abgebrochen' 'Abgebrochen. Der PC startet nicht neu.' }
+        Send-GuiJson $Res 200 (Get-GuiOfflineState)
+        return
+    }
+    if ($Path -eq '/api/defender/offline/jetzt') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        if ((-not $g.Offline) -or ($g.Offline.Status -ne 'countdown')) { Stop-GuiRequest 409 'Es läuft kein Countdown.' }
+        Invoke-GuiOfflineStart
+        Send-GuiJson $Res 200 (Get-GuiOfflineState)
+        return
+    }
+    if ($Path -eq '/api/sysinternals') {
+        if (-not $isGet) { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        $stand = $null
+        if (Test-GuiFn 'Get-MorpheusSysStand') {
+            try { $stand = Get-MorpheusSysStand -DataRoot $g.DataRoot } catch { $stand = [ordered]@{ fehler = $_.Exception.Message } }
+        }
+        else { $stand = [ordered]@{ fehler = 'Die Sysinternals-Werkzeuge sind nicht verfügbar (gui\lib\Sysinternals.ps1 fehlt).' } }
+        $lj = Get-GuiRunningSysJob
+        $laufend = $null; if ($lj) { $laufend = $lj.Id }
+        $antwort = [ordered]@{}
+        if ($stand -is [System.Collections.IDictionary]) { foreach ($k in $stand.Keys) { $antwort[[string]$k] = $stand[$k] } }
+        elseif ($null -ne $stand) { foreach ($pr in $stand.PSObject.Properties) { $antwort[[string]$pr.Name] = $pr.Value } }
+        $antwort['laufend'] = $laufend
+        Send-GuiJson $Res 200 $antwort
+        return
+    }
+    if ($Path -eq '/api/sysinternals/install') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        $eula = Get-GuiProp $body 'eulaAkzeptiert'
+        if (($eula -isnot [bool]) -or (-not $eula)) { Stop-GuiRequest 400 'Bitte zuerst die Lizenzbedingungen annehmen.' }
+        Assert-GuiFn 'Get-MorpheusSysStand', 'Set-MorpheusSysZustimmung', 'Install-MorpheusSysWerkzeuge'
+        if (Get-GuiRunningSysJob) { Stop-GuiRequest 409 'Es läuft bereits eine Sysinternals-Aufgabe.' }
+        if (Get-GuiRunningScanJob) { Stop-GuiRequest 409 'Während eines Scans nicht möglich. Bitte warten, bis der Scan fertig ist.' }
+        $ordner = Join-Path $g.DataRoot 'tools'
+        $text = 'Sysinternals-Werkzeuge Autoruns und Sigcheck von download.sysinternals.com (Microsoft) herunterladen?' + "`n`n" +
+            'Du nimmst damit die Sysinternals-Lizenzbedingungen an. Die Dateien landen in ' + $ordner + ' und werden vor jedem Start auf eine gültige Microsoft-Signatur geprüft.' + "`n`n" +
+            'Hast du das gerade nicht selbst in Morpheus angeklickt, wähle ''Nein''.'
+        Write-GuiLog 'Sysinternals: Download angefordert'
+        $id = Start-GuiJob 'sysinternals' @($g.Root, $g.SysinternalsPath, $g.DataRoot) $false $text
+        Send-GuiJson $Res 200 ([ordered]@{ jobId = $id })
+        return
+    }
+    if ($Path -eq '/api/sysinternals/entfernen') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        Assert-GuiWritable
+        Assert-GuiFn 'Get-MorpheusSysStand', 'Remove-MorpheusSysWerkzeuge'
+        if (Get-GuiRunningSysJob) { Stop-GuiRequest 409 'Es läuft bereits eine Sysinternals-Aufgabe.' }
+        if (Get-GuiRunningScanJob) { Stop-GuiRequest 409 'Während eines Scans nicht möglich. Bitte warten, bis der Scan fertig ist.' }
+        $ordner = Join-Path $g.DataRoot 'tools'
+        $text = 'Sysinternals-Werkzeuge (Autoruns, Sigcheck) aus ' + $ordner + ' entfernen und die Lizenz-Zustimmung zurücknehmen?' + "`n`n" +
+            'Hast du das gerade nicht selbst in Morpheus angeklickt, wähle ''Nein''.'
+        Write-GuiLog 'Warte auf Bestätigung im Windows-Dialog (Sysinternals entfernen)'
+        $ok = Confirm-GuiElevated $text
+        $g.LastHeartbeat = Get-Date
+        if (-not $ok) {
+            Write-GuiLog 'Im Windows-Dialog abgelehnt (Sysinternals entfernen)'
+            Stop-GuiRequest 403 'Im Windows-Bestätigungsdialog abgelehnt. Es wurde nichts entfernt.'
+        }
+        $stand = Remove-MorpheusSysWerkzeuge -DataRoot $g.DataRoot
+        Write-GuiLog 'Sysinternals-Werkzeuge entfernt'
+        Send-GuiJson $Res 200 $stand
+        return
+    }
+    if ($Path -eq '/api/sysinternals/eula') {
+        if (-not $isGet) { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
+        $name = [string]$Req.QueryString['name']
+        if (@('autorunsc', 'sigcheck') -cnotcontains $name) { Stop-GuiRequest 400 'name muss autorunsc oder sigcheck sein.' }
+        Assert-GuiFn 'Get-MorpheusSysEula'
+        $etext = Get-MorpheusSysEula -DataRoot $g.DataRoot -Name $name
+        Send-GuiJson $Res 200 ([ordered]@{ name = $name; text = $etext })
+        return
+    }
     if ($Path -eq '/api/live') {
         if (-not $isGet) { Stop-GuiRequest 405 'Methode nicht erlaubt.' }
         # Abruf weckt den Sammel-Runspace; geantwortet wird sofort mit dem letzten Schnappschuss
@@ -957,7 +1512,7 @@ function Initialize-GuiServer {
     # Root = Codeordner (Katalog, Hilfe, Oberfläche), DataRoot = Daten (reports, changes, state, accepted.psd1; Standard: Root).
     # ReadOnly: Ändern, Rückgängig und Scan sind gesperrt (403), weil der Codeordner nicht gesichert ist.
     param([string]$Root, [int]$Port, [string]$Token, [string]$BootCode, [string]$SafetyPath,
-        [string]$DataRoot, [switch]$ReadOnly, [string]$ReadOnlyReason)
+        [string]$DataRoot, [switch]$ReadOnly, [string]$ReadOnlyReason, [string]$DefenderPath, [string]$SysinternalsPath)
     if (-not $DataRoot) { $DataRoot = $Root }
     Add-Type -AssemblyName System.Web.Extensions
     $version = ''
@@ -969,6 +1524,7 @@ function Initialize-GuiServer {
     $script:Gui = @{
         Root = $Root; DataRoot = $DataRoot; ReadOnly = [bool]$ReadOnly; ReadOnlyReason = $ReadOnlyReason
         Port = $Port; Token = $Token; SafetyPath = $SafetyPath
+        DefenderPath = $DefenderPath; SysinternalsPath = $SysinternalsPath; Offline = $null
         BootCode = $BootCode; BootExpires = (Get-Date).AddMinutes(2); Tickets = @{}
         Origin = "http://127.0.0.1:$Port"; HostHeader = "127.0.0.1:$Port"
         Admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -1016,10 +1572,13 @@ function Start-GuiServerLoop {
 
         if ($g.Stop) { $reason = 'Beenden angefordert'; break }
         $busy = (Get-GuiRunningJobs).Count -gt 0
-        # Edge-Ende: alle 3 s die Prozesse mit unserem Profil zählen
-        if ($EdgeProfile -and (((Get-Date) - $edgeCheck).TotalSeconds -ge 3)) {
+        # Edge-Ende: alle 3 s (im Offline-Countdown jede Sekunde) die Prozesse mit unserem Profil zählen
+        $edgeInterval = 3
+        $countdown = ($g.Offline -and ($g.Offline.Status -eq 'countdown'))
+        if ($countdown) { $edgeInterval = 1 }
+        $count = -1
+        if ($EdgeProfile -and (((Get-Date) - $edgeCheck).TotalSeconds -ge $edgeInterval)) {
             $edgeCheck = Get-Date
-            $count = -1
             try {
                 $count = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction Stop |
                         Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($EdgeProfile, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count
@@ -1027,12 +1586,16 @@ function Start-GuiServerLoop {
             if ($count -gt 0) { $edgeSeen = $true }
             elseif (($count -eq 0) -and $edgeSeen -and (-not $busy)) { $reason = 'Fenster geschlossen'; break }
         }
+        # Offline-Countdown (zählt nicht als busy): Abbruch oder Auslösen, ohne zu blockieren
+        try { Update-GuiOffline -EdgeCount $count } catch { Write-GuiLog ('Update-GuiOffline: ' + $_.Exception.Message) }
         # Heartbeat: ohne Browser-Start erst nach dem ersten Heartbeat, und nie während Jobs laufen
         if ((-not $busy) -and ($g.HeartbeatSeen -or $EdgeProfile) -and (((Get-Date) - $g.LastHeartbeat).TotalSeconds -gt $HeartbeatTimeoutSec)) {
             $reason = 'Kein Heartbeat mehr'; break
         }
     }
     if (-not $reason) { $reason = 'Beenden angefordert' }
+    # Ein noch laufender Countdown wird nie ausgelöst, sondern abgebrochen
+    if ($g.Offline -and ($g.Offline.Status -eq 'countdown')) { Set-GuiOfflineState 'abgebrochen' 'Abgebrochen: Morpheus wurde beendet.' }
 
     # laufende Jobs abwarten
     $warned = $false

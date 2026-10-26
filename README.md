@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo/morpheus-logo.png" alt="Morpheus – PC Check-up" width="480">
+  <img src="docs/logo/logo-readme.jpg" alt="Morpheus – PC Check-up" width="480">
 </p>
 
 # Morpheus – PC Check-up
@@ -25,7 +25,9 @@ Sicherheits- und Performance-Check für Windows-11-PCs mit Oberfläche. Die Prü
   </tr>
 </table>
 
-*Screenshots mit Demodaten (Gerät „DEMO-PC“), keine echten Ergebnisse.*
+![Breites Layout auf WQHD (2560 Pixel Breite)](docs/screenshots/231-uebersicht-2560.png)
+
+*Breites Layout auf WQHD. Screenshots mit Demodaten (Gerät „DEMO-PC“), keine echten Ergebnisse.*
 
 ## Schnellstart in 3 Schritten
 
@@ -48,8 +50,10 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 ## Features
 
 **Prüfen**
-- **Rund 100 Prüfungen** zu Sicherheit und Leistung: Updates, Virenschutz, Firewall, Treiber, Autostart, Hardware, Energie, Stabilität. Die Prüfung liest nur.
-- **Gaming-Check:** alle spielerelevanten Punkte auf einen Blick, z. B. Bildwiederholrate, HAGS, Spielebibliotheken.
+- **Rund 110 Prüfungen** zu Sicherheit und Leistung: Updates, Virenschutz, Firewall, Treiber, Autostart, Hardware, Energie, Stabilität, Datensicherung. Die Prüfung liest nur.
+- **Speicherverbraucher:** die zehn größten Ordner, Dateien und Spiele je Laufwerk. Morpheus löscht nichts.
+- **Sysinternals (optional):** Autoruns und Sigcheck prüfen Autostarts und Systemdateien auf Signaturen. Sie werden nur auf deinen Klick geladen.
+- **Gaming-Check:** alle spielerelevanten Punkte auf einen Blick, z. B. Bildwiederholrate, HAGS, Spielebibliotheken und installierte Spiele.
 
 **Verstehen**
 - **Zustandswert 0–100:** wie gut der PC dasteht. Er ergibt sich aus den Befunden: 100 minus 20 je kritischem Befund, 5 je Warnung und 1 je Tipp.
@@ -64,7 +68,8 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 **Absichern**
 - **Wiederherstellungspunkt vor jeder Änderung**, Rückgängig für jede Änderung einzeln.
 - **Änderungsjournal** mit Verlauf aller Anpassungen.
-- **Akzeptanzliste** für Befunde, die bewusst so gewollt sind.
+- **Akzeptanzliste** für Befunde, die bewusst so gewollt sind. Ab 2.3.1 lassen sie sich direkt in der GUI akzeptieren und wieder zurücknehmen.
+- **Defender-Werkzeuge:** Signaturen aktualisieren, Schnellscan, Offline-Scan.
 - **24-Stunden-Sperre erkannt:** Die GUI zeigt ein Banner und erklärt, wie sie sich aufheben lässt.
 
 **Überwachen**
@@ -78,7 +83,7 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 |---|---|
 | Übersicht | Zustandswert, nächste Schritte, lohnendste Tipps, Verlauf |
 | Sicherheit | Befunde der Kategorien 1–10, je Befund mit passender Anpassung |
-| Leistung | Hardware, Laufwerke und Speicherplatz, Energie, Auslastung |
+| Leistung | Hardware, Laufwerke und Speicherplatz, Energie, Auslastung. Ein Klick auf ein Laufwerk zeigt die zehn größten Ordner, Dateien und Spiele |
 | Gaming | Gaming-Check und Gaming & Grafik |
 | Stabilität | Abstürze, Hardwarefehler, Startdauer |
 | Alle Prüfungen | alle Prüfungen nach Bereich und Kategorie |
@@ -87,7 +92,8 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 | Berichte | alle Läufe, Original-Bericht öffnen, zwei Berichte vergleichen |
 | Neuer Scan | Optionen, Start, Live-Protokoll; danach öffnet sich der neue Bericht |
 | Rohdaten | Detailtabellen hinter den Prüfungen |
-| Einstellungen | Profil, Zeitraum und Akzeptanzliste (Anzeige) |
+| Einstellungen | Profil, Zeitraum und Akzeptanzliste (Regeln ansehen und zurücknehmen) |
+| Werkzeuge | Defender-Signaturen aktualisieren, Schnellscan, Offline-Scan (mit Countdown, der PC startet neu), eigene Spiele-Ordner, Sysinternals-Werkzeuge einrichten |
 
 Die Suche liegt oben. Mit der Taste `/` springst du direkt dorthin.
 
@@ -96,6 +102,10 @@ Die Suche liegt oben. Mit der Taste `/` springst du direkt dorthin.
 **Anpassung zurücknehmen:** Im Bereich **Änderungen** den Eintrag mit „↶ Rückgängig“ wählen. Hat sich der Zustand inzwischen anders geändert, fragt die GUI nach.
 
 **Berichte vergleichen:** Im Bereich **Berichte** zwei Zeilen ankreuzen und „Vergleichen“ wählen. Mit „Original-HTML“ öffnest du den unveränderten Bericht.
+
+**Speicher-Fenster:** Fährst du mit der Maus über ein Laufwerk der Karte „Laufwerke“ (oder klickst es an), zeigt ein Fenster die zehn größten Ordner, Dateien und Spiele. Grundlage ist der Stand aus dem letzten Scan oder aus „Neu berechnen“; das Datum steht im Fenster. Ein Klick auf einen Eintrag kopiert den Pfad. Morpheus löscht nichts. Systemdateien wie `pagefile.sys` sind mit „Windows“ gekennzeichnet.
+
+**Defender-Werkzeuge:** Im Bereich **Werkzeuge** aktualisierst du die Defender-Signaturen, startest einen Schnellscan oder einen Offline-Scan. Der Offline-Scan braucht eine doppelte Bestätigung und einen 15-Sekunden-Countdown, danach startet der PC neu. Zusätzlich gibt es einen Knopf direkt am Defender-Befund.
 
 **Neuer Scan:** Im Bereich **Neuer Scan** die Optionen wählen und starten. Das Live-Protokoll zeigt den Fortschritt. Danach öffnet sich der neue Bericht.
 
@@ -176,6 +186,7 @@ Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
 - Vor jeder Änderung wird ein Wiederherstellungspunkt geprüft. Jede Änderung lässt sich einzeln zurücknehmen.
 - **Jede Änderung und jedes Rückgängig bestätigt zusätzlich ein Windows-Dialog** („Morpheus – Änderung bestätigen“). Er gehört zum Prozess mit Adminrechten; Windows verhindert, dass Programme ohne Adminrechte darin klicken oder tippen. So kann auch ein Schadprogramm, das das Morpheus-Fenster fernsteuert, nichts ändern. „Nein“ ist vorbelegt.
 - Die Daten unter `C:\ProgramData\Morpheus` können nur Administratoren lesen und ändern. Berichte enthalten Programme, Konten und Netzwerkdetails; auch andere Benutzerkonten des PCs sehen sie nicht. Ansehen kannst du sie in Morpheus unter „Berichte“.
+- Änderungen sind nur per POST mit JSON möglich.
 - Der Server endet mit dem Fenster.
 
 ## Wo liegen meine Daten?
@@ -187,6 +198,8 @@ Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
 | Änderungsjournal | `C:\ProgramData\Morpheus\changes\journal.json` | wie links, Ändern gesperrt |
 | Checkliste | `C:\ProgramData\Morpheus\state\checklist.json` | wie links |
 | Akzeptanzliste | `C:\ProgramData\Morpheus\accepted.psd1` | wie links |
+| Sysinternals-Werkzeuge | `C:\ProgramData\Morpheus\tools` | nicht verfügbar |
+| Eigene Spiele-Ordner | `C:\ProgramData\Morpheus\state\spielordner.json` | wie links |
 | Protokoll | `C:\ProgramData\Morpheus\state\gui.log` | wie links |
 
 Den Ordner können nur Administratoren lesen und ändern; Berichte siehst du in Morpheus unter „Berichte“. Vorhandene Berichte und die `accepted.psd1` übernimmt die Installation einmalig. Die Akzeptanzliste bearbeitest du nach der Installation als Administrator in `C:\ProgramData\Morpheus\accepted.psd1`.
@@ -217,6 +230,9 @@ Die Dateien heißen aus Kompatibilitätsgründen weiterhin `pc-check.*`.
 | `-OutputDir <Pfad>` | Bericht woanders ablegen |
 | `-SkipUpdateSearch` | keine Online-Suche nach ausstehenden Windows-Updates |
 | `-SkipWinget` | keine Prüfung auf Software-Updates per winget |
+| `-SkipSpeicher` | keine Auswertung der größten Speicherverbraucher (spart 1–3 Minuten) |
+| `-SkipSysinternals` | Autoruns und Sigcheck nicht verwenden |
+| `-SpielOrdnerFile <Pfad>` | Datei mit eigenen Spiele-Ordnern (Standard: `state\spielordner.json` im Datenordner) |
 | `-NoUpdatePrompt` | keine Nachfrage nach Programm-Updates am Ende (rein lesender Lauf) |
 | `-CompareWith <Pfad>` | mit diesem Bericht vergleichen statt mit dem jüngsten in `reports\` |
 | `-AcceptedFile <Pfad>` | andere Akzeptanzliste verwenden |
@@ -227,10 +243,33 @@ Die Dateien heißen aus Kompatibilitätsgründen weiterhin `pc-check.*`.
 
 Manches ist auf deinem PC absichtlich so, z. B. ein genutztes Fernwartungsprogramm. Damit es nicht bei jedem Lauf als Warnung erscheint:
 
-1. `accepted.example.psd1` nach `accepted.psd1` kopieren.
-2. Einträge nach dem Beispiel in der Datei ergänzen; den Befund-Text aus dem eigenen Bericht übernehmen.
+- **In der GUI (ab 2.3.1):**
+  - Am Befund „Akzeptieren …“ wählen und eine Begründung eingeben, optional ein Ablaufdatum. Die Regel gilt genau für den aktuellen Befund-Text.
+  - Unsignierte Systemdateien (Sigcheck) akzeptierst du einzeln unter „Daten ansehen“. Die Regel ist an den SHA256 der Datei gebunden: Ändert sich die Datei, kommt die Warnung zurück.
+  - Gespeichert wird erst nach dem Windows-Bestätigungsdialog.
+  - Unter Einstellungen > Akzeptanzliste nimmst du Regeln wieder zurück.
+  - Es wirkt ab dem nächsten Scan.
+- **Von Hand:**
+  1. `accepted.example.psd1` nach `accepted.psd1` kopieren (installiert: `C:\ProgramData\Morpheus`).
+  2. Einträge nach dem Beispiel ergänzen; den Befund-Text aus dem eigenen Bericht übernehmen.
+  - Schreibt die GUI die Datei, bleiben deine Regeln erhalten, Kommentare aber nicht. Die vorige Fassung liegt dann als `accepted.psd1.bak` daneben.
 
-Passende Befunde erscheinen dann als „Akzeptiert“. Ein enges Muster (`Match`) sorgt dafür, dass die Warnung zurückkehrt, sobald sich etwas ändert. Mit `Until` meldet sich ein Punkt nach einem Datum wieder. `accepted.psd1` ist per `.gitignore` vom Repo ausgeschlossen.
+Passende Befunde erscheinen dann als „Akzeptiert“ und zählen nicht in den Zustandswert. Ein enges Muster (`Match`) sorgt dafür, dass die Warnung zurückkehrt, sobald sich etwas ändert. Mit `Until` meldet sich ein Punkt nach einem Datum wieder. `accepted.psd1` ist per `.gitignore` vom Repo ausgeschlossen.
+
+## Sysinternals-Werkzeuge (ab 2.3)
+
+Morpheus kann zwei kostenlose Werkzeuge von Microsoft Sysinternals nutzen: **Autoruns** (alle Autostarts: Dienste, Treiber, geplante Aufgaben, Anmeldung, Explorer) und **Sigcheck** (Signaturen der Dateien in `System32` und `System32\drivers`). Sie sind nicht enthalten, sondern werden nur auf deinen Klick geladen:
+
+1. Morpheus > **Werkzeuge** > Karte „Sysinternals (Microsoft)“ > **Herunterladen …**
+2. Lizenzbedingungen lesen (Link) und das Häkchen setzen. Die Zustimmung wird gespeichert.
+3. Im Windows-Dialog bestätigen.
+
+- **Quelle:** nur `https://download.sysinternals.com/files/Autoruns.zip` und `Sigcheck.zip` (zusammen ca. 4 MB). Das ist die einzige Verbindung. Einen VirusTotal-Abgleich gibt es nicht, es verlassen also keine Daten den PC.
+- **Ablage:** `C:\ProgramData\Morpheus\tools` (nur Administratoren). Entpackt werden nur `autorunsc64.exe`, `sigcheck64.exe` und der Lizenztext.
+- **Vor jedem Start** prüft Morpheus: Ordner und Datei nur für Administratoren änderbar, Datei unverändert seit dem Download (SHA256), gültige Signatur von Microsoft Corporation mit Microsoft-Stammzertifikat, Versionsinfo „Sysinternals“. Während des Laufs ist die Datei gegen Austausch gesperrt. Schlägt eine Prüfung fehl, startet das Werkzeug nicht, und der Scan meldet es.
+- **Im Scan:** neue Prüfungen „Autostarts: Signaturen (Autoruns)“, „Autostarts: beschreibbare Pfade (Autoruns)“ und „Systemdateien: Signaturen (Sigcheck)“, je mit Tabelle unter „Daten ansehen“. Ohne eingerichtete Werkzeuge oder ohne Adminrechte werden sie übersprungen. Abschalten mit `-SkipSysinternals` bzw. dem Häkchen unter „Neuer Scan“.
+- **Prüfhilfe:** Bei unsignierten Systemdateien gibt es je Datei „Mit Defender prüfen“, einen VirusTotal-Link und „Hash kopieren“.
+- **Entfernen:** Werkzeuge > „Entfernen …“ löscht die Dateien und nimmt die Zustimmung zurück.
 
 ## Update-Dialog am Ende
 
@@ -253,26 +292,34 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 
 ## Was geprüft wird
 
-**Sicherheit:** Windows-Version und Updates, Defender (Status, Einstellungen, ASR-Regeln, Ausnahmen, Funde), Firewall und offene Ports, UPnP-Weiterleitungen am Router, SMB/Freigaben, Konten und Kennwortrichtlinie, UAC, Kernisolierung/Speicherintegrität, LSA-Schutz, Treiber-Sperrliste, Exploit-Schutz, Spectre-Tweaks, Secure Boot (inkl. 2023er-Zertifikate), TPM, BitLocker, BIOS, Fernzugriff (RDP, Fernwartungstools), Drittanbieter-Dienste und -Treiber (inkl. bekannt anfälliger Treiber), Dienstpfade, Autostart, geplante Aufgaben, WMI-Persistenz, Browser-Erweiterungen, veraltete Software, sicherheitsrelevante Ereignisse.
+**Sicherheit:** Windows-Version und Updates, Defender (Status, Einstellungen, ASR-Regeln, Ausnahmen, Funde), Firewall und offene Ports, UPnP-Weiterleitungen am Router, SMB/Freigaben, Konten und Kennwortrichtlinie, UAC, Kernisolierung/Speicherintegrität, LSA-Schutz, Treiber-Sperrliste, Exploit-Schutz, Spectre-Tweaks, Secure Boot (inkl. 2023er-Zertifikate), TPM, BitLocker, BIOS, Datensicherung (Dateiversionsverlauf, OneDrive-Ordnersicherung, Systemabbild), Fernzugriff (RDP, Fernwartungstools), Drittanbieter-Dienste und -Treiber (inkl. bekannt anfälliger Treiber), Dienstpfade, Autostart (mit Sysinternals Autoruns zusätzlich alle Autostart-Orte, Signaturen und beschreibbare Pfade), unsignierte Systemdateien (Sysinternals Sigcheck), geplante Aufgaben, WMI-Persistenz, Browser-Erweiterungen, veraltete Software, sicherheitsrelevante Ereignisse.
 
-**Performance:** CPU, RAM (XMP, Dual-Channel), GPU-Treiber, Bildwiederholrate der Monitore, Laufwerke (Typ, Zustand, Platz, TRIM), Auslagerungsdatei, Energieplan, Gaming-Einstellungen (Spielmodus, HAGS, Game DVR, Overlays), Resizable BAR und PCIe-Anbindung (NVIDIA), Spielebibliotheken (Laufwerk und Platz), Energiesparfunktionen der Netzwerkkarte, Grundlast, Autostart-Umfang, Netzwerk, Stabilität (Hardwarefehler, Bluescreens, Grafiktreiber-Abstürze, Drosselung, Programmabstürze, Startdauer).
+**Performance:** CPU, RAM (XMP, Dual-Channel), GPU-Treiber, Bildwiederholrate der Monitore, Laufwerke (Typ, Zustand, Platz, TRIM), größte Speicherverbraucher je Laufwerk, Auslagerungsdatei, Energieplan, Gaming-Einstellungen (Spielmodus, HAGS, Game DVR, Overlays), Resizable BAR und PCIe-Anbindung (NVIDIA), Spielebibliotheken (Laufwerk und Platz), installierte Spiele (Steam, Epic, GOG, EA, Ubisoft, Xbox), Energiesparfunktionen der Netzwerkkarte, Grundlast, Autostart-Umfang, Netzwerk, Stabilität (Hardwarefehler, Bluescreens, Grafiktreiber-Abstürze, Drosselung, Programmabstürze, Startdauer).
 
 ## Nebenwirkungen (nicht am System)
 
 - `secedit` exportiert die Sicherheitsrichtlinie in eine Temp-Datei, die sofort gelöscht wird.
 - `Add-Type` kompiliert eine kleine Hilfsklasse zum Auslesen der Bildwiederholraten.
-- Windows-Update-Suche, winget und die UPnP-Abfrage gehen ins Netz bzw. zum Router.
+- Windows-Update-Suche, winget und die UPnP-Abfrage gehen ins Netz bzw. zum Router. Der Scan selbst lädt nichts von Sysinternals; das geschieht nur per Klick in der GUI.
+- Autoruns und Sigcheck (falls eingerichtet) laufen je 1–3 Minuten. Sie merken sich die angenommene Lizenz in der Registry des angemeldeten Benutzers (`HKCU\Software\Sysinternals`).
+- Die Speicherauswertung zählt alle Dateien der festen Laufwerke (nur Namen und Größen, keine Inhalte), folgt keinen Verknüpfungen oder Junctions und dauert je nach Laufwerken 1–3 Minuten.
 - Nur der Update-Dialog installiert etwas, und nur, was du ausdrücklich auswählst.
 
-## Tests
+## Entwicklung
 
-Die Tests laufen mit Pester 3.4, das in Windows enthalten ist. Aufruf im Projektordner:
+- **Mock-Modus** ohne Adminrechte und ohne echten Scan: Im Ordner `gui` einen Server starten, z. B. `python -m http.server 8791 --bind 127.0.0.1`, und `http://127.0.0.1:8791/dev/mock.html` öffnen. Die Routen sind Hash-Adressen, z. B. `#/uebersicht`, `#/sicherheit`, `#/aenderungen`, `#/gaming`, `#/berichte`, `#/rohdaten`. Die Screenshots in `docs\screenshots\` entstehen so mit Demodaten.
+- **Tests** mit Pester 3.4, das in Windows enthalten ist. Aufruf im Projektordner: `Invoke-Pester .\tests`. Die Tests ändern nichts am System. Wiederherstellungspunkte und Aktionen werden nur gelesen bzw. mit Attrappen geprüft.
+- **Aktionskatalog:** Neue Aktionen in `pc-check.aktionen.ps1` brauchen Lesen, Ausführen, Rückgängig und einen Eintrag in `tests/Aktionen.Tests.ps1`.
+- Aufbau und Sicherheitsmodell der GUI: `docs/gui-architektur.md`.
 
-```powershell
-Invoke-Pester .\tests
-```
+## Versionen
 
-Die Tests ändern nichts am System. Wiederherstellungspunkte und Aktionen werden nur gelesen bzw. mit Attrappen geprüft.
+- **2.3.1:** Befunde und unsignierte Systemdateien (je SHA256) in der GUI akzeptieren und zurücknehmen, nur nach Windows-Bestätigung; Prüfhilfe für unsignierte Systemdateien mit „Mit Defender prüfen“ je Datei, VirusTotal-Link und Hash kopieren; breites Layout für WQHD und größer; „Scan starten“ orange umrandet; Tabellen mit deckender Fläche, Zebra-Zeilen, festem Kopf und besserem Kontrast.
+- **2.3.0:** Sysinternals-Werkzeuge Autoruns und Sigcheck: Bezug nur auf Klick in „Werkzeuge“ mit Lizenz-Zustimmung und Windows-Bestätigung, Ablage nur für Administratoren, Signatur- und Hash-Prüfung vor jedem Start; drei neue Prüfungen (Autostart-Signaturen, beschreibbare Autostart-Pfade, unsignierte Systemdateien) mit Tabellen; Schalter `-SkipSysinternals`; neues Design.
+- **2.2.0:** Defender-Werkzeuge (Signaturen, Schnellscan, Offline-Scan mit doppelter Bestätigung und 15-s-Countdown, Knopf am Befund, Ansicht „Werkzeuge“); Prüfung „Datensicherung“; größte Speicherverbraucher je Laufwerk (Statusleiste, Scan mit `-SkipSpeicher`, „Neu berechnen“ in der GUI); Spieleliste für Steam, Epic, GOG, EA, Ubisoft und Xbox inkl. eigener Spiele-Ordner; Härtung: nur lokale Pfade aus Launcher-Dateien, keine Junctions.
+- **2.1.1:** Installationsvergleich ignoriert Zeilenenden.
+- **2.1.0:** Name „Morpheus – PC Check-up“, neues Design mit Statusleiste, Installation nach Program Files.
+- **2.0:** GUI mit Anpassungen per Klick, Wiederherstellungspunkt und Journal.
 
 ## Deinstallation
 
@@ -294,7 +341,7 @@ Einige Prüfungen enthalten feste Daten, die mit der Zeit veralten und gelegentl
 - Liste der Spiele-Launcher und selbstaktualisierenden Programme (Funktion `Get-UpdateCategory`)
 - Erklärungen, Tipps und Klickwege im HTML-Bericht (`pc-check.hilfe.psd1`)
 - Bekannt harmlose Ereignisse (`$script:KnownHarmless` im Script)
-- Aktionskatalog der GUI (`pc-check.aktionen.ps1`)
+- Aktionskatalog der GUI (`pc-check.aktionen.ps1`; neue Aktionen brauchen Lesen, Ausführen, Rückgängig und einen Eintrag in `tests/Aktionen.Tests.ps1`)
 
 Hinweise und Verbesserungen gern als Issue.
 
@@ -306,7 +353,7 @@ Morpheus ist ein privates Hilfsmittel ohne Gewähr. Die Empfehlungen im Bericht 
 
 ## English
 
-**Morpheus – PC Check-up** is a security and performance check for Windows 11 PCs with a GUI. The scan reads only. It runs about 100 checks (Defender, firewall, core isolation, Secure Boot, TPM, vulnerable drivers, autostart, RAM/XMP, refresh rate, power plan, gaming settings, crashes …). The GUI applies recommendations per click. Every change is protected by a restore point and can be reverted individually. The report texts are currently German only.
+**Morpheus – PC Check-up** is a security and performance check for Windows 11 PCs with a GUI. The scan reads only. It runs about 110 checks (Defender, firewall, core isolation, Secure Boot, TPM, vulnerable drivers, autostart, RAM/XMP, refresh rate, power plan, gaming settings, crashes …). The GUI applies recommendations per click. Every change is protected by a restore point and can be reverted individually. The report texts are currently German only.
 
 **Quick start (3 steps):**
 

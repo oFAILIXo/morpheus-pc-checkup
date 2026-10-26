@@ -11,6 +11,8 @@
     F('Sicherheit', 'Virenschutz', 'Microsoft Defender: Status', 'OK', 'Echtzeit-, Verhaltens- und Download-Schutz aktiv'),
     F('Sicherheit', 'Virenschutz', 'Defender: Einstellungen', 'TIPP', 'Netzwerkschutz aus; PUA-Schutz an', 'Netzwerkschutz einschalten.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering', Steps: ['Rechtsklick auf Start > „Terminal (Administrator)“.', 'Befehl einfügen.'], Command: 'Set-MpPreference -EnableNetworkProtection Enabled' }),
     F('Sicherheit', 'Virenschutz', 'Defender: ASR-Regeln', 'TIPP', 'Keine Regeln aktiv', 'Zwei Basisregeln aktivieren.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering' }),
+    F('Sicherheit', 'Virenschutz', 'Defender: Signaturen', 'WARN', 'Stand 2026-10-22 06:10 (3 Tage)', 'Signaturen sollten täglich aktualisiert werden.'),
+    F('Sicherheit', 'Virenschutz', 'Defender: Scans', 'INFO', 'Letzter Schnellscan vor 19 Tagen', 'Defender scannt normalerweise in der Wartungszeit; läuft der PC dann nie, gelegentlich manuell scannen.'),
     F('Sicherheit', 'Fernzugriff & Dienste', 'Remoteunterstützung', 'OK', 'Nicht erlaubt'),
     F('Sicherheit', 'Firewall & Netzwerk', 'Firewall-Profile', 'OK', 'Alle Profile aktiv, eingehend blockiert'),
     F('Sicherheit', 'Fernzugriff & Dienste', 'Offene Ports', 'WARN', '3 Ports lauschen auf allen Adressen (192.168.0.15, DEMO-PC)', 'Prüfen, ob die Dienste nötig sind.', { Effort: 'mittel', Benefit: 'mittel', Risk: 'gering' }),
@@ -18,10 +20,15 @@
     F('Sicherheit', 'Verschlüsselung & Firmware', 'TPM', 'SKIP', 'Nur mit Adminrechten prüfbar'),
     F('Sicherheit', 'Systemhärtung', 'Kernisolierung (VBS / Speicherintegrität)', 'INFO', 'VBS läuft, Speicherintegrität aus'),
     F('Sicherheit', 'Verschlüsselung & Firmware', 'BitLocker', 'ACK', 'Systemlaufwerk nicht verschlüsselt', '', { OriginalStatus: 'WARN', Note: 'Bewusst zurückgestellt bis 30.04.2027' }),
+    F('Sicherheit', 'Verschlüsselung & Firmware', 'Datensicherung', 'WARN', 'Dateiversionsverlauf aus; OneDrive: Desktop, Dokumente; kein Systemabbild', 'Dateiversionsverlauf einschalten oder wichtige Ordner über OneDrive sichern. Sicherst du mit einem anderen Programm oder auf ein NAS, trag den Befund in die Akzeptanzliste (accepted.psd1) ein.', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering', Steps: ['Einstellungen > System > Speicher > Erweiterte Speichereinstellungen > Sicherungsoptionen öffnen.', 'Dateiversionsverlauf einschalten und ein Ziel wählen (externe Festplatte oder NAS).', 'Optional: OneDrive-Sicherung für Desktop, Dokumente und Bilder einrichten.'] }),
     F('Sicherheit', 'Systemhärtung', 'LSA-Schutz', 'TIPP', 'aus', 'LSA-Schutz einschalten (Neustart).', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering' }),
+    F('Sicherheit', 'Autostart & Persistenz', 'Autostarts: Signaturen (Autoruns)', 'WARN', 'Systemnahe Autostarts ohne verifizierte Signatur (1): DemoVendor Updater Task; Weitere Autostarts ohne Signatur (2): DemoTool, Old Helper', 'Prüfen, ob die Einträge zu Programmen gehören, die du kennst. Unbekannte Dienste nicht einfach löschen, sondern erst recherchieren.'),
+    F('Sicherheit', 'Autostart & Persistenz', 'Autostarts: beschreibbare Pfade (Autoruns)', 'INFO', 'Autostarts in beschreibbaren Ordnern (1): DemoTool', 'Üblich bei Programmen in AppData; kein Rechtegewinn.'),
+    F('Sicherheit', 'Systemhärtung', 'Systemdateien: Signaturen (Sigcheck)', 'WARN', 'Unsignierte Dateien in System32 und drivers (2): demoaudio.sys (Demo Audio Ltd.), oldprint.dll; 1 akzeptiert', 'Herkunft der Dateien klären; unbekannte Dateien mit Defender prüfen oder den Hash bei VirusTotal nachschlagen.', { Effort: 'mittel', Benefit: 'mittel', Risk: 'gering' }),
     F('Sicherheit', 'Software', 'Software-Updates', 'WARN', 'Beispielprogramm 1.2 verfügbar (C:\\Users\\Demo\\Apps)', 'Programm aktualisieren.', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering' }),
     F('Performance', 'Hardware', 'Arbeitsspeicher', 'OK', '32 GB DDR5'),
     F('Performance', 'Laufwerke & Speicherplatz', 'Speicherplatz', 'INFO', 'C: 32 % frei, F: 13 % frei'),
+    F('Performance', 'Laufwerke & Speicherplatz', 'Größte Speicherverbraucher', 'INFO', 'C: C:\\Users\\Demo\\AppData (41 GB); F: F:\\SteamLibrary\\steamapps\\common\\Starfall Odyssey (142 GB); D: D:\\Videos (612 GB)'),
     F('Performance', 'Energie', 'Energieplan', 'OK', 'Ausbalanciert aktiv'),
     F('Performance', 'Energie', 'Schnellstart', 'TIPP', 'an: Treiberprobleme überdauern das Herunterfahren', 'Schnellstart ausschalten.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering' }),
     F('Performance', 'Auslastung', 'CPU-Auslastung', 'OK', 'Im Leerlauf 3 %'),
@@ -34,13 +41,104 @@
     F('Performance', 'Stabilität', 'Programmabstürze', 'INFO', '2 Abstürze, 0 Hänger: demo-app.exe (2)'),
     F('Performance', 'Stabilität', 'Startdauer', 'OK', 'Ø 26 s bis zum Desktop'),
   ];
-  const mkReport = i => {   // i = 0 neuester
-    const d = new Date(2026, 9, 25 - i, 13, 21);
-    const F2 = base.map(f => ({ ...f }));
+
+  // ---- v2.2: Speicher (alles erfundene Demodaten)
+  const GB = b => b < 1e9 ? Math.round(b / 1e6) + ' MB' : (b / 1e9).toFixed(1).replace('.', ',') + ' GB';
+  const nachGroesse = a => a.sort((x, y) => y.bytes - x.bytes);
+  const ord = (pfad, bytes) => ({ pfad, bytes });
+  const dat = (pfad, bytes, geaendert, windows = false) => ({ pfad, bytes, windows, geaendert });
+  const spl = (plattform, name, pfad, laufwerk, bytes, zuletztGespielt = null, groesseUnsicher = false) => ({ plattform, name, pfad, laufwerk, bytes, zuletztGespielt, groesseUnsicher });
+  const LAUFWERKE = [
+    { laufwerk: 'C:', bezeichnung: 'System', groesse: 238e9, frei: 76e9, gezaehlt: 812345, uebersprungen: 224, dauerSek: 94, fehler: null,
+      ordner: nachGroesse([
+        ord('C:\\Users\\Demo\\AppData', 41e9), ord('C:\\Windows', 31.6e9), ord('C:\\Program Files', 27.8e9), ord('C:\\ProgramData', 8.9e9), ord('C:\\Users\\Demo\\Downloads', 9.4e9),
+        ord('C:\\Users\\Demo\\Documents', 6.1e9), ord('C:\\Users\\Demo\\Pictures', 3.2e9), ord('C:\\Users\\Demo\\Desktop', 2.7e9), ord('C:\\Demo\\Installer', 4.3e9), ord('C:\\Apps\\Demo-Builds', 2.5e9)]),
+      dateien: nachGroesse([
+        dat('C:\\pagefile.sys', 16e9, '2026-10-25T09:12:00', true), dat('C:\\hiberfil.sys', 12.8e9, '2026-10-25T08:40:00', true), dat('C:\\swapfile.sys', 256e6, '2026-10-25T09:12:00', true),
+        dat('C:\\Demo\\Installer\\setup-pack.iso', 4.7e9, '2026-09-11T16:30:00'), dat('C:\\Users\\Demo\\AppData\\Local\\demo-cache\\cache.bin', 3.9e9, '2026-10-24T22:05:00'),
+        dat('C:\\Users\\Demo\\Pictures\\urlaub-2026.zip', 2.6e9, '2026-08-03T10:00:00'), dat('C:\\Users\\Demo\\Downloads\\demo-setup.exe', 2.1e9, '2026-10-21T14:44:00'),
+        dat('C:\\Users\\Demo\\AppData\\Local\\Temp\\demo-log.7z', 1.4e9, '2026-10-19T07:12:00'), dat('C:\\Apps\\Demo-Builds\\build-0.9.zip', 1.2e9, '2026-07-30T18:20:00'),
+        dat('C:\\ProgramData\\Demo\\index.db', 0.8e9, '2026-10-25T06:00:00')]) },
+    { laufwerk: 'F:', bezeichnung: 'Spiele', groesse: 1e12, frei: 130e9, gezaehlt: 415870, uebersprungen: 96, dauerSek: 61, fehler: null,
+      ordner: nachGroesse([
+        ord('F:\\SteamLibrary\\steamapps\\common\\Starfall Odyssey', 142e9), ord('F:\\SteamLibrary\\steamapps\\common\\Pixel Racer 2', 38.5e9), ord('F:\\SteamLibrary\\steamapps\\common\\Dungeon Demo', 6.4e9),
+        ord('F:\\Epic\\Skyline Builder', 58e9), ord('F:\\Epic\\Tidewalker', 23.7e9), ord('F:\\XboxGames\\Pocket Kingdoms', 15.3e9), ord('F:\\XboxGames\\Voxel Farmer', 4.6e9),
+        ord('F:\\Archiv\\Fotoprojekte', 9.8e9), ord('F:\\Downloads\\Demo-Installers', 5.2e9), ord('F:\\Temp\\Shader-Cache', 3.3e9)]),
+      dateien: nachGroesse([
+        dat('F:\\Epic\\Skyline Builder\\Content\\Paks\\SkylineBuilder-WindowsNoEditor.pak', 9.4e9, '2026-09-30T19:58:00'), dat('F:\\Archiv\\Fotoprojekte\\raw-2025.7z', 6.8e9, '2025-12-02T11:09:00'),
+        dat('F:\\XboxGames\\Pocket Kingdoms\\Content\\data.pak', 5.6e9, '2026-10-02T17:20:00'), dat('F:\\SteamLibrary\\steamapps\\common\\Pixel Racer 2\\Pixel2-Assets.bin', 4.1e9, '2026-10-12T19:31:00'),
+        dat('F:\\Epic\\Tidewalker\\Tidewalker.pak', 3.9e9, '2026-06-14T12:00:00'), dat('F:\\Temp\\Shader-Cache\\cache.bin', 3.3e9, '2026-10-22T08:47:00'),
+        dat('F:\\Downloads\\Demo-Installers\\installer-cache.iso', 2.8e9, '2026-08-19T20:10:00'), dat('F:\\Downloads\\Demo-Installers\\demo-setup-2.exe', 1.9e9, '2026-08-19T20:02:00'),
+        dat('F:\\Archiv\\Musik\\demo-album.flac', 1.1e9, '2024-03-07T09:00:00'), dat('F:\\Archiv\\Dokumente\\Projekt-Mappe.zip', 0.7e9, '2025-10-15T16:45:00')]) },
+    { laufwerk: 'D:', bezeichnung: 'Daten', groesse: 1.8e12, frei: 110e9, gezaehlt: 1204388, uebersprungen: 57, dauerSek: 412, fehler: null,
+      ordner: nachGroesse([
+        ord('D:\\Videos', 612e9), ord('D:\\Fotos', 287e9), ord('D:\\Backups\\Laptop-2025', 73.9e9), ord('D:\\Dokumente-Archiv', 88.4e9), ord('D:\\Musik', 41.7e9),
+        ord('D:\\Ubisoft', 46.3e9), ord('D:\\GOG Games', 13e9), ord('D:\\Downloads', 19.5e9), ord('D:\\Projekte\\Demo-Code', 8.1e9), ord('D:\\Scans', 4.2e9)]),
+      dateien: nachGroesse([
+        dat('D:\\Videos\\Urlaub-2025.mkv', 38.2e9, '2025-08-30T17:40:00'), dat('D:\\Backups\\Laptop-2025\\system-image-alt.vhdx', 31.5e9, '2025-12-14T03:00:00'),
+        dat('D:\\Fotos\\Export-Sommer.zip', 12.7e9, '2025-09-02T15:21:00'), dat('D:\\Ubisoft\\Rift Runners\\RiftRunners.pak', 17.8e9, '2026-06-18T20:40:00'),
+        dat('D:\\GOG Games\\Neon Drift\\NeonDrift.pak', 8.2e9, '2026-08-02T22:20:00'), dat('D:\\Projekte\\Demo-Code\\node_modules.tar', 2.9e9, '2026-03-11T10:02:00'),
+        dat('D:\\Downloads\\Demo-Trailer.mp4', 2.4e9, '2026-04-20T13:15:00'), dat('D:\\Dokumente-Archiv\\Steuer-2024.zip', 0.6e9, '2025-05-28T09:00:00'),
+        dat('D:\\Musik\\Demo-Album.flac', 0.9e9, '2024-11-03T18:11:00'), dat('D:\\Scans\\Scan-0412.pdf', 0.2e9, '2026-04-12T08:30:00')]) },
+  ];
+  const SPIELE = nachGroesse([
+    spl('Steam', 'Starfall Odyssey', 'F:\\SteamLibrary\\steamapps\\common\\Starfall Odyssey', 'F:', 142e9, '2026-10-20T21:14:03'),
+    spl('Steam', 'Pixel Racer 2', 'F:\\SteamLibrary\\steamapps\\common\\Pixel Racer 2', 'F:', 38.5e9, '2026-10-12T19:40:00'),
+    spl('Steam', 'Dungeon Demo', 'F:\\SteamLibrary\\steamapps\\common\\Dungeon Demo', 'F:', 6.4e9),
+    spl('Steam', 'Glacier Run', 'F:\\SteamLibrary\\steamapps\\common\\Glacier Run', 'F:', 2.1e9),
+    spl('Epic', 'Skyline Builder', 'F:\\Epic\\Skyline Builder', 'F:', 58e9, '2026-09-30T20:05:00'),
+    spl('Epic', 'Tidewalker', 'F:\\Epic\\Tidewalker', 'F:', 23.7e9),
+    spl('GOG', 'Neon Drift', 'D:\\GOG Games\\Neon Drift', 'D:', 9.8e9, '2026-08-02T22:31:00'),
+    spl('GOG', 'Lantern Keep', 'D:\\GOG Games\\Lantern Keep', 'D:', 3.2e9),
+    spl('EA', 'Orbit Miners', 'C:\\Program Files\\EA Games\\Orbit Miners', 'C:', 27.4e9),
+    spl('EA', 'Hover Circuit', 'C:\\Program Files\\EA Games\\Hover Circuit', 'C:', 19.9e9, '2026-07-11T18:02:00'),
+    spl('Ubisoft', 'Rift Runners', 'D:\\Ubisoft\\Rift Runners', 'D:', 34.2e9, '2026-06-18T20:48:00'),
+    spl('Ubisoft', 'Mossy Trails', 'D:\\Ubisoft\\Mossy Trails', 'D:', 12.1e9),
+    spl('Xbox', 'Pocket Kingdoms', 'F:\\XboxGames\\Pocket Kingdoms', 'F:', 15.3e9, '2026-10-02T17:25:00', true),
+    spl('Xbox', 'Voxel Farmer', 'F:\\XboxGames\\Voxel Farmer', 'F:', 4.6e9),
+  ]);
+  // Gesamtobjekt (Vertrag 14.2), je Bericht mit eigenem Stand
+  const speicherFuer = stand => JSON.parse(JSON.stringify({ version: 1, stand, laufwerke: LAUFWERKE, spiele: SPIELE }));
+  const speicherTabellen = sp => {
+    const ordner = [], dateien = [];
+    sp.laufwerke.forEach(l => {
+      l.ordner.forEach(o => ordner.push({ Laufwerk: l.laufwerk, Pfad: o.pfad, Groesse: GB(o.bytes), Bytes: o.bytes }));
+      l.dateien.forEach(f => dateien.push({ Laufwerk: l.laufwerk, Pfad: f.pfad, Groesse: GB(f.bytes), Bytes: f.bytes, Windows: f.windows ? 'Ja' : '' }));
+    });
+    const spiele = sp.spiele.map(s => ({ Plattform: s.plattform, Name: s.name, Laufwerk: s.laufwerk, Groesse: GB(s.bytes), Bytes: s.bytes,
+      ZuletztGespielt: s.zuletztGespielt ? s.zuletztGespielt.replace('T', ' ').slice(0, 16) : '–', Pfad: s.pfad, Hinweis: s.groesseUnsicher ? 'Größe eingeschränkt lesbar' : '' }));
+    return { 'Speicherverbraucher: Ordner': ordner, 'Speicherverbraucher: Dateien': dateien, 'Installierte Spiele': spiele };
+  };
+  const speicherChecks = { 'Speicherverbraucher: Ordner': 'Größte Speicherverbraucher', 'Speicherverbraucher: Dateien': 'Größte Speicherverbraucher', 'Installierte Spiele': 'Spielebibliotheken' };
+  const SICHERUNG = [
+    { Art: 'Dateiversionsverlauf', Gefunden: 'Ja', Aktiv: 'Nein', Ziel: 'D:\\Backups', LetzteSicherung: '2026-08-14 12:00', Hinweis: 'Ausgeschaltet; seit August keine Sicherung' },
+    { Art: 'OneDrive-Ordnersicherung', Gefunden: 'Ja', Aktiv: 'Ja', Ziel: 'Desktop, Dokumente', LetzteSicherung: '–', Hinweis: 'Letzte Sicherung unbekannt; Bilder nicht gesichert' },
+    { Art: 'Systemabbild', Gefunden: 'Nein', Aktiv: 'Nein', Ziel: '–', LetzteSicherung: '–', Hinweis: 'Kein Systemabbild vorhanden' },
+  ];
+
+  const SYS_CHECKS = ['Autostarts: Signaturen (Autoruns)', 'Autostarts: beschreibbare Pfade (Autoruns)', 'Systemdateien: Signaturen (Sigcheck)'];
+  const SIGCHECK = [
+    { Pfad: 'C:\\Windows\\System32\\drivers\\demoaudio.sys', Firma: 'Demo Audio Ltd.', Version: '3.1.0.7', Datum: '2019-04-02', Sha256: '1c7e4a90b2d85f3e6a01c9d47b8e2f5a3d6c0b19e84f7a25c3d1b6e09f4a8d72', Akzeptiert: '' },
+    { Pfad: 'C:\\Windows\\System32\\oldprint.dll', Firma: '', Version: '', Datum: '2014-11-20', Sha256: '5d0a3f8e1b9c47a26e5d0c3f7b1a948e2c6d5f0a3b87e14c9d2a6f5b0e3c7a18', Akzeptiert: '' },
+    { Pfad: 'C:\\Windows\\System32\\demohelper.exe', Firma: 'Demo Helper Inc.', Version: '1.0.0.0', Datum: '2022-06-15', Sha256: 'a8f2c61d9e04b7a35c1f8e6d2b09a47e3c5d1f80b6a29e7d4c3b1058f6e2a9d4', Akzeptiert: 'Bekannte Demo-Software, geprüft' },
+  ];
+  const AUTORUNS = [
+    { Kategorie: 'ScheduledTasks', Eintrag: 'DemoVendor Updater Task', Aktiv: true, Signierer: '', Verifiziert: false, Beschreibbar: false, Erhoeht: true, Pfad: 'C:\\Program Files\\DemoVendor\\update.exe', Ort: 'Task Scheduler', Befehl: '"C:\\Program Files\\DemoVendor\\update.exe" /service' },
+    { Kategorie: 'Logon', Eintrag: 'DemoTool', Aktiv: true, Signierer: '', Verifiziert: false, Beschreibbar: true, Erhoeht: false, Pfad: 'C:\\Users\\Demo\\AppData\\Local\\DemoTool\\tool.exe', Ort: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', Befehl: 'C:\\Users\\Demo\\AppData\\Local\\DemoTool\\tool.exe --minimized' },
+    { Kategorie: 'Logon', Eintrag: 'Old Helper', Aktiv: true, Signierer: '', Verifiziert: false, Beschreibbar: false, Erhoeht: false, Pfad: 'C:\\Users\\Demo\\AppData\\Roaming\\DemoSync\\sync.exe', Ort: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', Befehl: 'C:\\Users\\Demo\\AppData\\Roaming\\DemoSync\\sync.exe' },
+    { Kategorie: 'Drivers', Eintrag: 'DemoAudioDrv', Aktiv: true, Signierer: 'Demo Audio GmbH', Verifiziert: true, Beschreibbar: null, Erhoeht: true, Pfad: 'C:\\Windows\\System32\\drivers\\demoaudio.sys', Ort: 'HKLM\\System\\CurrentControlSet\\Services', Befehl: '' },
+    { Kategorie: 'ScheduledTasks', Eintrag: '\\DemoVendor\\Update-Check', Aktiv: true, Signierer: 'DemoVendor Inc.', Verifiziert: true, Beschreibbar: false, Erhoeht: true, Pfad: 'C:\\Program Files\\DemoVendor\\check.exe', Ort: 'Task Scheduler', Befehl: '"C:\\Program Files\\DemoVendor\\check.exe" /silent' },
+  ];
+  const mkReport = (i, opt = {}) => {   // i = 0 neuester; opt: { d, skip } (skip = -SkipSpeicher)
+    const d = opt.d || new Date(2026, 9, 25 - i, 13, 21);
+    const sp = opt.skip ? null : speicherFuer(iso(d));
+    const F2 = base.map(f => ({ ...f })).filter(f => sp || f.Check !== 'Größte Speicherverbraucher');
+    if (i >= 3) F2.forEach(f => { if (SYS_CHECKS.includes(f.Check)) { f.Status = 'SKIP'; f.Value = 'Sysinternals nicht eingerichtet: in Morpheus unter Werkzeuge herunterladen'; f.Recommendation = ''; } });
     if (i > 0) F2.forEach(f => { if (f.Check === 'Offene Ports' && i > 2) f.Status = 'CRIT'; if (f.Check === 'Software-Updates' && i > 4) f.Status = 'OK'; if (f.Check === 'Spielebibliotheken' && i > 6) f.Status = 'INFO'; });
     const name = `pc-check_${iso(d).slice(0, 10)}_1321`;
-    return { name, json: { Meta: { Computer: 'DEMO-PC', Erstellt: iso(d), Version: '2.1.0', Admin: true, EventDays: 14, DauerSek: 120 + i, Profil: 'Gaming' }, Findings: F2,
+    return { name, json: { Meta: { Computer: 'DEMO-PC', Erstellt: iso(d), Version: '2.3.1', Admin: true, EventDays: 14, DauerSek: 120 + i, Profil: 'Gaming' }, Findings: F2,
       Changes: i < 11 ? { VerglichenMit: 'vorher.json', Erstellt: iso(new Date(2026, 9, 24 - i, 13, 21)), AdminVorher: true, Status: [{ 'Prüfung': 'Offene Ports', Vorher: 'Kritisch', Jetzt: 'Warnung', Befund: '3 Ports' }], Bestand: { 'Autostart-Einträge': { Neu: ['Demo-Tool <b>fett</b>'], Entfernt: ['Altes Tool'] } } } : null,
+      Speicher: sp,
       Data: { System: [{ Computer: 'DEMO-PC', Edition: 'Windows 11 Pro', Version: '24H2' }],
         'Startdauer (letzte Messungen)': [{ Zeit: 'x', GesamtSek: 40, HauptpfadSek: 22 + (i % 5) * 3, NachAnmeldungSek: 5 }, { Zeit: 'y', GesamtSek: 41, HauptpfadSek: 24 + (i % 4) * 2, NachAnmeldungSek: 6 }],
         'Laufwerke (Volumes)': [{ Laufwerk: 'C:', Name: '', Dateisystem: 'NTFS', Groesse: '238 GB', Frei: '76 GB', FreiProzent: 30 + ((11 - i) % 7) * 2 }, { Laufwerk: 'F:', Name: 'Spiele', Dateisystem: 'NTFS', Groesse: '1 TB', Frei: '130 GB', FreiProzent: 13 }],
@@ -50,12 +148,19 @@
           { Protokoll: 'TCP', Port: 8080, Adressen: '0.0.0.0', Prozess: 'demo-server', Dienste: null, PID: 7312 }, { Protokoll: 'TCP', Port: 49664, Adressen: '0.0.0.0', Prozess: 'lsass', Dienste: 'SamSs', PID: 780 },
           { Protokoll: 'UDP', Port: 5353, Adressen: '0.0.0.0', Prozess: 'msedge', Dienste: null, PID: 9020 }, { Protokoll: 'UDP', Port: 5355, Adressen: '0.0.0.0', Prozess: 'svchost', Dienste: 'Dnscache', PID: 1400 },
           { Protokoll: 'UDP', Port: 1900, Adressen: '0.0.0.0', Prozess: 'svchost', Dienste: 'SSDPSRV', PID: 3300 }],
-        'Autostart-Einträge': [{ Name: 'Demo-Tool', Pfad: 'C:\\Demo\\tool.exe', Benutzer: 'Demo' }] },
-      DataChecks: { System: 'Windows-Version', 'Startdauer (letzte Messungen)': 'Startdauer', 'Laufwerke (Volumes)': 'Speicherplatz', 'Offene Netzwerkports (nicht nur lokal)': 'Offene Ports' } } };
+        'Autostart-Einträge': [{ Name: 'Demo-Tool', Pfad: 'C:\\Demo\\tool.exe', Benutzer: 'Demo' }],
+        ...(i < 3 ? { 'Autostarts (Autoruns, ohne Microsoft)': AUTORUNS.map(x => ({ ...x })) } : {}),
+        ...(i < 3 ? { 'Unsignierte Systemdateien (Sigcheck)': SIGCHECK.map(x => ({ ...x })) } : {}),
+        ...(sp ? speicherTabellen(sp) : {}),
+        Datensicherung: SICHERUNG },
+      DataChecks: { System: 'Windows-Version', 'Startdauer (letzte Messungen)': 'Startdauer', 'Laufwerke (Volumes)': 'Speicherplatz', 'Offene Netzwerkports (nicht nur lokal)': 'Offene Ports',
+        ...(i < 3 ? { 'Autostarts (Autoruns, ohne Microsoft)': 'Autostarts: Signaturen (Autoruns)' } : {}),
+        ...(i < 3 ? { 'Unsignierte Systemdateien (Sigcheck)': 'Systemdateien: Signaturen (Sigcheck)' } : {}),
+        ...(sp ? speicherChecks : {}), Datensicherung: 'Datensicherung' } } };
   };
   const reps = Array.from({ length: 12 }, (_, i) => mkReport(i));
   const cnt = js => { const c = { CRIT: 0, WARN: 0, TIPP: 0, ACK: 0, INFO: 0, OK: 0, SKIP: 0 }; js.Findings.forEach(f => { c[f.Status]++; }); return c; };
-  const reportList = () => reps.map(r => ({ name: r.name, created: r.json.Meta.Erstellt, version: '2.1.0', admin: true, profil: 'Gaming', counts: cnt(r.json) }));
+  const reportList = () => reps.map(r => ({ name: r.name, created: r.json.Meta.Erstellt, version: '2.3.1', admin: true, profil: 'Gaming', counts: cnt(r.json) }));
 
   const A = (id, kategorie, pruefung, titel, erkl, n, a, r, extra = {}) => ({ id, kategorie, pruefung, titel, erklaerung: erkl, nutzen: n, aufwand: a, risiko: r, neustart: false, varianten: null,
     befehle: { ausfuehren: extra.cmd || '', rueckgaengig: extra.undo || '', erklaerung: extra.expl || [] }, zustand: { aktiv: false, wert: 'aus', stand: iso(new Date()) }, ...extra.o });
@@ -74,12 +179,39 @@
     { id: '20261024-190211-01', zeit: '2026-10-24T19:02:11', art: 'ausfuehren', aktion: 'netz.eee', titel: 'Energiesparfunktionen Netzwerkkarte aus', variante: null, vorher: 'an', nachher: 'aus', wiederherstellungspunkt: { seq: 56, zeit: '2026-10-24T19:02:00' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
     { id: '20261024-110000-01', zeit: '2026-10-24T11:00:00', art: 'ausfuehren', aktion: 'gaming.gamedvr', titel: 'Game DVR aus (Zustand wurde danach geändert)', variante: null, vorher: 1, nachher: 0, wiederherstellungspunkt: { seq: 55, zeit: '2026-10-24T10:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
   ];
-  const session = { version: '2.1.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
+  const session = { version: '2.3.1', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
     safety: { schutzAn: true, laufwerk: 'C:', sperre24h: true, letzterPunkt: '2026-10-25T12:02:11', befehl: "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" } };
   const help = { Status: { CRIT: 'Kritisch: echtes Risiko. Zuerst beheben.', WARN: 'Warnung: sollte behoben werden.', ACK: 'Akzeptiert: bewusst als gewollt eingetragen.', TIPP: 'Tipp: lohnende Verbesserung.', INFO: 'Hinweis: reine Information.', OK: 'OK: alles in Ordnung.', SKIP: 'Nicht geprüft.' },
     Kategorien: { Virenschutz: 'Microsoft Defender reicht für Privat-PCs, solange alle Schutzfunktionen an sind.', 'Gaming & Grafik': 'Einstellungen, die Bildraten und Frametimes beeinflussen.' },
     Pruefungen: { 'Defender: Einstellungen': { Was: 'Ob die Schutzfunktionen von Defender eingeschaltet sind.', Warum: 'Abgeschaltete Funktionen lassen Lücken.', Harmlos: 'Wenn ein anderes Virenprogramm aktiv ist.' } } };
   let checklist = { 'Offene Ports': { state: 'later', date: '24.10.2026', report: '2026-10-24T13:21:00' }, 'Software-Updates': { state: 'done', date: '25.10.2026', report: reps[0].json.Meta.Erstellt } };
+
+  // ---- v2.2: Defender-Stand, Speicher-Cache, Offline-Zustand (Countdown)
+  let defender = { modus: 'Normal', signaturen: '2026-10-22T06:10:00', signaturVersion: '1.421.118.0', signaturAlterTage: 3, schnellscan: '2026-10-06T03:12:00', schnellscanAlterTage: 19, echtzeit: true };
+  let speicherCache = null;   // null = noch nie berechnet ({ stand: null })
+  // ---- v2.2: eigene Spiele-Ordner (Vertrag 14.8)
+  let spielordner = [{ plattform: 'Andere', pfad: 'G:\\Games' }];
+  const PLATTFORMEN = ['Steam', 'Epic', 'GOG', 'EA', 'Ubisoft', 'Xbox', 'Andere'];
+  const manuelleSpiele = () => spielordner.flatMap(e => [
+    spl(e.plattform, 'Demo Spiel A', `${e.pfad}\\Demo Spiel A`, e.pfad.slice(0, 2).toUpperCase(), 12e9),
+    spl(e.plattform, 'Demo Spiel B', `${e.pfad}\\Demo Spiel B`, e.pfad.slice(0, 2).toUpperCase(), 7e9)]);
+  function spielordnerSpeichern(eintraege) {
+    if (!Array.isArray(eintraege)) return [400, { error: 'eintraege muss eine Liste sein.' }];
+    if (eintraege.length > 50) return [400, { error: 'Höchstens 50 Einträge.' }];
+    for (let i = 0; i < eintraege.length; i++) {
+      const { plattform, pfad } = eintraege[i] || {}, p = String(pfad || ''), n = `Eintrag ${i + 1} (${p})`;
+      if (!PLATTFORMEN.includes(plattform)) return [400, { error: `${n}: unbekannte Plattform` }];
+      if (!/^[A-Za-z]:\\/.test(p) || p.split(/[\\/]/).includes('..')) return [400, { error: `${n}: nur lokale Ordner wie F:\\Games` }];
+      if (/^X:/i.test(p)) return [400, { error: `${n}: Ordner nicht gefunden` }];
+    }
+    const gesehen = new Set();
+    spielordner = eintraege.filter(e => { const k = e.pfad.toLowerCase(); if (gesehen.has(k)) return false; gesehen.add(k); return true; })
+      .map(({ plattform, pfad }) => ({ plattform, pfad }));
+    return [200, spielordner];
+  }
+  let offline = { status: 'keiner', t0: 0, letzte: 0, meldung: '' };
+  const OFF_SEK = 15;
+  const OFF_MELDUNG_START = 'Demo: Hier würde der PC jetzt neu starten.';
 
   // ---- Jobs: jede Zeile erscheint 700 ms nach der vorigen
   const jobs = {}; let jobSeq = 0;
@@ -96,6 +228,8 @@
     if (finished && !j.done) { j.done = true; j.ergebnis = j.finish(); }
     return [200, { id, art: j.art, status: finished ? 'done' : 'running', log: j.lines.slice(from, n), next: n, ergebnis: finished ? j.ergebnis : null }];
   }
+  // Job mit dieser Art, der noch läuft (zeitbasiert, unabhängig davon, ob schon abgefragt wurde)
+  const laufend = art => Object.keys(jobs).find(id => jobs[id].art === art && Date.now() - jobs[id].t0 < jobs[id].lines.length * jobs[id].step) || null;
   function runActions(ids, variante) {
     const sel = ids.map(i => actions.find(a => a.id === i));
     if (!sel.length || sel.some(a => !a)) return [400, { error: 'Unbekannte Aktion' }];
@@ -122,16 +256,131 @@
     return [200, { jobId: id }];
   }
   function scan(body) {
+    if (laufend('sysinternals')) return [409, { error: 'Die Sysinternals-Werkzeuge werden gerade eingerichtet. Bitte warten, bis das fertig ist, und den Scan dann starten.' }];
     if (!(body.eventDays >= 1 && body.eventDays <= 90)) return [400, { error: 'Zeitraum ungültig' }];
-    const lines = ['[Sicherheit] System & Updates', '  - Windows-Version', '  - Windows Update: ausstehend', '[Sicherheit] Virenschutz', '  - Defender: Einstellungen', '[Performance] Gaming & Grafik', '  - Resizable BAR und PCIe-Anbindung', `Profil: ${body.profil}, Zeitraum ${body.eventDays} Tage`, 'Schreibe Bericht …'];
+    const speicherZeilen = body.skipSpeicher ? [] : ['[Performance] Laufwerke & Speicherplatz', '  - Größte Speicherverbraucher', 'C: wird gezählt …', 'F: wird gezählt …', 'D: wird gezählt …'];
+    const lines = ['[Sicherheit] System & Updates', '  - Windows-Version', '  - Windows Update: ausstehend', '[Sicherheit] Virenschutz', '  - Defender: Einstellungen', '[Performance] Gaming & Grafik', '  - Resizable BAR und PCIe-Anbindung', ...speicherZeilen, `Profil: ${body.profil}, Zeitraum ${body.eventDays} Tage`, 'Schreibe Bericht …'];
     const id = newJob('scan', lines, () => {
-      const r = mkReport(0), d = new Date(), p = n => String(n).padStart(2, '0');
+      const d = new Date(), p = n => String(n).padStart(2, '0');
+      const r = mkReport(0, { d, skip: !!body.skipSpeicher });
       r.name = `pc-check_${iso(d).slice(0, 10)}_${p(d.getHours())}${p(d.getMinutes())}`;
-      r.json.Meta.Erstellt = iso(d); r.json.Findings = r.json.Findings.filter(f => f.Check !== 'Offene Ports');
+      r.json.Findings = r.json.Findings.filter(f => f.Check !== 'Offene Ports');
+      if (body.skipSysinternals || !sysGeladen) {   // v2.3: Prüfungen übersprungen oder Werkzeuge fehlen
+        r.json.Findings.forEach(f => { if (SYS_CHECKS.includes(f.Check)) { f.Status = 'SKIP'; f.Value = body.skipSysinternals ? 'Übersprungen (-SkipSysinternals)' : 'Sysinternals nicht eingerichtet: in Morpheus unter Werkzeuge herunterladen'; f.Recommendation = ''; } });
+        delete r.json.Data['Autostarts (Autoruns, ohne Microsoft)']; delete r.json.DataChecks['Autostarts (Autoruns, ohne Microsoft)'];
+      }
       reps.unshift(r); return { name: r.name };
     });
     return [200, { jobId: id }];
   }
+
+  // ---- v2.2: Defender-Aktion (Signaturen / Schnellscan)
+  function defenderRun(art) {
+    if (art !== 'signaturen' && art !== 'schnellscan') return [400, { error: 'Unbekannte Art' }];
+    if (laufend('defender')) return [409, { error: 'Es läuft bereits ein Defender-Vorgang' }];
+    const lines = art === 'signaturen'
+      ? ['Stand vorher wird gelesen …', 'Lade Signaturen herunter …', 'Installiere Signaturen …', 'Prüfe Ergebnis …']
+      : ['Stand vorher wird gelesen …', 'Starte Schnellscan …', 'Schnellscan läuft: 25 %', 'Schnellscan läuft: 60 %', 'Schnellscan läuft: 90 %', 'Lese Funde …', 'Prüfe Ergebnis …'];
+    const id = newJob('defender', lines, () => {
+      const jetzt = iso(new Date()), vorher = { ...defender };
+      let funde = [];
+      if (art === 'signaturen') defender = { ...defender, signaturen: jetzt, signaturVersion: '1.421.140.0', signaturAlterTage: 0 };
+      else {
+        defender = { ...defender, schnellscan: jetzt, schnellscanAlterTage: 0 };
+        funde = [{ zeit: jetzt, name: 'PUA:Win32/Demo.Toolbar', aktion: 'Quarantäne', erfolg: true, dateien: 'C:\\Users\\Demo\\Downloads\\demo-setup.exe' }];
+      }
+      const meldung = art === 'signaturen' ? 'Signaturen aktualisiert.'
+        : funde.length ? 'Funde werden nur angezeigt. Quarantäne und Entfernen erledigt Windows-Sicherheit (Schutzverlauf).'
+        : 'Schnellscan ohne Funde.';
+      return { art, vorher, nachher: { ...defender }, funde, dauerSek: art === 'signaturen' ? 38 : 412, meldung };
+    });
+    return [200, { jobId: id }];
+  }
+
+  // ---- v2.3.1: Defender-Einzelscan und Akzeptanzliste (Vertrag 16.4). Zustand nur im Speicher.
+  function defenderDatei(body) {
+    const r = reps.find(x => x.name + '.json' === body.bericht);
+    const z = r && (r.json.Data['Unsignierte Systemdateien (Sigcheck)'] || []).find(x => x.Pfad.toLowerCase() === String(body.pfad || '').toLowerCase());
+    if (!z) return [404, { error: 'Datei steht nicht in der Sigcheck-Tabelle dieses Berichts' }];
+    if (laufend('defender')) return [409, { error: 'Es läuft bereits ein Defender-Vorgang' }];
+    const lines = ['Windows-Bestätigung erhalten', 'Prüfe Datei: ' + z.Pfad, 'Defender-Scan läuft …', 'Lese Funde seit Start …'];
+    return [200, { jobId: newJob('defender', lines, () => ({ art: 'datei', pfad: z.Pfad, vorher: { ...defender }, nachher: { ...defender }, funde: /demoaudio/i.test(z.Pfad) ? [{ name: 'Trojan:Win32/Demo.A', zeit: iso(new Date(Date.now() - 864e5)), aktion: 'Quarantäne', erfolg: true, dateien: z.Pfad, frueher: true }] : [], dauerSek: 6, meldung: /demoaudio/i.test(z.Pfad) ? 'Der Fund wurde schon früher erkannt; Defender hat die Datei nicht erneut verändert.' : 'Datei ohne Funde geprüft.' })) }];
+  }
+  let akz = [
+    { id: 'h3a91c07e5b2', check: 'BitLocker', match: '^Systemlaufwerk nicht verschlüsselt$', reason: 'Bewusst zurückgestellt', until: '2027-04-30', datei: '', sha256: '', erstellt: '', quelle: 'hand', abgelaufen: false },
+    { id: '7be41d09', check: 'Systemdateien: Signaturen (Sigcheck)', match: '', reason: 'Bekannte Demo-Software, geprüft', until: '', datei: 'C:\\Windows\\System32\\demohelper.exe', sha256: 'a8f2c61d9e04b7a35c1f8e6d2b09a47e3c5d1f80b6a29e7d4c3b1058f6e2a9d4', erstellt: '2026-10-25T13:40:00', quelle: 'gui', abgelaufen: false },
+  ];
+  function akzNeu(b) {
+    const r = reps.find(x => x.name + '.json' === b.bericht);
+    if (!r) return [404, { error: 'Bericht nicht gefunden' }];
+    const g = String(b.begruendung || '');
+    if (/[\x00-\x1f\x7f]/.test(g) || g.trim().length < 3 || g.trim().length > 300) return [400, { error: 'Die Begründung muss 3 bis 300 Zeichen lang sein, ohne Zeilenumbrüche oder Steuerzeichen.' }];
+    if (b.bis) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.bis) || isNaN(Date.parse(b.bis))) return [400, { error: 'Ungültiges Datum.' }];
+      const heute = new Date(); heute.setHours(0, 0, 0, 0); const max = new Date(heute); max.setFullYear(max.getFullYear() + 5);
+      const d = new Date(b.bis + 'T00:00:00');
+      if (d < heute) return [400, { error: 'Das Datum liegt in der Vergangenheit.' }];
+      if (d > max) return [400, { error: 'Das Datum liegt mehr als 5 Jahre in der Zukunft.' }];
+    }
+    const id = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+    if (b.art === 'datei') {
+      const z = (r.json.Data['Unsignierte Systemdateien (Sigcheck)'] || []).find(x => x.Pfad === b.pfad);
+      if (!z) return [404, { error: 'Datei steht nicht in der Sigcheck-Tabelle dieses Berichts' }];
+      if (akz.some(x => x.check === 'Systemdateien: Signaturen (Sigcheck)' && (x.datei || '').toLowerCase() === z.Pfad.toLowerCase() && x.sha256 === z.Sha256)) return [409, { error: 'Das ist bereits akzeptiert.' }];
+      akz.push({ id, check: 'Systemdateien: Signaturen (Sigcheck)', match: '', reason: g, until: b.bis || '', datei: z.Pfad, sha256: z.Sha256, erstellt: iso(new Date()), quelle: 'gui', abgelaufen: false });
+    } else if (b.art === 'befund') {
+      const f = r.json.Findings.find(x => x.Check === b.check);
+      if (!f) return [404, { error: 'Diesen Befund gibt es im Bericht nicht.' }];
+      if (!['CRIT', 'WARN', 'TIPP', 'INFO'].includes(f.Status) || f.Check === 'Systemdateien: Signaturen (Sigcheck)') return [400, { error: 'Dieser Befund kann nicht akzeptiert werden.' }];
+      const mt = '^' + f.Value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
+      if (akz.some(x => x.check === f.Check && x.match === mt)) return [409, { error: 'Das ist bereits akzeptiert.' }];
+      akz.push({ id, check: f.Check, match: mt, reason: g, until: b.bis || '', datei: '', sha256: '', erstellt: iso(new Date()), quelle: 'gui', abgelaufen: false });
+    } else return [400, { error: 'Unbekannte Art' }];
+    return [200, { regel: akz[akz.length - 1], regeln: akz.map(x => ({ ...x })) }];
+  }
+
+  // ---- v2.3: Sysinternals (Vertrag 15.6). Zustand nur im Speicher; anfangs nicht eingerichtet.
+  const SYS_DEF = [
+    { name: 'autorunsc', titel: 'Autoruns', datei: 'autorunsc64.exe', version: '14.11', sha256: '3f1a0c9e5b7d42a8c6e0b1d9f4a27c58e1b3d6a09f8c47e2b5d1a0c3e6f98b74' },
+    { name: 'sigcheck', titel: 'Sigcheck', datei: 'sigcheck64.exe', version: '2.90', sha256: '9b2e7d41c0a85f36e1d4b79a2c8f05e3d6a1b4c7f90e2d58a3b6c1f4e7d0a925' }];
+  const SYS_ORDNER = 'C:\\ProgramData\\Morpheus\\tools';
+  let sysZustimmung = null;   // { akzeptiert, zeit, benutzer } nach dem Herunterladen
+  let sysGeladen = null;      // ISO-Zeit, solange eingerichtet
+  const sysStand = () => ({
+    zustimmung: sysZustimmung ? { akzeptiert: true, zeit: sysZustimmung.zeit, benutzer: sysZustimmung.benutzer } : { akzeptiert: false, zeit: null, benutzer: null },
+    werkzeuge: SYS_DEF.map(w => sysGeladen
+      ? { name: w.name, titel: w.titel, datei: w.datei, pfad: SYS_ORDNER + '\\' + w.datei, vorhanden: true, geprueft: true, grund: null, signierer: 'Microsoft Corporation', version: w.version, sha256: w.sha256, geladen: sysGeladen }
+      : { name: w.name, titel: w.titel, datei: w.datei, pfad: SYS_ORDNER + '\\' + w.datei, vorhanden: false, geprueft: false, grund: 'Nicht eingerichtet: Datei fehlt.', signierer: null, version: null, sha256: null, geladen: null }),
+    ordner: SYS_ORDNER, lizenzUrl: 'https://learn.microsoft.com/sysinternals/license-terms' });
+  function sysInstall(body) {
+    if (body.eulaAkzeptiert !== true) return [400, { error: 'Die Lizenzbedingungen müssen ausdrücklich angenommen werden.' }];
+    if (laufend('sysinternals')) return [409, { error: 'Es läuft schon ein Sysinternals-Vorgang.' }];
+    const lines = ['Autoruns.zip wird geladen …', 'Autoruns.zip: 1,1 MB geladen', 'ZIP-Einträge werden geprüft …', 'autorunsc64.exe entpackt', 'Signatur geprüft: Microsoft Corporation', 'Sigcheck.zip wird geladen …', 'Sigcheck.zip: 0,9 MB geladen', 'sigcheck64.exe entpackt', 'Signatur geprüft: Microsoft Corporation', 'Lizenztexte abgelegt, Reste gelöscht'];
+    if (laufend('scan')) return [409, { error: 'Während eines Scans nicht möglich. Bitte warten, bis der Scan fertig ist.' }];
+    sysZustimmung = { zeit: iso(new Date()), benutzer: 'Demo' };   // wie der Server: Zustimmung schon beim Job-Start
+    const id = newJob('sysinternals', lines, () => {
+      const jetzt = iso(new Date());
+      sysGeladen = jetzt;
+      return { werkzeuge: sysStand().werkzeuge, meldung: 'Autoruns und Sigcheck sind eingerichtet. Beide sind von Microsoft signiert.' };
+    });
+    return [200, { jobId: id }];
+  }
+  function sysEntfernen() {
+    if (laufend('sysinternals')) return [409, { error: 'Es läuft schon ein Sysinternals-Vorgang.' }];
+    if (laufend('scan')) return [409, { error: 'Während eines Scans nicht möglich. Bitte warten, bis der Scan fertig ist.' }];
+    sysZustimmung = null; sysGeladen = null;
+    return [200, sysStand()];
+  }
+
+  // ---- v2.2: Offline-Scan-Countdown. Jeder GET /api/defender/offline gilt als Lebenszeichen.
+  const offZustand = () => {
+    if (offline.status === 'countdown') {
+      if (Date.now() - offline.letzte > 3000) { offline.status = 'abgebrochen'; offline.meldung = 'Abgebrochen: Das Morpheus-Fenster antwortet nicht mehr.'; }
+      else if (Date.now() - offline.t0 >= OFF_SEK * 1000) { offline.status = 'gestartet'; offline.meldung = OFF_MELDUNG_START; }
+    }
+    const rest = offline.status === 'countdown' ? Math.max(0, Math.ceil(OFF_SEK - (Date.now() - offline.t0) / 1000)) : 0;
+    return { status: offline.status, rest, meldung: offline.meldung };
+  };
 
   // ---- /api/live: sich bewegende Demo-Werte (erster Abruf: stand = null, wie beim echten Server)
   const walk = (v, step, lo = 1, hi = 99) => Math.max(lo, Math.min(hi, v + (Math.random() - 0.5) * 2 * step));
@@ -175,6 +424,58 @@
     else if ((m = path.match(/^\/api\/jobs\/([^/]+)$/))) res = jobState(m[1], parseInt(q.get('from') || '0', 10));
     else if (path === '/api/checklist') { if (method === 'POST') checklist = body; res = [200, checklist]; }
     else if (path === '/api/help') res = [200, help];
+    // v2.2: Speicher
+    else if (path === '/api/speicher') res = [200, speicherCache || { stand: null }];
+    else if (path === '/api/spielordner') res = method === 'POST' ? spielordnerSpeichern(body.eintraege) : [200, spielordner];
+    else if (path === '/api/speicher/refresh') {
+      const alt = laufend('speicher');
+      res = [200, { jobId: alt || newJob('speicher', ['C: wird gezählt …', 'C:\\Windows', 'C:\\Users', 'F: wird gezählt …', 'D: wird gezählt …', 'Spiele werden gesucht …'], () => {
+        speicherCache = speicherFuer(iso(new Date()));
+        speicherCache.spiele = nachGroesse(speicherCache.spiele.concat(manuelleSpiele()));
+        return { stand: speicherCache.stand };
+      }) }];
+    }
+    // v2.2: Defender
+    else if (path === '/api/defender') res = [200, { stand: { ...defender }, laufend: laufend('defender'), offline: offZustand() }];
+    else if (path === '/api/defender/run') res = defenderRun(body.art);
+    else if (path === '/api/defender/datei') res = method === 'POST' ? defenderDatei(body) : [405, { error: 'Nur POST' }];
+    // v2.3.1: Akzeptanzliste
+    else if (path === '/api/akzeptanz') res = method === 'POST' ? akzNeu(body) : [200, { regeln: akz.map(x => ({ ...x })), datei: 'C:\\ProgramData\\Morpheus\\accepted.psd1', bearbeitbar: true }];
+    else if ((m = path.match(/^\/api\/akzeptanz\/([^/]+)\/entfernen$/))) {
+      const k = akz.findIndex(x => x.id === m[1]);
+      if (method !== 'POST') res = [405, { error: 'Nur POST' }];
+      else if (k < 0) res = [404, { error: 'Diese Regel gibt es nicht (mehr).' }];
+      else { akz.splice(k, 1); res = [200, { regeln: akz.map(x => ({ ...x })) }]; }
+    }
+    else if (path === '/api/defender/offline') {
+      if (method === 'POST') {
+        if (body.bestaetigt !== true) res = [400, { error: 'Bestätigung fehlt' }];
+        else {
+          if (offline.status !== 'countdown') offline = { status: 'countdown', t0: Date.now(), letzte: Date.now(), meldung: '' };
+          res = [200, offZustand()];
+        }
+      } else {
+        const z = offZustand(); offline.letzte = Date.now(); res = [200, z];
+      }
+    }
+    else if (path === '/api/defender/offline/abbrechen') {
+      if (offline.status === 'countdown') { offline.status = 'abgebrochen'; offline.meldung = 'Abgebrochen. Der PC startet nicht neu.'; }
+      res = [200, offZustand()];
+    }
+    else if (path === '/api/defender/offline/jetzt') {
+      if (offZustand().status !== 'countdown') res = [409, { error: 'Kein Countdown aktiv' }];
+      else { offline.status = 'gestartet'; offline.meldung = OFF_MELDUNG_START; res = [200, offZustand()]; }
+    }
+    // v2.3: Sysinternals
+    else if (path === '/api/sysinternals') res = [200, { ...sysStand(), laufend: laufend('sysinternals') }];
+    else if (path === '/api/sysinternals/install') res = method === 'POST' ? sysInstall(body) : [405, { error: 'Nur POST' }];
+    else if (path === '/api/sysinternals/entfernen') res = method === 'POST' ? sysEntfernen() : [405, { error: 'Nur POST' }];
+    else if (path === '/api/sysinternals/eula') {
+      const n = q.get('name');
+      res = SYS_DEF.some(w => w.name === n)
+        ? [200, { name: n, text: sysGeladen ? 'Demo: Hier steht im echten Betrieb der Lizenztext aus dem Download (Eula.txt).' : null }]
+        : [400, { error: 'Unbekanntes Werkzeug' }];
+    }
     else if (path === '/api/heartbeat' || path === '/api/shutdown') res = [200, {}];
     return new Response(JSON.stringify(res[1]), { status: res[0], headers: { 'Content-Type': 'application/json' } });
   };

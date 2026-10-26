@@ -1,0 +1,8 @@
+{
+	"FormatVersion": 0,
+	"bIsIncompleteInstall": false,
+	"DisplayName": "Epic Demo Game",
+	"InstallationGuid": "AAAA1111",
+	"InstallLocation": "{{EPIC}}",
+	"InstallSize": 5000000000
+}

@@ -4,6 +4,9 @@ reports/
 # Persönliche Akzeptanzliste (Vorlage: accepted.example.psd1)
 accepted.psd1
 
-# Laufzeitdaten der GUI ohne Installation (Änderungsjournal, Checkliste, Protokoll)
+# Gebaute Weitergabe-Pakete
+dist/
+
+# Laufzeitdaten der GUI (Änderungsjournal, Checkliste, Protokoll)
 changes/
 state/
