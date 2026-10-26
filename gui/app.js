@@ -211,6 +211,25 @@ async function loadReports() {
   S.reports = (list || []).map(r => ({ ...r, name: normName(r.name) })).filter(r => REPORT_RE.test(r.name));
 }
 async function loadActions() { try { S.actions = (await api('/api/actions')) || []; } catch (e) { if (e.status === 401) throw e; S.actions = []; } }
+/**
+ * Zustände der Aktionen am System neu lesen lassen (Job „refresh“), danach Liste und Ansicht aktualisieren.
+ * Ohne diesen Anstoß kennt der Server keine Zustände: Alle Karten zeigten „Zustand unbekannt“ und „Ausführen“.
+ * Läuft schon ein Lesen, liefert der Server dessen Job; parallele Aufrufe hier teilen sich ein Versprechen.
+ */
+let statesRun = null;
+function refreshActionStates() {
+  if (statesRun) return statesRun;
+  statesRun = (async () => {
+    try {
+      const r = await api('/api/actions/refresh', { method: 'POST' });
+      if (r && r.jobId) await followJob(r.jobId, () => {});
+      await loadActions();
+      refreshView();
+    } catch (e) { if (e.status === 401) throw e; /* ohne Zustände weiter (Mock, Nur-Lesen ohne Safety) */ }
+    finally { statesRun = null; }
+  })();
+  return statesRun;
+}
 async function loadSession() { S.session = await api('/api/session'); }
 async function loadAll() {
   await Promise.all([loadSession(), loadReports()]);
@@ -326,6 +345,7 @@ function resultList(items) {
 async function afterChange() {
   await Promise.all([loadSession().catch(() => {}), loadActions()]);
   S.sel.clear(); refreshView(); loadExtra();
+  refreshActionStates();   // Zustände nach der Änderung neu lesen
 }
 function runCmdText(a, variante) { return (a.befehle && a.befehle.ausfuehren || '').replace(/<variante>/g, variante || '<variante>'); }
 
@@ -523,6 +543,10 @@ function safetyBanner() {
     return banner('err', 'warn', h('b', { text: 'Computerschutz ist aus: ' }), 'Ohne Wiederherstellungspunkt führt die GUI keine Änderungen aus. Alle Ausführen-Buttons sind gesperrt.',
       h('details', { class: 'cmd' }, h('summary', { text: 'Befehl zum Einschalten (Administrator-PowerShell)' }), cmdBlock(cmd),
         h('ul', { class: 'explain' }, h('li', { text: 'Schaltet den Computerschutz (Systemwiederherstellung) für das Laufwerk ein. Danach die GUI-Seite neu laden.' }))));
+  }
+  if (s.speicherKlein) {
+    return banner('', 'warn', h('b', { text: 'Speicher für Wiederherstellungspunkte zu klein. ' }), `Erlaubt sind nur ${s.speicherMax || 'wenige GB'}. Windows löscht ältere Punkte, sobald neue entstehen; das Netz vor Änderungen hält dann nur kurz. Rückgängig über „Änderungen“ funktioniert trotzdem. `,
+      h('a', { href: '#/sicherheit', text: 'Unter Sicherheit > Wiederherstellung vergrößern' }), '.');
   }
   if (s.sperre24h) {
     return banner('', 'warn', h('b', { text: '24-Stunden-Sperre aktiv. ' }), 'Windows legt höchstens einen Wiederherstellungspunkt pro 24 Stunden an. Solange das so ist, kann die GUI heute eventuell keine weitere Änderung absichern und führt sie dann nicht aus.',
@@ -750,7 +774,9 @@ function ringNode(score) {
 }
 /** Zeile in „Nächste Schritte“ / „Lohnende Tipps“. */
 function stepRow(f, showLevels) {
-  const open = actionsFor(f).filter(a => !(a.zustand && a.zustand.aktiv === true) && !(a.varianten && a.varianten.length));
+  // Nur bestätigt offene Aktionen: Ein noch nicht gelesener Zustand (zustand null) gilt nicht als offen,
+  // sonst erscheint „Ausführen“ für Erledigtes und endet in „Schon erledigt, nichts geändert“.
+  const open = actionsFor(f).filter(a => a.zustand && a.zustand.aktiv === false && !(a.varianten && a.varianten.length));
   const go = e => { e.preventDefault(); reveal(f.Check); };
   let btn;
   if (open.length === 1 && !locked()) btn = h('button', { type: 'button', class: 'sm primary', text: 'Ausführen', onclick: () => openRunDialog([open[0]]) });
@@ -1950,6 +1976,7 @@ async function init() {
   window.addEventListener('hashchange', route);
   route();
   loadExtra();
+  refreshActionStates();   // Zustände aller Aktionen beim Start lesen (dauert einige Sekunden)
 }
 init();
 })();

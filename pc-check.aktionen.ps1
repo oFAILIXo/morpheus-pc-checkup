@@ -485,6 +485,76 @@
     },
 
     @{
+        Id          = 'system.wiederherstellung-speicher'
+        Kategorie   = 'Sicherheit'
+        Pruefung    = 'Wiederherstellung'
+        Titel       = 'Speicher für Wiederherstellungspunkte auf 10 % vergrößern'
+        Erklaerung  = 'Ist der Speicher für Wiederherstellungspunkte zu klein, löscht Windows ältere Punkte, sobald ein neuer entsteht – oft schon nach Stunden. Mit 10 % des Systemlaufwerks bleiben mehrere Punkte erhalten. Belegt wird der Platz erst, wenn Punkte entstehen.'
+        Nutzen      = 'hoch'
+        Aufwand     = 'gering'
+        Risiko      = 'gering'
+        Neustart    = $false
+        Bereich     = 'System'
+        Varianten   = $null
+        Befehle     = @{
+            Ausfuehren   = "vssadmin resize shadowstorage /for=`$env:SystemDrive /on=`$env:SystemDrive /maxsize=10%"
+            Rueckgaengig = "vssadmin resize shadowstorage /for=`$env:SystemDrive /on=`$env:SystemDrive /maxsize=<alter Wert in MB bzw. UNBOUNDED>   # ist der alte Wert kleiner, löscht Windows dabei ältere Punkte"
+            Erklaerung   = @(
+                'vssadmin resize shadowstorage ändert, wie viel Platz Schattenkopien (daraus bestehen Wiederherstellungspunkte) auf dem Laufwerk belegen dürfen.',
+                '/for und /on: das Systemlaufwerk (meist C:); /maxsize=10% erlaubt bis zu 10 % der Laufwerksgröße.',
+                'Rückgängig setzt die alte Grenze wieder. Ist sie kleiner als der belegte Platz, löscht Windows dabei die ältesten Punkte.'
+            )
+        }
+        Voraussetzung = {
+            $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            $iv = $null; $dis = $null
+            try { $iv = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name 'RPSessionInterval' -ErrorAction Stop).RPSessionInterval } catch { }
+            try { $dis = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore' -Name 'DisableSR' -ErrorAction Stop).DisableSR } catch { }
+            if (($iv -ne 1) -or ($dis -eq 1)) { return 'Der Computerschutz ist aus; zuerst „Computerschutz einschalten“ ausführen.' }
+        }
+        Lesen = {
+            $lw = $env:SystemDrive
+            if (-not $lw) { $lw = 'C:' }
+            try {
+                $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$lw'" -ErrorAction Stop
+                $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { $_.Volume.DeviceID -eq $vol.DeviceID }) | Select-Object -First 1
+            }
+            catch { return [pscustomobject]@{ Aktiv = $false; Wert = 'nur mit Administratorrechten lesbar'; Zustand = [ordered]@{ Laufwerk = $lw; Max = $null } } }
+            if (-not $ss) { return [pscustomobject]@{ Aktiv = $false; Wert = "für $lw noch kein Speicher eingerichtet"; Zustand = [ordered]@{ Laufwerk = $lw; Max = $null } } }
+            $max = [uint64]$ss.MaxSpace
+            if ($max -eq [uint64]::MaxValue) {
+                return [pscustomobject]@{ Aktiv = $true; Wert = 'unbegrenzt'; Zustand = [ordered]@{ Laufwerk = $lw; Max = 'UNBOUNDED' } }
+            }
+            $pct = [Math]::Round(100 * [double]$max / [double]$vol.Capacity, 1)
+            # Ziel erreicht ab 8 % (die Aktion setzt 10 %). Der Zustand zählt in ganzen MB: Windows speichert die Grenze
+            # gerundet, bytegenau würde die Kontrolle nach dem Rückgängigmachen fälschlich abweichen.
+            [pscustomobject]@{ Aktiv = ($pct -ge 8); Wert = ('max {0:N1} GB ({1} %)' -f ([double]$max / 1GB), $pct); Zustand = [ordered]@{ Laufwerk = $lw; Max = ('{0}MB' -f [Math]::Floor([double]$max / 1MB)) } }
+        }
+        Ausfuehren = {
+            param($Variante)
+            $lw = $env:SystemDrive
+            if (-not $lw) { $lw = 'C:' }
+            $out = & vssadmin.exe resize shadowstorage "/for=$lw" "/on=$lw" '/maxsize=10%' 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ("vssadmin endete mit Code $($LASTEXITCODE): " + (($out | Out-String).Trim())) }
+        }
+        Rueckgaengig = {
+            param($Vorher)
+            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher.Max) { throw 'Vorher war kein Speicher eingerichtet; eine Zuordnung lässt sich auf Windows-Desktops nicht entfernen. Bitte die Grenze unter sysdm.cpl > Computerschutz selbst einstellen.' }
+            $lw = [string]$Vorher.Laufwerk
+            if ($lw -notmatch '^[A-Za-z]:$') { throw "Ungültiges Laufwerk '$lw' im Vorher-Zustand." }
+            $max = [string]$Vorher.Max
+            if ($max -ne 'UNBOUNDED') {
+                if ($max -notmatch '^(\d{1,12})MB$') { throw "Ungültige Speichergrenze '$max' im Vorher-Zustand." }
+                if ([int64]$Matches[1] -lt 320) { $max = '320MB' }   # vssadmin verlangt mindestens 320 MB
+            }
+            $out = & vssadmin.exe resize shadowstorage "/for=$lw" "/on=$lw" "/maxsize=$max" 2>&1
+            if ($LASTEXITCODE -ne 0) { throw ("vssadmin endete mit Code $($LASTEXITCODE): " + (($out | Out-String).Trim())) }
+        }
+    },
+
+    @{
         Id          = 'system.schnellstart'
         Kategorie   = 'Leistung'
         Pruefung    = 'Schnellstart und Ruhezustand'

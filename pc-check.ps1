@@ -77,7 +77,7 @@ param(
     [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto'
 )
 
-$ScriptVersion = '2.3.1'
+$ScriptVersion = '2.3.2'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
@@ -1508,9 +1508,36 @@ Invoke-Check 'Wiederherstellung' -NeedsAdmin {
     $rp = @(Get-ComputerRestorePoint -ErrorAction SilentlyContinue)
     $last = $rp | Sort-Object SequenceNumber | Select-Object -Last 1
     $lastText = if ($last) { ' (letzter ' + [Management.ManagementDateTimeConverter]::ToDateTime($last.CreationTime).ToString('yyyy-MM-dd') + ')' } else { '' }
-    $value = 'Windows RE ' + $(if ($reOn) { 'an' } else { 'aus' }) + "; Wiederherstellungspunkte: $($rp.Count)$lastText"
+    # Computerschutz an? (wie die Aktion system.wiederherstellung). Fehlende Punkte allein heißen NICHT „aus“:
+    # Windows löscht Punkte auch selbst, wenn der Speicher dafür zu klein ist (volsnap-Ereignis 33).
+    $sr = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
+    $interval = (Get-ItemProperty -LiteralPath $sr -Name RPSessionInterval -ErrorAction SilentlyContinue).RPSessionInterval
+    $disSR = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore' -Name DisableSR -ErrorAction SilentlyContinue).DisableSR
+    $schutzAn = ($interval -eq 1) -and ($disSR -ne 1)
+    # Speichergrenze der Schattenkopien auf C: (nur mit Adminrechten lesbar); UInt64.MaxValue = unbegrenzt
+    $maxText = ''; $klein = $false
+    try {
+        $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$($env:SystemDrive)'" -ErrorAction Stop
+        $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { $_.Volume.DeviceID -eq $vol.DeviceID }) | Select-Object -First 1
+        if ($ss) {
+            if ([uint64]$ss.MaxSpace -eq [uint64]::MaxValue) { $maxText = 'unbegrenzt' }
+            else {
+                $pct = [Math]::Round(100 * [double]$ss.MaxSpace / [double]$vol.Capacity, 1)
+                $maxText = '{0} ({1} %)' -f (Format-Size ([double]$ss.MaxSpace)), $pct
+                # Ein Punkt belegt oft 1–4 GB: unter 5 % bzw. 8 GB verdrängen neue Punkte die alten schnell
+                $klein = ($pct -lt 5) -or ([double]$ss.MaxSpace -lt 8GB)
+            }
+        }
+    }
+    catch { }
+    $geloescht = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; Id = 33; StartTime = $script:Since } -ErrorAction SilentlyContinue).Count
+    $value = 'Windows RE ' + $(if ($reOn) { 'an' } else { 'aus' }) + '; Computerschutz ' + $env:SystemDrive + ' ' + $(if ($schutzAn) { 'an' } else { 'aus' }) +
+        $(if ($maxText) { ", Speicher max $maxText" } else { '' }) + "; Wiederherstellungspunkte: $($rp.Count)$lastText" +
+        $(if ($geloescht) { "; von Windows gelöscht: $geloescht in $EventDays Tagen" } else { '' })
     if (-not $reOn) { Add-Finding WARN $value 'Wiederherstellungsumgebung einschalten: reagentc /enable.' }
-    elseif (-not $rp) { Add-Finding INFO $value 'Systemschutz für C: einschalten: hilfreich vor Treiber- und OC-Experimenten.' }
+    elseif (-not $schutzAn) { Add-Finding INFO $value 'Systemschutz für C: einschalten: hilfreich vor Treiber- und OC-Experimenten.' }
+    elseif ($klein) { Add-Finding WARN ($value + '; Speicher zu klein') 'Windows löscht ältere Wiederherstellungspunkte, sobald der Speicher voll ist. Speicher auf etwa 10 % vergrößern, damit Punkte vor Änderungen erhalten bleiben.' }
+    elseif (-not $rp) { Add-Finding OK ($value + ' (Morpheus legt vor jeder Änderung einen an)') }
     else { Add-Finding OK $value }
 }
 
