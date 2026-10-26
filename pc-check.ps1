@@ -16,6 +16,13 @@
     - Die Windows-Update-Suche, winget und die UPnP-Abfrage gehen ins Netz bzw. zum Router
       (abschaltbar mit -SkipUpdateSearch / -SkipWinget).
 
+    - Die Speicherauswertung zählt alle Dateien der festen Laufwerke auf (nur Größen, keine Inhalte;
+      abschaltbar mit -SkipSpeicher).
+
+    - Die Sysinternals-Prüfungen (Autoruns, Sigcheck) laufen nur, wenn die Werkzeuge in Morpheus unter
+      Werkzeuge eingerichtet und geprüft sind; sonst werden sie übersprungen. Es gehen keine Daten ins Netz
+      (kein VirusTotal). Abschaltbar mit -SkipSysinternals.
+
     Für den vollen Umfang in einer Admin-PowerShell starten.
 
 .PARAMETER OutputDir
@@ -27,6 +34,16 @@
 .PARAMETER AcceptedFile
     Liste bewusst gewollter Befunde. Standard: accepted.psd1 neben dem Script.
     Passende Warnungen erscheinen im Bericht als "Akzeptiert" statt als Handlungsbedarf.
+
+.PARAMETER SkipSpeicher
+    Größte Speicherverbraucher je Laufwerk nicht berechnen; spart je nach Laufwerken 1–3 Minuten.
+
+.PARAMETER SkipSysinternals
+    Autoruns- und Sigcheck-Prüfungen (Sysinternals) nicht ausführen; sie dauern je 1–3 Minuten.
+
+.PARAMETER SpielOrdnerFile
+    Selbst eingetragene Spiele-Ordner (GUI: Werkzeuge > Spiele-Ordner), nur gelesen.
+    Standard: state\spielordner.json neben dem Berichtsordner (OutputDir).
 
 .PARAMETER NoUpdatePrompt
     Keine Nachfrage nach Programm-Updates am Ende (rein lesender Lauf).
@@ -51,13 +68,16 @@ param(
     [ValidateRange(1, 90)][int]$EventDays = 14,
     [switch]$SkipUpdateSearch,
     [switch]$SkipWinget,
+    [switch]$SkipSpeicher,
+    [switch]$SkipSysinternals,
+    [string]$SpielOrdnerFile,
     [switch]$NoUpdatePrompt,
     [string]$CompareWith,
     [switch]$NoOpen,
     [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto'
 )
 
-$ScriptVersion = '2.1.1'
+$ScriptVersion = '2.3.1'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
@@ -65,6 +85,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if (-not $OutputDir) { $OutputDir = Join-Path $PSScriptRoot 'reports' }
 if (-not $AcceptedFile) { $AcceptedFile = Join-Path $PSScriptRoot 'accepted.psd1' }
+if (-not $SpielOrdnerFile) { $SpielOrdnerFile = Join-Path (Split-Path -Parent $OutputDir) 'state\spielordner.json' }
 
 $script:Findings = New-Object System.Collections.Generic.List[object]
 $script:Tables = [ordered]@{}
@@ -73,6 +94,7 @@ $script:Area = ''
 $script:Category = ''
 $script:CheckName = ''
 $script:Since = (Get-Date).AddDays(-$EventDays)
+$script:Speicher = $null
 $script:IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $script:SigCache = @{}
 $startedAt = Get-Date
@@ -341,6 +363,182 @@ function Get-DriveKind {
     $script:DriveKindCache[$Letter] = $kind
     $kind
 }
+
+# Bibliotheken (Speicherverbraucher, Spieleliste, Datensicherung): Dot-Source auf Skriptebene, damit die Funktionen sichtbar sind
+$script:SpeicherLib = $false
+$script:SicherungLib = $false
+$speicherLibPfad = Join-Path $PSScriptRoot 'gui\lib\Speicher.ps1'
+if (Test-Path -LiteralPath $speicherLibPfad) { . $speicherLibPfad; $script:SpeicherLib = $true }
+$sicherungLibPfad = Join-Path $PSScriptRoot 'gui\lib\Sicherung.ps1'
+if (Test-Path -LiteralPath $sicherungLibPfad) { . $sicherungLibPfad; $script:SicherungLib = $true }
+# Akzeptanzliste: früh einlesen, weil die Sigcheck-Prüfung die Datei-Regeln (je SHA256) braucht
+$script:AkzeptanzLib = $false
+$akzeptanzLibPfad = Join-Path $PSScriptRoot 'gui\lib\Akzeptanz.ps1'
+if (Test-Path -LiteralPath $akzeptanzLibPfad) {
+    try { . $akzeptanzLibPfad; $script:AkzeptanzLib = [bool](Get-Command Read-MorpheusAkzeptanz -CommandType Function -ErrorAction SilentlyContinue) }
+    catch { $script:AkzeptanzLib = $false }
+}
+$script:AkzeptanzRegeln = @()
+if (Test-Path -LiteralPath $AcceptedFile) {
+    try {
+        if ($script:AkzeptanzLib) { $script:AkzeptanzRegeln = @(Read-MorpheusAkzeptanz -Datei $AcceptedFile | Where-Object { $_ }) }
+        else { $script:AkzeptanzRegeln = @((Import-PowerShellDataFile -LiteralPath $AcceptedFile).Accepted | Where-Object { $_ }) }
+    }
+    catch { Write-Warning "Akzeptanzliste nicht lesbar: $($_.Exception.Message)" }
+}
+# Sysinternals (Autoruns, Sigcheck): Bibliotheken nur laden, nichts ausführen; die Werkzeuge starten ausschließlich über Invoke-MorpheusSysWerkzeug
+$script:SysLib = $false
+$script:SysDataRoot = $null
+$sysInstallPfad = Join-Path $PSScriptRoot 'gui\lib\Install.ps1'
+$sysAuswertungPfad = Join-Path $PSScriptRoot 'gui\lib\SysinternalsAuswertung.ps1'
+$sysLibPfad = Join-Path $PSScriptRoot 'gui\lib\Sysinternals.ps1'
+if ((Test-Path -LiteralPath $sysInstallPfad) -and (Test-Path -LiteralPath $sysAuswertungPfad) -and (Test-Path -LiteralPath $sysLibPfad)) {
+    try {
+        . $sysInstallPfad
+        . $sysAuswertungPfad
+        . $sysLibPfad
+        $sysFunktionen = @('Invoke-MorpheusSysWerkzeug', 'Get-MorpheusSysStand', 'ConvertFrom-MorpheusAutorunsCsv', 'ConvertFrom-MorpheusSigcheckCsv', 'Get-MorpheusAutorunsSignaturBefund', 'Get-MorpheusAutorunsPfadBefund', 'Get-MorpheusAutorunsTabelle', 'Get-MorpheusSystemdateienBefund', 'Get-MorpheusSigcheckTabelle', 'Test-MorpheusSysKopf', 'Get-MorpheusSysZustimmung')
+        $script:SysLib = (@($sysFunktionen | Where-Object { Get-Command $_ -CommandType Function -ErrorAction SilentlyContinue }).Count -eq $sysFunktionen.Count)
+    }
+    catch { $script:SysLib = $false }
+}
+# Datenordner (enthält tools\): normal der Elternordner von $OutputDir (GUI-Scan). Fehlt dort tools\ (Scan aus der Befehlszeile ohne GUI),
+# aber der Standard-Datenordner (C:\ProgramData\Morpheus) hat einen, wird dieser verwendet.
+try {
+    $sysAusgabe = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDir)
+    $script:SysDataRoot = [IO.Path]::GetFullPath((Split-Path -Parent $sysAusgabe))
+    if (-not (Test-Path -LiteralPath (Join-Path $script:SysDataRoot 'tools') -PathType Container) -and (Get-Command MorpheusDefaultDataDir -CommandType Function -ErrorAction SilentlyContinue)) {
+        $sysStandard = MorpheusDefaultDataDir
+        if (Test-Path -LiteralPath (Join-Path $sysStandard 'tools') -PathType Container) { $script:SysDataRoot = $sysStandard }
+    }
+}
+catch { $script:SysDataRoot = Split-Path -Parent $OutputDir }
+$script:SysAufgaben = $null       # Aufgabenpfad (klein) -> läuft mit erhöhten Rechten
+$script:Autoruns = $null          # Ergebnis des einen Autoruns-Laufs (auch im Fehlerfall)
+$script:AutorunsEintraege = $null
+$script:SigcheckCache = $null
+
+# Gemeinsame Statuslogik der Sysinternals-Prüfungen. Liefert das Ergebnis von Invoke-MorpheusSysWerkzeug,
+# wenn es verwertbar ist; sonst wird der passende Befund geschrieben und $null geliefert.
+function Resolve-SysErgebnis {
+    param($Ergebnis, [string]$Titel, [string]$Art)
+    if (-not $Ergebnis) { Add-Finding SKIP 'Fehler: keine Antwort vom Werkzeug'; return $null }
+    if ($Ergebnis.nichtEingerichtet) { Add-Finding SKIP 'Sysinternals nicht eingerichtet: in Morpheus unter Werkzeuge herunterladen'; return $null }
+    if ($Ergebnis.nichtVertrauenswuerdig) { Add-Finding WARN ("$Titel nicht ausgeführt: " + $Ergebnis.fehler) 'Unter Werkzeuge neu herunterladen; bleibt die Meldung, die Datei nicht verwenden.'; return $null }
+    if (-not $Ergebnis.ok) { Add-Finding SKIP ('Fehler: ' + $Ergebnis.fehler); return $null }
+    if ($Art -and -not (Test-MorpheusSysKopf -Text $Ergebnis.text -Art $Art)) { Add-Finding SKIP "Fehler: Die Ausgabe von $Titel ist nicht lesbar (keine CSV-Kopfzeile)."; return $null }
+    $Ergebnis
+}
+
+# Aufgaben mit erhöhten Rechten (SYSTEM, Dienstkonten oder RunLevel Highest), einmal gebaut: Schlüssel = Pfad klein mit führendem \
+function Get-SysAufgaben {
+    if ($null -ne $script:SysAufgaben) { return $script:SysAufgaben }
+    $tabelle = @{}
+    try {
+        foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+            $uid = [string]$t.Principal.UserId
+            $hoch = ($uid -match '(^|\\)(SYSTEM|LOCAL SERVICE|LOKALER DIENST|NETWORK SERVICE|NETZWERKDIENST)$') -or ($uid -match '^S-1-5-(18|19|20)$') -or ([string]$t.Principal.RunLevel -eq 'Highest')
+            $tabelle[(([string]$t.TaskPath + [string]$t.TaskName).ToLowerInvariant())] = [bool]$hoch
+        }
+    }
+    catch { $tabelle = @{} }
+    $script:SysAufgaben = $tabelle
+    $tabelle
+}
+
+function Test-SysVorabAus {
+    if ($SkipSysinternals) { Add-Finding SKIP 'Übersprungen (-SkipSysinternals)'; return $true }
+    if (-not $script:SysLib) { Add-Finding SKIP 'gui\lib\Sysinternals.ps1 fehlt'; return $true }
+    $false
+}
+
+# Fortschrittszeile nur, wenn das Werkzeug wirklich läuft (eingerichtet und Zustimmung vorhanden)
+function Write-SysFortschritt {
+    param([string]$Text, [string]$Exe)
+    $bereit = $true
+    try {
+        # billig: nur Dateiexistenz und Zustimmung, kein Hashen/Signaturprüfen
+        if (-not (Test-Path -LiteralPath (Join-Path $script:SysDataRoot "tools\$Exe") -PathType Leaf)) { $bereit = $false }
+        elseif (-not (Get-MorpheusSysZustimmung -DataRoot $script:SysDataRoot).akzeptiert) { $bereit = $false }
+    }
+    catch { }
+    if ($bereit) { Write-Host $Text -ForegroundColor DarkGray }
+}
+
+function Get-SysAutoruns {
+    if (Test-SysVorabAus) { return $null }
+    if (-not $script:Autoruns) {
+        Write-SysFortschritt '    Autoruns läuft, das dauert 1–3 Minuten …' 'autorunsc64.exe'
+        try { $script:Autoruns = Invoke-MorpheusSysWerkzeug -DataRoot $script:SysDataRoot -Auftrag autostarts }
+        catch { $script:Autoruns = [pscustomobject]@{ ok = $false; fehler = $_.Exception.Message; nichtVertrauenswuerdig = $false; nichtEingerichtet = $false; text = '' } }
+    }
+    $r = Resolve-SysErgebnis $script:Autoruns 'Autoruns' 'autoruns'
+    if (-not $r) { return $null }
+    if ($null -eq $script:AutorunsEintraege) { $script:AutorunsEintraege = @(ConvertFrom-MorpheusAutorunsCsv -Text $r.text) }
+    , $script:AutorunsEintraege
+}
+
+# Bewertet die unsignierten Systemdateien: SHA256 je Datei, Abgleich mit den Datei-Regeln der Akzeptanzliste.
+# -Hash ist überschreibbar (Test); Fehler beim Hashen → '' (dann nie akzeptiert).
+function Get-SysSigcheckBewertung {
+    param($System32, $Treiber, $Regeln = @(), [scriptblock]$Hash)
+    if ($null -eq $Hash) { $Hash = { param($Pfad) (Get-FileHash -LiteralPath $Pfad -Algorithm SHA256 -ErrorAction Stop).Hash } }
+    $kannFinden = [bool](Get-Command Find-MorpheusAkzeptanzDatei -CommandType Function -ErrorAction SilentlyContinue)
+    $regeln = @($Regeln | Where-Object { $_ })
+    $zeilen = New-Object System.Collections.Generic.List[object]
+    $akzeptiert = @{}
+    foreach ($z in @(Get-MorpheusSigcheckTabelle -System32 $System32 -Treiber $Treiber)) {
+        $h = ''
+        try { $h = ([string](& $Hash $z.Pfad)).ToLowerInvariant() } catch { $h = '' }
+        if ($h -notmatch '^[0-9a-f]{64}$') { $h = '' }
+        $grund = ''
+        if ($kannFinden -and $h -and $regeln.Count) {
+            $r = Find-MorpheusAkzeptanzDatei -Regeln $regeln -Pfad $z.Pfad -Sha256 $h
+            if ($r) { $grund = [string]$r.reason; if (-not $grund) { $grund = [string]$r.Reason }; if (-not $grund) { $grund = 'akzeptiert' }; $akzeptiert[([string]$z.Pfad).ToLowerInvariant()] = $true }
+        }
+        $o = [ordered]@{}
+        foreach ($pr in $z.PSObject.Properties) { $o[$pr.Name] = $pr.Value }
+        $o['Sha256'] = $h
+        $o['Akzeptiert'] = $grund
+        $zeilen.Add([pscustomobject]$o)
+    }
+    $offen32 = @($System32 | Where-Object { $_ -and -not $akzeptiert.ContainsKey(([string]$_.Pfad).ToLowerInvariant()) })
+    $offenTr = @($Treiber | Where-Object { $_ -and -not $akzeptiert.ContainsKey(([string]$_.Pfad).ToLowerInvariant()) })
+    $k = $akzeptiert.Count
+    $b = Get-MorpheusSystemdateienBefund -System32 $offen32 -Treiber $offenTr
+    $status = [string]$b.status; $wert = [string]$b.wert; $empf = [string]$b.empfehlung; $note = ''
+    if ($k -gt 0 -and $status -eq 'OK') {
+        $voll = Get-MorpheusSystemdateienBefund -System32 $System32 -Treiber $Treiber
+        $status = 'ACK'; $wert = [string]$voll.wert; $empf = [string]$voll.empfehlung
+        $note = if ($k -eq 1) { '1 Datei akzeptiert (je SHA256)' } else { "$k Dateien akzeptiert (je SHA256)" }
+    }
+    elseif ($k -gt 0) { $wert += "; $k akzeptiert" }
+    [pscustomobject]@{ Tabelle = $zeilen.ToArray(); Status = $status; Wert = $wert; Empfehlung = $empf; Note = $note; Akzeptiert = $k }
+}
+
+function Get-SysSigcheck {
+    if (Test-SysVorabAus) { return $null }
+    if (-not $script:SigcheckCache) {
+        Write-SysFortschritt '    Sigcheck läuft, das dauert 1–3 Minuten …' 'sigcheck64.exe'
+        $cache = [ordered]@{}
+        foreach ($auftrag in 'system32', 'treiber') {
+            try { $cache[$auftrag] = Invoke-MorpheusSysWerkzeug -DataRoot $script:SysDataRoot -Auftrag $auftrag }
+            catch { $cache[$auftrag] = [pscustomobject]@{ ok = $false; fehler = $_.Exception.Message; nichtVertrauenswuerdig = $false; nichtEingerichtet = $false; text = '' } }
+            if (-not $cache[$auftrag].ok) { break }
+        }
+        $script:SigcheckCache = $cache
+    }
+    $teile = [ordered]@{}
+    foreach ($auftrag in 'system32', 'treiber') {
+        $r = Resolve-SysErgebnis $script:SigcheckCache[$auftrag] 'Sigcheck' 'sigcheck'
+        if (-not $r) { return $null }
+        $teile[$auftrag] = @(ConvertFrom-MorpheusSigcheckCsv -Text $r.text)
+    }
+    $teile
+}
+# Selbst eingetragene Spiele-Ordner (nur gelesen; Read-MorpheusSpielordner lässt nur lokale Pfade durch)
+$script:SpielOrdner = @()
+if ($script:SpeicherLib) { try { $script:SpielOrdner = @(Read-MorpheusSpielordner -Datei $SpielOrdnerFile) } catch { } }
 
 # Bekannt harmlose Einträge in Ereignisprotokollen: Muster -> kurze Begründung für den Bericht.
 $script:KnownHarmless = @{
@@ -1211,6 +1409,19 @@ Invoke-Check 'Entwicklermodus und sudo' {
     if ($sudo -eq 3) { Add-Finding INFO $value 'sudo im Modus "inline" ist laut Microsoft der unsicherste; "neues Fenster" genügt meist.' }
     else { Add-Finding INFO $value }
 }
+Invoke-Check 'Systemdateien: Signaturen (Sigcheck)' -NeedsAdmin {
+    $s = Get-SysSigcheck
+    if ($null -eq $s) { return }
+    $b = Get-SysSigcheckBewertung -System32 $s['system32'] -Treiber $s['treiber'] -Regeln $script:AkzeptanzRegeln
+    Add-Table 'Unsignierte Systemdateien (Sigcheck)' @($b.Tabelle)
+    if ($b.Status -eq 'ACK') {
+        # Alle unsignierten Dateien sind je SHA256 akzeptiert: als WARN anlegen und gleich auf ACK setzen (wie die allgemeine Akzeptanz)
+        Add-Finding WARN $b.Wert $b.Empfehlung
+        $f = $script:Findings[$script:Findings.Count - 1]
+        $f.Status = 'ACK'; $f.OriginalStatus = 'WARN'; $f.Note = $b.Note
+    }
+    else { Add-Finding $b.Status $b.Wert $b.Empfehlung }
+}
 
 #endregion
 
@@ -1301,6 +1512,22 @@ Invoke-Check 'Wiederherstellung' -NeedsAdmin {
     if (-not $reOn) { Add-Finding WARN $value 'Wiederherstellungsumgebung einschalten: reagentc /enable.' }
     elseif (-not $rp) { Add-Finding INFO $value 'Systemschutz für C: einschalten: hilfreich vor Treiber- und OC-Experimenten.' }
     else { Add-Finding OK $value }
+}
+
+Invoke-Check 'Datensicherung' {
+    if (-not $script:SicherungLib) { Add-Finding SKIP 'gui\lib\Sicherung.ps1 fehlt'; return }
+    # Get-MorpheusSicherung ermittelt die Adminrechte selbst und reicht sie an das Systemabbild weiter
+    $e = @(Get-MorpheusSicherung)
+    $rows = foreach ($x in $e) {
+        $letzte = ''
+        if ($x.letzteSicherung) { try { $letzte = ([datetime]$x.letzteSicherung).ToString('yyyy-MM-dd HH:mm') } catch { $letzte = '' } }
+        $ziel = [string]$x.ziel
+        if ($x.PSObject.Properties['ordner'] -and @($x.ordner).Count) { $ziel = (@($x.ordner) -join ', ') }
+        [pscustomobject][ordered]@{ Art = [string]$x.art; Gefunden = [bool]$x.gefunden; Aktiv = [bool]$x.aktiv; Ziel = $ziel; LetzteSicherung = $letzte; Hinweis = [string]$x.hinweis }
+    }
+    Add-Table 'Datensicherung' @($rows)
+    $b = Get-MorpheusSicherungBewertung -Eintraege $e
+    Add-Finding $b.status $b.wert $b.empfehlung
 }
 
 #endregion
@@ -1515,6 +1742,23 @@ Invoke-Check 'Autostart-Einträge' {
     else { Add-Finding OK "$activeCount aktive Einträge, alle signiert" }
 }
 
+Invoke-Check 'Autostarts: Signaturen (Autoruns)' -NeedsAdmin {
+    $e = Get-SysAutoruns
+    if ($null -eq $e) { return }
+    $aufgaben = Get-SysAufgaben
+    Add-Table 'Autostarts (Autoruns, ohne Microsoft)' @(Get-MorpheusAutorunsTabelle -Eintraege $e -Aufgaben $aufgaben)
+    $b = Get-MorpheusAutorunsSignaturBefund -Eintraege $e -Aufgaben $aufgaben
+    Add-Finding $b.status $b.wert $b.empfehlung
+}
+
+Invoke-Check 'Autostarts: beschreibbare Pfade (Autoruns)' -NeedsAdmin {
+    # Nicht vertrauenswürdiges Werkzeug nur einmal als Warnung zählen (bei der Signatur-Prüfung)
+    if ($script:Autoruns -and $script:Autoruns.nichtVertrauenswuerdig) { Add-Finding SKIP 'Autoruns nicht ausgeführt (siehe Autostarts: Signaturen)'; return }
+    $e = Get-SysAutoruns
+    if ($null -eq $e) { return }
+    $b = Get-MorpheusAutorunsPfadBefund -Eintraege $e -Aufgaben (Get-SysAufgaben)
+    Add-Finding $b.status $b.wert $b.empfehlung
+}
 Invoke-Check 'Systemnahe Autostarts (Winlogon, IFEO, AppInit)' {
     $issues = @()
     $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
@@ -2096,6 +2340,38 @@ Invoke-Check 'Freier Speicherplatz' {
     else { Add-Finding OK $summary }
 }
 
+if ($SkipSpeicher) {
+    $script:CheckName = 'Größte Speicherverbraucher'
+    Add-Finding SKIP 'Übersprungen (-SkipSpeicher)'
+}
+else {
+    Invoke-Check 'Größte Speicherverbraucher' {
+        if (-not $script:SpeicherLib) { Add-Finding SKIP 'gui\lib\Speicher.ps1 fehlt'; return }
+        $script:Speicher = Get-MorpheusSpeicher -Manuell $script:SpielOrdner -Fortschritt { param($Text) if ($Text -match '^[A-Z]: |^Spiele') { Write-Host "      $Text" -ForegroundColor DarkGray } }
+        $ordnerRows = New-Object System.Collections.Generic.List[object]
+        $dateiRows = New-Object System.Collections.Generic.List[object]
+        $parts = New-Object System.Collections.Generic.List[string]
+        $skipped = 0
+        foreach ($d in @($script:Speicher.laufwerke)) {
+            if ($d.fehler) { $parts.Add("$($d.laufwerk) nicht lesbar"); continue }
+            $skipped += [int]$d.uebersprungen
+            foreach ($o in @($d.ordner)) {
+                $ordnerRows.Add([pscustomobject][ordered]@{ Laufwerk = $d.laufwerk; Pfad = $o.pfad; Groesse = Format-Size ([double]$o.bytes); Bytes = [double]$o.bytes })
+            }
+            foreach ($f in @($d.dateien)) {
+                $dateiRows.Add([pscustomobject][ordered]@{ Laufwerk = $d.laufwerk; Pfad = $f.pfad; Groesse = Format-Size ([double]$f.bytes); Bytes = [double]$f.bytes; Windows = [bool]$f.windows })
+            }
+            $top = @($d.ordner) | Select-Object -First 1
+            if ($top) { $parts.Add("$($d.laufwerk) $($top.pfad) ($(Format-Size ([double]$top.bytes)))") }
+        }
+        Add-Table 'Speicherverbraucher: Ordner' $ordnerRows.ToArray()
+        Add-Table 'Speicherverbraucher: Dateien' $dateiRows.ToArray()
+        $value = $parts -join '; '
+        if ($skipped -gt 0) { $value += " ($skipped Ordner ohne Zugriff übersprungen)" }
+        Add-Finding INFO $value 'Die größten Ordner und Dateien je Laufwerk stehen in der GUI beim Laufwerk in der Statusleiste und im Anhang. Systemdateien wie pagefile.sys nicht löschen.'
+    }
+}
+
 Invoke-Check 'TRIM und Laufwerksoptimierung' {
     $out = (Invoke-Native fsutil.exe @('behavior', 'query', 'DisableDeleteNotify')) -join ' '
     $trim = if ($out -match 'NTFS DisableDeleteNotify\s*=\s*(\d)') { [int]$Matches[1] } else { $null }
@@ -2317,6 +2593,27 @@ Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
 }
 
 Invoke-Check 'Spielebibliotheken' {
+    # Tabelle der installierten Spiele zuerst, damit die frühen return der bisherigen Auswertung sie nicht verhindern
+    $spiele = @()
+    if ($script:Speicher) { $spiele = @($script:Speicher.spiele) }
+    elseif ($script:SpeicherLib) {
+        try { $spiele = @(Get-MorpheusSpiele -Manuell $script:SpielOrdner) } catch { $spiele = @() }
+    }
+    $spieleRows = foreach ($g in ($spiele | Where-Object { $null -ne $_ } | Sort-Object { [double]$_.bytes } -Descending)) {
+        $zuletzt = ''
+        if ($g.zuletztGespielt) { try { $zuletzt = ([datetime]$g.zuletztGespielt).ToString('yyyy-MM-dd HH:mm') } catch { $zuletzt = '' } }
+        [pscustomobject][ordered]@{
+            Plattform       = [string]$g.plattform
+            Name            = [string]$g.name
+            Laufwerk        = [string]$g.laufwerk
+            Groesse         = Format-Size ([double]$g.bytes)
+            Bytes           = [double]$g.bytes
+            ZuletztGespielt = $zuletzt
+            Pfad            = [string]$g.pfad
+            Hinweis         = $(if ($g.groesseUnsicher) { 'Größe eingeschränkt lesbar' } else { '' })
+        }
+    }
+    Add-Table 'Installierte Spiele' @($spieleRows)
     $libs = New-Object System.Collections.Generic.List[object]
     $addLib = { param($Launcher, $Path, $Games, $Bytes) if ($Path -and (Test-Path -LiteralPath $Path)) { $libs.Add([pscustomobject]@{ Launcher = $Launcher; Pfad = $Path; Spiele = $Games; Bytes = $Bytes }) } }
     # Steam: libraryfolders.vdf listet alle Bibliotheken, appmanifest_*.acf je Spiel mit Größe
@@ -2687,18 +2984,20 @@ if ($script:Help -and $script:Help.Tipps) {
 
 # Eine Regel greift nur, wenn Prüfung (Wildcards erlaubt) und Muster auf den Befund passen.
 # Ändert sich der Befund (z. B. ein weiteres Programm kommt hinzu), passt das Muster nicht mehr und die Warnung kehrt zurück.
-$acceptRules = @()
-if (Test-Path -LiteralPath $AcceptedFile) {
-    try { $acceptRules = @((Import-PowerShellDataFile -LiteralPath $AcceptedFile).Accepted | Where-Object { $_ }) }
-    catch { Write-Warning "Akzeptanzliste nicht lesbar: $($_.Exception.Message)" }
-}
+# Die Regeln wurden früh eingelesen ($script:AkzeptanzRegeln); Regeln mit Datei gelten nur für Datei-Zeilen (Sigcheck-Prüfung).
+$acceptRules = @($script:AkzeptanzRegeln)
 foreach ($f in $script:Findings) {
     if ($f.Status -notin 'CRIT', 'WARN', 'TIPP', 'INFO') { continue }
     foreach ($r in $acceptRules) {
+        if ($r.Datei) { continue }
         if ($f.Check -notlike $r.Check) { continue }
         if ($r.Match -and $f.Value -notmatch $r.Match) { continue }
-        if ($r.Until -and [datetime]$r.Until -lt (Get-Date).Date) {
-            $f.Note = "Akzeptanz abgelaufen am $($r.Until): $($r.Reason)"
+        # Unlesbares Ablaufdatum (z. B. von Hand '31.12.2027') gilt als abgelaufen: Die Warnung kommt zurück, statt dass die Schleife abbricht
+        $untilDate = $null
+        if ($r.Until) { $tmpDate = [datetime]::MinValue; if ([datetime]::TryParseExact([string]$r.Until, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$tmpDate)) { $untilDate = $tmpDate } else { $untilDate = [datetime]::MinValue } }
+        if ($r.Until -and ($untilDate -lt (Get-Date).Date)) {
+            if ($untilDate -eq [datetime]::MinValue) { $f.Note = "Akzeptanz ignoriert, Ablaufdatum '$($r.Until)' unlesbar (Format JJJJ-MM-TT): $($r.Reason)" }
+            else { $f.Note = "Akzeptanz abgelaufen am $($r.Until): $($r.Reason)" }
             continue
         }
         $f.OriginalStatus = $f.Status
@@ -2772,8 +3071,10 @@ if ($prevFile) {
             'Dienste von Drittanbietern'                       = { "$($_.Name) ($($_.Anzeige))" }
             'Treiber: geladene Drittanbieter-Treiber'          = { "$($_.Name) ($($_.Pfad))" }
             'Autostart-Einträge'                               = { "$($_.Ort): $($_.Name)" }
+            'Autostarts (Autoruns, ohne Microsoft)'            = { "$($_.Kategorie): $($_.Eintrag)" }
             'Geplante Aufgaben (Drittanbieter und auffällige)' = { $_.Aufgabe }
             'Firewall: eigene Eingangsregeln (Zulassen)'       = { "$($_.Name) ($(if ($_.Programm) { $_.Programm } else { 'ohne Programm' }))" }
+            'Unsignierte Systemdateien (Sigcheck)'             = { "$($_.Ordner): $($_.Datei)" }
             'Installierte Programme'                           = { "$($_.Name) $($_.Version)".Trim() }
             'Browser-Erweiterungen'                            = { "$($_.Browser): $($_.Name)" }
             'Lokale Benutzerkonten'                            = { $_.Name }
@@ -2927,6 +3228,7 @@ $md.ToString() | Out-File -LiteralPath $mdPath -Encoding utf8
     Changes  = $changes
     Data     = $script:Tables
     DataChecks = $script:TableChecks
+    Speicher = $script:Speicher
 } | ConvertTo-Json -Depth 6 | Out-File -LiteralPath $jsonPath -Encoding utf8
 
 Write-Host ''

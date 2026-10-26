@@ -84,6 +84,16 @@ try {
     if ($SafetyLib) { $safetyPath = (Resolve-Path -LiteralPath $SafetyLib).Path }
     if (Test-Path -LiteralPath $safetyPath -PathType Leaf) { . $safetyPath }
     else { Write-Host 'Hinweis: gui\lib\Safety.ps1 fehlt, Änderungen sind noch nicht verfügbar.' -ForegroundColor Yellow }
+    $defenderPath = Join-Path $Root 'gui\lib\Defender.ps1'
+    if (Test-Path -LiteralPath $defenderPath -PathType Leaf) { . $defenderPath }
+    else { Write-Host 'Hinweis: gui\lib\Defender.ps1 fehlt, die Defender-Werkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
+    $sysPath = Join-Path $Root 'gui\lib\Sysinternals.ps1'
+    if (Test-Path -LiteralPath $sysPath -PathType Leaf) { . $sysPath }
+    else { Write-Host 'Hinweis: gui\lib\Sysinternals.ps1 fehlt, die Sysinternals-Werkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
+
+    $akzPath = Join-Path $Root 'gui\lib\Akzeptanz.ps1'
+    if (Test-Path -LiteralPath $akzPath -PathType Leaf) { . $akzPath }
+    else { Write-Host 'Hinweis: gui\lib\Akzeptanz.ps1 fehlt, die Akzeptanzliste ist noch nicht verfügbar.' -ForegroundColor Yellow }
 
     # 3a. Ist der Codeordner gesichert? Nur Administratoren, SYSTEM und TrustedInstaller dürfen Code und Ordner ändern.
     # Sonst könnte ein Programm ohne Adminrechte den Code austauschen, den die GUI hier mit Adminrechten ausführt.
@@ -163,7 +173,7 @@ try {
     $boot = New-GuiSecret
 
     # 5. Server starten
-    Initialize-GuiServer -Root $Root -Port $Port -Token $token -BootCode $boot -SafetyPath $safetyPath -DataRoot $dataRoot -ReadOnly:$roMode -ReadOnlyReason $roReason
+    Initialize-GuiServer -Root $Root -Port $Port -Token $token -BootCode $boot -SafetyPath $safetyPath -DefenderPath $defenderPath -SysinternalsPath $sysPath -DataRoot $dataRoot -ReadOnly:$roMode -ReadOnlyReason $roReason
     $url = "http://127.0.0.1:$Port/#b=$boot"
 
     # 6. Fenster: Edge als App-Fenster mit eigenem Profil, sonst Standardbrowser

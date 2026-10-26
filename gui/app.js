@@ -17,8 +17,8 @@ const NAV = [
   { id: 'uebersicht', label: 'Übersicht', icon: 'home' }, { group: 'Bereiche' },
   { id: 'sicherheit', label: 'Sicherheit', icon: 'shield', badge: true }, { id: 'leistung', label: 'Leistung', icon: 'gauge', badge: true },
   { id: 'gaming', label: 'Gaming', icon: 'pad', badge: true }, { id: 'stabilitaet', label: 'Stabilität', icon: 'pulse', badge: true },
-  { id: 'alle', label: 'Alle Prüfungen', icon: 'list' }, { group: 'Werkzeuge' },
-  { id: 'checkliste', label: 'Checkliste', icon: 'check' }, { id: 'aenderungen', label: 'Änderungen', icon: 'undo' },
+  { id: 'alle', label: 'Alle Prüfungen', icon: 'list' }, { group: 'Verwalten' },
+  { id: 'checkliste', label: 'Checkliste', icon: 'check' }, { id: 'aenderungen', label: 'Änderungen', icon: 'undo' }, { id: 'werkzeuge', label: 'Werkzeuge', icon: 'tool' },
   { id: 'berichte', label: 'Berichte', icon: 'doc' }, { id: 'scan', label: 'Neuer Scan', icon: 'scan' },
   { id: 'rohdaten', label: 'Rohdaten', icon: 'db' }, { id: 'einstellungen', label: 'Einstellungen', icon: 'gear' },
 ];
@@ -30,8 +30,9 @@ const SB_KEY = 'pcCheckStatusbar';
 const S = {
   token: null, session: null, reports: [], cur: null, report: null, findings: [], cache: {},
   actions: [], help: null, checklist: {}, journal: null, view: 'uebersicht', rv: 0,
-  ui: { f: {}, reveal: null }, sel: new Set(), variant: {}, cmp: [], origName: null, scan: null, multiBtns: [],
+  ui: { f: {}, reveal: null, focusSpOrdner: false }, sel: new Set(), variant: {}, cmp: [], origName: null, scan: null, multiBtns: [],
   points: null, live: { state: 'idle', data: null }, sbOn: true,
+  speicher: null, spSrc: '', spApi: null, spPop: null, spJob: null, spOrdner: null, spoMsg: null, spoJob: null,   // Speicherverbraucher (Abschnitt 14.7)
 };
 
 // ---------------------------------------------------------------- DOM-Helfer
@@ -203,6 +204,7 @@ async function loadReportJson(name) {
 async function showReport(name) {
   const r = await loadReportJson(name);
   S.cur = name; S.report = r; S.findings = (r.Findings || []).map(f => ({ ...f, Category: norm(f.Category), Check: norm(f.Check) }));
+  pickSpeicher();
 }
 async function loadReports() {
   const list = await api('/api/reports');
@@ -216,6 +218,7 @@ async function loadAll() {
     loadActions(),
     api('/api/help').then(x => { S.help = x; }, () => { S.help = null; }),
     api('/api/checklist').then(x => { S.checklist = x || {}; }, () => { S.checklist = {}; }),
+    loadSpeicher(),
   ]);
   if (S.reports.length) await showReport(S.reports[0].name);
 }
@@ -243,9 +246,9 @@ const lockTitle = () => readOnly() ? 'Nur-Lesen-Modus: Morpheus läuft nicht aus
 function uiF(view) { return S.ui.f[view] || (S.ui.f[view] = { mode: 'all', term: '' }); }
 
 // ---------------------------------------------------------------- Dialog
-const Dlg = { prev: null, running: false };
+const Dlg = { prev: null, running: false, onEsc: null, onClose: null };
 function dlgOpen(title, body, buttons, opts = {}) {
-  Dlg.running = !!opts.lock;
+  Dlg.running = !!opts.lock; Dlg.onEsc = opts.onEsc || null; Dlg.onClose = opts.onClose || null;
   if (!$('#modal').classList.contains('on')) Dlg.prev = document.activeElement;
   $('#dlg-title').textContent = title;
   $('#dlg-body').replaceChildren(...[].concat(body).filter(Boolean));
@@ -257,12 +260,14 @@ function dlgOpen(title, body, buttons, opts = {}) {
 }
 function dlgClose() {
   const m = $('#modal'); m.classList.remove('on'); m.setAttribute('aria-hidden', 'true'); Dlg.running = false;
+  const cb = Dlg.onClose; Dlg.onClose = null; Dlg.onEsc = null; if (cb) cb();
   if (Dlg.prev && Dlg.prev.isConnected) Dlg.prev.focus();
 }
 document.addEventListener('keydown', e => {
   const m = $('#modal');
   if (!m.classList.contains('on')) return;
-  if (e.key === 'Escape' && !Dlg.running) { e.preventDefault(); dlgClose(); }
+  if (e.key === 'Escape' && Dlg.onEsc) { e.preventDefault(); Dlg.onEsc(); }
+  else if (e.key === 'Escape' && !Dlg.running) { e.preventDefault(); dlgClose(); }
   if (e.key === 'Tab') {
     const f = [...$('#dlg').querySelectorAll('button:not(:disabled),a[href],input,select,textarea,summary')].filter(x => x.offsetParent !== null);
     if (!f.length) return;
@@ -446,13 +451,16 @@ function updateMulti() {
   const n = S.sel.size;
   S.multiBtns.forEach(b => { b.disabled = !n || locked(); b.textContent = `Ausgewählte ausführen (${n})`; });
 }
+/** Akzeptieren am Befund: nur bei angezeigtem Bericht, offenen Status und nicht bei Sigcheck (dort je Datei). */
+const canAccept = f => !!S.cur && ['CRIT', 'WARN', 'TIPP', 'INFO'].includes(f.Status) && norm(f.Check) !== SIG_CHECK;
 function findingRow(f, opts = {}) {
   const m = S.checklist[f.Check];
   const acts = actionsFor(f);
   const note = f.Status === 'ACK' ? `Ursprünglich: ${STATUS_NAME[f.OriginalStatus] || f.OriginalStatus || ''} · ${f.Note || ''}` : f.Note;
-  const todo = isOpen(f) ? h('div', { class: 'todo' },
-    h('button', { type: 'button', class: m && m.state === 'done' ? 'on' : '', 'data-mark': 'done', title: 'Als erledigt markieren; der nächste Lauf zeigt, ob es wirklich behoben ist', text: '✔ erledigt', onclick: () => toggleMark(f.Check, 'done') }),
-    h('button', { type: 'button', class: m && m.state === 'later' ? 'on' : '', 'data-mark': 'later', title: 'Für später vormerken', text: '⏱ später', onclick: () => toggleMark(f.Check, 'later') })) : null;
+  const todo = (isOpen(f) || canAccept(f)) ? h('div', { class: 'todo' },
+    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'done' ? 'on' : '', 'data-mark': 'done', title: 'Als erledigt markieren; der nächste Lauf zeigt, ob es wirklich behoben ist', text: '✔ erledigt', onclick: () => toggleMark(f.Check, 'done') }),
+    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'later' ? 'on' : '', 'data-mark': 'later', title: 'Für später vormerken', text: '⏱ später', onclick: () => toggleMark(f.Check, 'later') }),
+    canAccept(f) ? h('button', { type: 'button', 'data-mark': 'acc', title: readOnly() ? lockTitle() : 'Diesen Befund in die Akzeptanzliste aufnehmen', disabled: readOnly(), text: 'Akzeptieren …', onclick: () => openAkzeptieren({ art: 'befund', check: f.Check }) }) : null) : null;
   const lvl = levelsNode(f.Benefit, f.Effort, f.Risk);
   const tbls = tablesFor(f.Check);
   const dataBtn = tbls.length ? h('button', { type: 'button', class: 'btn sm ghost data-link', title: 'Die Detailtabelle(n) zu dieser Prüfung im Anhang (Rohdaten) öffnen', text: `📋 Daten ansehen${tbls.length > 1 ? ` (${tbls.length})` : ''}`, onclick: () => openRaw(tbls) }) : null;
@@ -465,9 +473,31 @@ function findingRow(f, opts = {}) {
     h('p', { class: 'fval', text: f.Value }),
     note ? h('div', { class: 'fnote', text: note }) : null,
     f.Recommendation ? h('div', { class: 'frec', text: f.Recommendation }) : null,
+    defenderTool(f),
+    sysTool(f),
     lvl ? h('div', { class: 'lvwrap' }, lvl) : null,
     howTo(f),
     acts.map(actionCard));
+}
+const DEF_FIND = { 'Defender: Signaturen': ['signaturen', 'Signaturen aktualisieren'], 'Defender: Scans': ['schnellscan', 'Schnellscan starten'] };
+/** Knopf am Befund „Defender: Signaturen“ / „Defender: Scans“ (nur bei offenem Befund), startet dieselbe Aufgabe wie unter „Werkzeuge“. */
+function defenderTool(f) {
+  const d = DEF_FIND[norm(f.Check)];
+  if (!d || f.Status === 'OK' || f.Status === 'ACK' || f.Status === 'SKIP') return null;
+  return h('div', { class: 'deftool' },
+    h('button', { type: 'button', class: 'sm primary', disabled: readOnly(), title: readOnly() ? lockTitle() : null, text: d[1], onclick: () => startDefender(d[0]) }),
+    h('a', { href: '#/werkzeuge', text: 'Alle Defender-Werkzeuge →' }));
+}
+const SYS_FIND = new Set(['Autostarts: Signaturen (Autoruns)', 'Autostarts: beschreibbare Pfade (Autoruns)', 'Systemdateien: Signaturen (Sigcheck)']);
+/** Link am Sysinternals-Befund zur Karte unter „Werkzeuge“, nur wenn dort etwas zu tun ist (nicht eingerichtet bzw. Werkzeug nicht vertrauenswürdig). */
+function sysTool(f) {
+  if (!SYS_FIND.has(norm(f.Check))) return null;
+  const v = String(f.Value || '');
+  let text = null;
+  if (f.Status === 'SKIP' && v.startsWith('Sysinternals nicht eingerichtet')) text = 'Sysinternals einrichten →';
+  else if (f.Status === 'WARN' && v.includes('nicht ausgeführt')) text = 'Werkzeuge neu herunterladen →';
+  if (!text) return null;
+  return h('div', { class: 'deftool' }, h('a', { href: '#/werkzeuge', text }));
 }
 function toggleMark(check, state) {
   const m = S.checklist[check];
@@ -501,14 +531,32 @@ function safetyBanner() {
   }
   return null;
 }
-function tableFrom(rows, max = 300) {
+const MONO_COL = /^(Pfad|Path|Image Path|Launch String|Befehl\w*|Ort|Datei(?:name|pfad)?|Sha256)$|(^|[\s_-])(Pfad|Path|Befehl|Ort|Datei|Dateiname|Sha256)($|[\s_-])/i;
+const accLocal = new Set();   // lokal als „akzeptiert (ab nächstem Scan)“ markierte Sigcheck-Dateien (Pfad klein)
+const SIG_TABLE = 'Unsignierte Systemdateien (Sigcheck)', SIG_CHECK = 'Systemdateien: Signaturen (Sigcheck)';
+const cellText = v => v == null ? '' : (typeof v === 'boolean' ? (v ? 'Ja' : 'Nein') : (typeof v === 'object' ? JSON.stringify(v) : v));
+function tableFrom(rows, max = 300, name = '') {
   rows = (rows || []).filter(r => r != null);
   if (!rows.length) return h('p', { class: 'muted', text: 'Keine Einträge.' });
   const cols = Object.keys(rows[0]);
-  const t = h('div', { class: 'tablewrap' }, h('table', null,
-    h('thead', null, h('tr', null, cols.map(c => h('th', { text: c })))),
-    h('tbody', null, rows.slice(0, max).map(r => h('tr', null, cols.map(c => h('td', { text: r[c] == null ? '' : (typeof r[c] === 'object' ? JSON.stringify(r[c]) : r[c]) })))))));
+  const sig = norm(name) === SIG_TABLE && !!S.cur;
+  const t = h('div', { class: 'tbl-scroll' }, h('table', null,
+    h('thead', null, h('tr', null, cols.map(c => h('th', { text: c })), sig ? h('th', { text: 'Aktionen' }) : null)),
+    h('tbody', null, rows.slice(0, max).map(r => { const cell = sig ? h('td') : null; if (cell) cell.append(sigActions(r, cell)); return h('tr', null, cols.map(c => h('td', { class: MONO_COL.test(c) ? 'mono' : null, text: cellText(r[c]) })), cell); }))));
   return rows.length > max ? h('div', null, t, h('p', { class: 'muted', text: `… ${rows.length - max} weitere Einträge im JSON-Bericht.` })) : t;
+}
+/** Aktionen je Zeile der Sigcheck-Tabelle (Vertrag 16.5). */
+function sigActions(r, cell) {
+  const ro = readOnly(), tt = ro ? lockTitle() : null, pfad = String(r.Pfad || ''), sha = String(r.Sha256 || '');
+  const okHash = /^[0-9a-fA-F]{64}$/.test(sha), acc = String(r.Akzeptiert || ''), lokal = accLocal.has(pfad.toLowerCase());
+  if (!okHash) return h('div', { class: 'row-acts' }, acc ? [h('span', { class: 'chip OK', title: acc, text: 'akzeptiert' }), ' '] : null, h('span', { class: 'muted', text: 'Für diese Zeile neu scannen (der Bericht enthält keinen Hash).' }));
+  return h('div', { class: 'row-acts' },
+    h('button', { type: 'button', class: 'sm', disabled: ro, title: tt, text: 'Mit Defender prüfen', onclick: () => startDefenderDatei(pfad) }), ' ',
+    acc ? h('span', { class: 'chip OK', title: acc, text: 'akzeptiert' })
+      : lokal ? h('span', { class: 'chip OK', text: 'akzeptiert (ab nächstem Scan)' })
+      : h('button', { type: 'button', class: 'sm', disabled: ro, title: tt, text: 'Akzeptieren …', onclick: () => openAkzeptieren({ art: 'datei', pfad, sha256: sha, onDone: () => { accLocal.add(pfad.toLowerCase()); if (cell && cell.isConnected) cell.replaceChildren(sigActions(r, cell)); } }) }), ' ',
+    okHash ? h('a', { href: 'https://www.virustotal.com/gui/file/' + sha.toLowerCase(), target: '_blank', rel: 'noopener noreferrer', title: 'Öffnet deinen Browser; dabei geht nur der Hash an VirusTotal.', text: 'VirusTotal ↗' }) : null, ' ',
+    okHash ? h('button', { type: 'button', class: 'sm ghost', text: 'Hash kopieren', onclick: e => copyText(sha, e.currentTarget) }) : null);
 }
 function noReport() {
   return h('div', { class: 'card' }, h('h2', { text: 'Noch kein Bericht vorhanden' }), h('p', null, 'Starte unter ', h('a', { href: '#/scan', text: 'Neuer Scan' }), ' die erste Prüfung.'));
@@ -921,24 +969,24 @@ V.scan = () => {
   const sc = S.scan;
   const profil = h('select', { id: 'sc-profil', 'aria-label': 'Profil' }, [['Auto', 'Automatisch'], ['Gaming', 'Gaming'], ['Office', 'Office'], ['Laptop', 'Laptop']].map(([v, l]) => h('option', { value: v, text: l })));
   const days = h('select', { id: 'sc-days', 'aria-label': 'Zeitraum' }, [7, 14, 30, 60, 90].map(d => h('option', { value: String(d), selected: d === 14, text: `${d} Tage` })));
-  const upd = h('input', { type: 'checkbox', checked: true }), wg = h('input', { type: 'checkbox', checked: true });
-  const log = h('pre', { class: 'log', id: 'scanlog', style: 'height:260px;max-height:none', 'aria-live': 'polite', text: sc ? sc.lines.join('\n') : 'Bereit. Der Scan ändert nichts am System (ca. 2–5 Minuten).' });
-  const btn = h('button', { type: 'button', class: 'primary', text: 'Scan starten', disabled: !!(sc && sc.running) || readOnly(), title: readOnly() ? lockTitle() : null, onclick: startScan });
+  const upd = h('input', { type: 'checkbox', checked: true }), wg = h('input', { type: 'checkbox', checked: true }), nsp = h('input', { type: 'checkbox' }), nsi = h('input', { type: 'checkbox' });
+  const log = h('pre', { class: 'log scanlog', id: 'scanlog', 'aria-live': 'polite', text: sc ? sc.lines.join('\n') : 'Bereit. Der Scan ändert nichts am System (ca. 2–5 Minuten).' });
+  const btn = h('button', { type: 'button', class: 'btn brand', text: 'Scan starten', disabled: !!(sc && sc.running) || readOnly(), title: readOnly() ? lockTitle() : null, onclick: startScan });
   const msg = h('div', { id: 'scanmsg' });
   function startScan() {
     const d = parseInt(days.value, 10);
     if (!(d >= 1 && d <= 90)) return;
     S.scan = { running: true, lines: [], done: false };
     log.textContent = ''; btn.disabled = true; msg.replaceChildren();
-    runScan({ profil: profil.value, eventDays: d, skipWinget: !wg.checked, skipUpdateSearch: !upd.checked });
+    runScan({ profil: profil.value, eventDays: d, skipWinget: !wg.checked, skipUpdateSearch: !upd.checked, skipSpeicher: nsp.checked, skipSysinternals: nsi.checked });
   }
   S.scanUi = { log, btn, msg };
   if (sc && sc.msg) msg.replaceChildren(sc.msg);
   log.scrollTop = log.scrollHeight;
-  return h('section', null, h('h1', { text: 'Neuer Scan' }), h('p', { class: 'sub', text: 'Der Scan ist rein lesend. Danach erscheint der neue Bericht automatisch als aktueller Bericht.' }),
+  return h('section', { class: 'noaccent' }, h('h1', { text: 'Neuer Scan' }), h('p', { class: 'sub', text: 'Der Scan ist rein lesend. Danach erscheint der neue Bericht automatisch als aktueller Bericht.' }),
     h('div', { class: 'card' }, h('div', { class: 'toolbar' },
       h('label', null, 'Profil ', profil), h('label', null, 'Zeitraum ', days),
-      h('label', null, upd, ' Windows-Update-Suche'), h('label', null, wg, ' winget-Prüfung'), btn), log, msg));
+      h('label', null, upd, ' Windows-Update-Suche'), h('label', null, wg, ' winget-Prüfung'), h('label', null, nsp, ' Speicherverbraucher nicht berechnen (spart 1–2 Minuten)'), h('label', null, nsi, ' Sysinternals-Prüfungen überspringen'), btn), log, msg));
 };
 async function runScan(body) {
   const ui = () => { const u = S.scanUi; return u && u.log.isConnected ? u : null; };
@@ -950,6 +998,7 @@ async function runScan(body) {
     if (job.status === 'done') {
       await loadReports();
       if (S.reports.length) await showReport(S.reports[0].name);
+      await loadSpeicher();
       S.scan.msg = banner('info', 'doc', h('b', { text: 'Scan fertig. ' }), 'Der neue Bericht wird jetzt angezeigt. ', h('a', { href: '#/uebersicht', text: 'Zur Übersicht →' }));
       toast('Scan fertig: neuer Bericht geladen');
     } else S.scan.msg = h('p', { class: 'rem', text: (job.ergebnis && job.ergebnis.error) || 'Der Scan ist fehlgeschlagen.' });
@@ -981,8 +1030,8 @@ V.rohdaten = () => {
       const rows = D[t] || [], body = h('div');
       const d = h('details', { class: 'raw' }, h('summary', null, t, h('span', { class: 'muted', text: ` (${rows.length})` }),
         dc[t] ? h('span', { class: 'muted', text: ` · Prüfung „${dc[t]}“` }) : null), body);
-      d.addEventListener('toggle', () => { if (d.open && !body.firstChild) body.append(tableFrom(rows)); });
-      if (want.includes(t)) { d.open = true; body.append(tableFrom(rows)); d.classList.add('flash'); if (!first) first = d; }
+      d.addEventListener('toggle', () => { if (d.open && !body.firstChild) body.append(tableFrom(rows, 300, t)); });
+      if (want.includes(t)) { d.open = true; body.append(tableFrom(rows, 300, t)); d.classList.add('flash'); if (!first) first = d; }
       return d;
     }));
   if (first) setTimeout(() => first.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
@@ -991,6 +1040,7 @@ V.rohdaten = () => {
 V.einstellungen = () => {
   const m = (S.report && S.report.Meta) || {}, s = safety();
   const acc = S.findings.filter(f => f.Status === 'ACK');
+  const akzBody = h('div'); loadAkzeptanz(akzBody);
   return h('section', null, h('h1', { text: 'Einstellungen' }), h('p', { class: 'sub', text: 'Erst nur zur Ansicht. Profil und Zeitraum wählst du beim Scan.' }),
     h('div', { class: 'card' }, h('table', null, h('tbody', null,
       h('tr', null, h('td', { text: 'Profil (letzter Bericht)' }), h('td', { text: m.Profil || '–' })),
@@ -998,9 +1048,482 @@ V.einstellungen = () => {
       h('tr', null, h('td', { text: 'Computerschutz' }), h('td', null, s.schutzAn === false ? h('span', { class: 'rem', text: 'aus' }) : h('span', { class: 'ok', text: `an${s.laufwerk ? ' (' + s.laufwerk + ')' : ''}` }), ' · 24-h-Sperre ', s.sperre24h ? h('span', { class: 'warn', text: 'aktiv' }) : h('span', { class: 'ok', text: 'aus' }))),
       h('tr', null, h('td', { text: 'Letzter Wiederherstellungspunkt' }), h('td', { text: s.letzterPunkt ? fmtDate(s.letzterPunkt) : '–' })),
       h('tr', null, h('td', { text: 'Morpheus-Version' }), h('td', { text: (S.session && S.session.version) || '' }))))),
+    h('h2', { text: 'Akzeptanzliste' }),
+    h('div', { class: 'card' }, akzBody),
     h('h2', { text: `Akzeptierte Abweichungen (${acc.length})` }),
-    h('div', { class: 'card' }, acc.length ? acc.map(f => findingRow(f, { hint: true })) : h('p', { class: 'muted', text: 'Keine. Einträge stehen in accepted.psd1 (Vorlage: accepted.example.psd1).' })));
+    h('div', { class: 'card' }, acc.length ? acc.map(f => findingRow(f, { hint: true })) : h('p', { class: 'muted', text: 'Keine akzeptierten Abweichungen im angezeigten Bericht.' })));
 };
+
+// ---------------------------------------------------------------- Akzeptanzliste (Vertrag 16.4/16.5)
+const akzErr = e => e.status === 403 ? 'Im Windows-Dialog abgelehnt.' : (e.message || 'Das hat nicht geklappt.');
+function loadAkzeptanz(box) {
+  box.replaceChildren(h('p', { class: 'muted', text: 'Lade …' }));
+  api('/api/akzeptanz').then(d => { if (box.isConnected) box.replaceChildren(akzTable(d || {}, box)); },
+    e => { if (box.isConnected) box.replaceChildren(h('p', { class: 'rem', text: 'Die Akzeptanzliste konnte nicht geladen werden: ' + e.message })); });
+}
+function akzTable(d, box) {
+  const regeln = d.regeln || [], ro = readOnly() || d.bearbeitbar === false;
+  const intro = h('p', { class: 'muted', text: 'Hier stehen alle Regeln, mit denen Befunde oder einzelne Dateien als „akzeptiert“ gelten. Änderungen wirken ab dem nächsten Scan.' });
+  if (!regeln.length) return h('div', null, intro, h('p', { class: 'muted', text: 'Keine Regeln.' }));
+  const rows = regeln.map(r => h('tr', null,
+    h('td', { text: r.check || '' }),
+    h('td', { class: 'mono', text: r.datei || r.match || '' }),
+    h('td', { text: r.reason || '' }),
+    h('td', null, r.until || 'unbegrenzt', r.abgelaufen ? [' ', h('span', { class: 'chip WARN', text: 'abgelaufen' })] : null),
+    h('td', { text: r.quelle === 'gui' ? 'GUI' : 'von Hand' }),
+    h('td', null, h('button', { type: 'button', class: 'sm', disabled: ro, title: ro ? lockTitle() : null, text: 'Zurücknehmen …', onclick: () => akzEntfernen(r, box) }))));
+  return h('div', null, intro, h('div', { class: 'tbl-scroll' }, h('table', null,
+    h('thead', null, h('tr', null, ['Prüfung', 'Datei bzw. Muster', 'Begründung', 'Gilt bis', 'Quelle', ''].map(x => h('th', { text: x })))),
+    h('tbody', null, rows))));
+}
+function akzEntfernen(r, box) {
+  dlgOpen('Regel zurücknehmen', [
+    h('p', null, 'Soll die Regel für „', h('b', { text: r.check || '' }), '“ zurückgenommen werden?'),
+    r.datei ? h('p', { class: 'mono', text: r.datei }) : null,
+    h('p', { class: 'muted', text: 'Begründung: ' + (r.reason || '') }),
+    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung. Der Befund kommt beim nächsten Scan wieder.' })],
+  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Zurücknehmen', danger: true, onClick: async () => {
+    dlgOpen('Regel zurücknehmen', [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Läuft …', disabled: true }], { lock: true });
+    try {
+      await api('/api/akzeptanz/' + encodeURIComponent(r.id) + '/entfernen', { method: 'POST', body: {} });
+      dlgClose(); toast('Regel zurückgenommen'); if (box.isConnected) loadAkzeptanz(box);
+    } catch (e) {
+      dlgOpen('Regel zurücknehmen', [h('p', { class: 'rem', text: akzErr(e) })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    }
+  } }]);
+}
+const pad2 = n => String(n).padStart(2, '0');
+const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;   // lokales Datum
+/** Akzeptieren-Dialog. t = { art:'befund', check } oder { art:'datei', pfad, sha256, onDone } (nur für den angezeigten Bericht). */
+function openAkzeptieren(t) {
+  const datei = t.art === 'datei';
+  const today = new Date(), maxD = new Date(today.getFullYear() + 5, today.getMonth(), today.getDate());
+  const minS = ymd(today), maxS = ymd(maxD);
+  const reason = h('textarea', { rows: 3, maxlength: 300, 'aria-label': 'Begründung', placeholder: 'Warum ist das in Ordnung? (3–300 Zeichen)', style: 'width:100%' });
+  const count = h('span', { class: 'muted', text: '0 / 300' });
+  const bis = h('input', { type: 'date', 'aria-label': 'Gilt bis', min: minS, max: maxS });
+  const msg = h('p', { role: 'alert' });
+  const send = h('button', { type: 'button', class: 'primary', text: 'Akzeptieren' });
+  const close = h('button', { type: 'button', text: 'Abbrechen', onclick: dlgClose });
+  const clean = () => reason.value.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  reason.addEventListener('input', () => { count.textContent = `${clean().length} / 300`; });
+  const fail = text => { msg.className = 'rem'; msg.textContent = text; };
+  send.onclick = async () => {
+    if (Dlg.running) return;
+    const begruendung = clean();
+    if (begruendung.length < 3 || begruendung.length > 300) { fail('Bitte eine Begründung mit 3 bis 300 Zeichen eingeben.'); reason.focus(); return; }
+    if (bis.value && (!/^\d{4}-\d{2}-\d{2}$/.test(bis.value) || bis.value < minS || bis.value > maxS)) { fail('„Gilt bis“ muss zwischen heute und höchstens 5 Jahren in der Zukunft liegen.'); bis.focus(); return; }
+    const body = datei ? { art: 'datei', bericht: S.cur + '.json', pfad: t.pfad, begruendung } : { art: 'befund', bericht: S.cur + '.json', check: t.check, begruendung };
+    if (bis.value) body.bis = bis.value;
+    Dlg.running = true; send.disabled = true; close.disabled = true; reason.disabled = true; bis.disabled = true; send.textContent = 'Warte auf Windows …';
+    msg.className = 'note'; msg.textContent = 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …';
+    try {
+      await api('/api/akzeptanz', { method: 'POST', body });
+      Dlg.running = false;
+      if (t.onDone) t.onDone();
+      dlgOpen('Akzeptiert', [h('p', { class: 'ok', text: 'Die Regel wurde gespeichert.' }), h('p', { text: 'Wirkt ab dem nächsten Scan. Bis dahin zeigt der Bericht den Befund weiter an.' })],
+        [{ label: 'Später', onClick: dlgClose }, { label: 'Neuer Scan', primary: true, onClick: () => { dlgClose(); location.hash = '#/scan'; } }]);
+    } catch (e) {
+      Dlg.running = false;
+      fail(akzErr(e)); send.disabled = false; close.disabled = false; reason.disabled = false; bis.disabled = false; send.textContent = 'Akzeptieren';
+    }
+  };
+  dlgOpen(datei ? 'Datei akzeptieren' : 'Befund akzeptieren', [
+    h('p', null, datei ? 'Datei: ' : 'Prüfung: ', h('b', { class: datei ? 'mono' : null, text: datei ? t.pfad : t.check })),
+    h('p', { class: 'muted', text: datei ? `Gilt nur für genau diese Datei (SHA256 ${t.sha256 || 'unbekannt'}). Ändert sie sich, kommt die Warnung zurück.` : 'Gilt, solange der Befund genau so lautet. Ändert er sich, kommt die Warnung zurück.' }),
+    datei ? null : h('p', { class: 'muted', text: 'Enthält der Befund Zahlen oder Tage (z. B. „vor 15 Tagen“), ändert er sich mit dem nächsten Scan und die Akzeptanz greift dann nicht mehr.' }),
+    h('label', null, 'Begründung (Pflicht) ', count, h('br'), reason),
+    h('label', null, 'Gilt bis (optional) ', bis),
+    msg, h('div', { class: 'note', text: 'Windows fragt danach in einem eigenen Fenster nach deiner Bestätigung.' })],
+  []);
+  $('#dlg-buttons').replaceChildren(close, send); reason.focus();
+}
+// Defender-Einzelscan einer Datei aus der Sigcheck-Tabelle
+function startDefenderDatei(pfad) {
+  const title = 'Datei mit Defender prüfen';
+  dlgOpen(title, [
+    h('p', null, 'Microsoft Defender prüft diese Datei auf Schadsoftware:'), h('p', { class: 'mono', text: pfad }),
+    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung. Defender prüft die Datei. Findet er etwas, wendet er seine üblichen Maßnahmen an (z. B. Quarantäne) – bei Treibern kann das Folgen haben. Morpheus zeigt das Ergebnis an.' })],
+  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Starten', primary: true, onClick: () => runDefenderDatei(pfad, title) }]);
+}
+async function runDefenderDatei(pfad, title) {
+  const jv = jobView([['Windows-Bestätigung', /bestätig/i], ['Datei prüfen', /prüf|scan/i], ['Funde lesen', /funde/i]]);
+  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  let job = null, err = null;
+  try {
+    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    const r = await api('/api/defender/datei', { method: 'POST', body: { bericht: S.cur + '.json', pfad } });
+    job = await followJob(r.jobId, jv.lines);
+  } catch (e) { err = e; }
+  const ok = !err && !!job && job.status === 'done', res = job && job.ergebnis;
+  jv.finish(ok);
+  const body = [...jv.nodes];
+  if (err) body.push(h('p', { class: 'rem', text: err.message }));
+  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else {
+    const funde = [].concat((res && res.funde) || []).filter(Boolean);
+    body.push(h('h3', { text: 'Ergebnis' }), h('p', { class: 'mono', text: pfad }),
+      funde.length ? h('ul', { class: 'result' }, funde.map(f => h('li', null, h('b', { text: f.name || 'Unbekannter Fund' }), ' ', h('span', { class: 'muted', text: f.zeit ? fmtDate(f.zeit) : '' }), ' ', h('span', { class: f.erfolg === false ? 'rem' : 'warn', text: f.aktion || '' }), f.frueher ? [' ', h('span', { class: 'chip INFO', text: 'früher erkannt' })] : null, f.dateien ? h('div', { class: 'note', text: f.dateien }) : null)))
+        : h('p', { class: 'ok', text: 'Keine Funde.' }),
+      res && res.meldung ? h('p', { text: res.meldung }) : null);
+  }
+  dlgOpen(title, body, [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  Dlg.running = false;
+}
+
+// ---------------------------------------------------------------- Ansicht: Werkzeuge (Microsoft Defender)
+const ageText = n => n == null || isNaN(n) ? '' : (Number(n) === 0 ? 'heute' : Number(n) === 1 ? 'vor 1 Tag' : `vor ${n} Tagen`);
+const fmtDur = s => s == null || isNaN(s) ? '' : (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`);
+const onOff = v => v === true || /^(true|an|ein)$/i.test(String(v)) ? ['an', 'ok'] : (v === false || /^(false|aus)$/i.test(String(v)) ? ['aus', 'rem'] : ['unbekannt', 'muted']);
+function defBody(d) {
+  const st = d.stand || {}, running = !!d.laufend, lock = readOnly(), dis = lock || running;
+  const tt = lock ? lockTitle() : (running ? 'Es läuft schon eine Defender-Aufgabe.' : null);
+  const [rtText, rtCls] = onOff(st.echtzeit);
+  const row = (label, ...kids) => h('tr', null, h('td', { class: 'muted', text: label }), h('td', null, ...kids));
+  const info = st.fehler ? h('p', { class: 'rem', text: 'Der Defender-Stand ist nicht lesbar: ' + st.fehler })
+    : h('div', { class: 'tablewrap' }, h('table', null, h('tbody', null,
+      row('Signaturen', st.signaturen ? fmtDate(st.signaturen) : '–', st.signaturVersion ? ` · Version ${st.signaturVersion}` : '', st.signaturAlterTage != null ? h('span', { class: Number(st.signaturAlterTage) > 3 ? 'warn' : 'muted', text: ` · ${ageText(st.signaturAlterTage)}` }) : null),
+      row('Letzter Schnellscan', st.schnellscan ? fmtDate(st.schnellscan) : 'noch nie', st.schnellscan && st.schnellscanAlterTage != null ? h('span', { class: 'muted', text: ` · ${ageText(st.schnellscanAlterTage)}` }) : null),
+      row('Echtzeitschutz', h('span', { class: rtCls, text: rtText })),
+      st.modus ? row('Modus', String(st.modus)) : null)));
+  return [info,
+    running ? h('p', { class: 'warn', text: 'Es läuft schon eine Defender-Aufgabe. Warte, bis sie fertig ist.' }) : null,
+    h('div', { class: 'toolbar' },
+      h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: 'Signaturen aktualisieren', onclick: () => startDefender('signaturen') }),
+      h('button', { type: 'button', class: '', disabled: dis, title: tt, text: 'Schnellscan starten', onclick: () => startDefender('schnellscan') }),
+      h('button', { type: 'button', class: 'danger', disabled: dis, title: tt, text: 'Offline-Scan …', onclick: startOffline }),
+      running ? h('button', { type: 'button', class: 'sm ghost', text: 'Anzeige aktualisieren', onclick: refreshView }) : null),
+    h('p', { class: 'note', text: 'Funde zeigt Morpheus nur an. Quarantäne und Entfernen machst du in Windows-Sicherheit (Viren- & Bedrohungsschutz > Schutzverlauf). Einen Vollscan startet Morpheus nicht: Er dauert Stunden und läuft besser über Windows-Sicherheit.' })];
+}
+V.werkzeuge = () => {
+  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const token = S.rv;
+  api('/api/defender').then(d => {
+    if (token !== S.rv) return;
+    body.replaceChildren(...defBody(d || {}).filter(Boolean));
+    const o = d && d.offline;
+    if (o && o.status === 'countdown' && !$('#modal').classList.contains('on')) openCountdown(o);
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Der Defender-Stand konnte nicht geladen werden: ' + e.message })); });
+  return h('section', null, h('h1', { text: 'Werkzeuge' }), h('p', { class: 'sub', text: 'Kleine Helfer für den PC. Sie starten nur, wenn du es auslöst, und fragen vorher in Windows nach.' }),
+    readOnly() ? safetyBanner() : null,
+    h('div', { class: 'card' }, h('h2', { text: 'Microsoft Defender' }), body),
+    sysCard(),
+    spOrdnerCard(),
+    h('div', { class: 'card muted' }, 'Hier kommt in Version 2.4 die Aktualisierung von Programmen (winget) dazu.'));
+};
+
+// Eigene Spiele-Ordner (Abschnitt 14.8). Entwurf in S.spOrdner: [{ plattform, pfad }], bleibt beim Neuzeichnen erhalten.
+const SP_PLATT = ['Steam', 'Epic', 'GOG', 'EA', 'Ubisoft', 'Xbox', 'Andere'];
+function gotoSpOrdner() {
+  closeSpPop(false);
+  S.ui.focusSpOrdner = true;
+  if (location.hash === '#/werkzeuge') renderView(true); else location.hash = '#/werkzeuge';
+}
+function spOrdnerCard() {
+  const ro = readOnly(), tt = ro ? lockTitle() : null;
+  const card = h('div', { class: 'card', id: 'spo-card' });
+  const token = S.rv;
+  const draw = () => {
+    if (token !== S.rv) return;
+    const busy = !!S.spoJob, dis = ro || busy;
+    const list = S.spOrdner;
+    const kids = [h('h2', { text: 'Spiele-Ordner' }),
+      h('p', { class: 'note', text: 'Findet Morpheus eine Spielebibliothek nicht, trag den Ordner hier ein. Gemeint ist ein Ordner, in dem jeder Unterordner ein Spiel ist, z. B. F:\\Games. Pfad im Explorer aus der Adressleiste kopieren und einfügen.' })];
+    if (!list) {
+      kids.push(S.spoMsg && S.spoMsg.err ? h('p', { class: 'rem', text: S.spoMsg.err }) : h('p', { class: 'muted', text: 'Lädt …' }));
+    } else {
+      list.forEach((e, i) => {
+        kids.push(h('div', { class: 'spo-row' },
+          h('select', { 'aria-label': 'Plattform', disabled: dis, title: tt, onchange: ev => { e.plattform = ev.target.value; } },
+            SP_PLATT.map(p => h('option', { value: p, text: p, selected: p === e.plattform }))),
+          h('input', { type: 'text', 'aria-label': 'Ordnerpfad', placeholder: 'z. B. G:\\Games', spellcheck: 'false', autocomplete: 'off', maxlength: '260', value: e.pfad || '', disabled: dis, title: tt, oninput: ev => { e.pfad = ev.target.value; } }),
+          h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: 'Entfernen', onclick: () => { list.splice(i, 1); draw(); } })));
+      });
+      if (!list.length) kids.push(h('p', { class: 'muted', text: 'Noch keine eigenen Ordner eingetragen.' }));
+      kids.push(h('div', { class: 'toolbar' },
+        h('button', { type: 'button', class: '', disabled: dis || list.length >= 50, title: tt, text: 'Ordner hinzufügen', onclick: () => { list.push({ plattform: 'Andere', pfad: '' }); draw(); } }),
+        h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: 'Speichern', onclick: save })));
+      const m = S.spoMsg;
+      if (m && m.err) kids.push(h('p', { class: 'rem', role: 'alert', text: m.err }));
+      if (m && m.saved) kids.push(h('div', { class: 'toolbar' },
+        h('span', { class: 'note', text: 'Gespeichert. Die Spiele erscheinen nach dem nächsten Neuberechnen bzw. Scan.' }),
+        h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: 'Jetzt neu berechnen', onclick: recalc })));
+      if (busy) kids.push(h('div', { class: 'note', 'aria-live': 'polite', text: S.spoJob.line }));
+    }
+    card.replaceChildren(...kids);
+  };
+  const save = async () => {
+    if (ro || S.spoJob) return;
+    const eintraege = S.spOrdner.map(e => ({ plattform: e.plattform, pfad: String(e.pfad || '').trim() })).filter(e => e.pfad);
+    try {
+      const r = await api('/api/spielordner', { method: 'POST', body: { eintraege } });
+      S.spOrdner = Array.isArray(r) ? r.map(e => ({ plattform: e.plattform, pfad: e.pfad })) : eintraege;
+      S.spoMsg = { saved: true };
+    } catch (e) { S.spoMsg = { err: e.message }; }
+    draw();
+  };
+  const recalc = async () => {
+    if (ro || S.spoJob || S.spJob) return;
+    S.spoJob = { line: 'Wird gestartet …' }; draw();
+    try {
+      await startSpeicherRefresh(l => { if (S.spoJob) { S.spoJob.line = l; draw(); } });
+      toast('Speicherverbraucher neu berechnet');
+    } catch (e) { toast(e.message); }
+    S.spoJob = null; draw();
+  };
+  if (S.spOrdner) draw();
+  else {
+    S.spoMsg = null; draw();
+    api('/api/spielordner').then(d => {
+      S.spOrdner = (Array.isArray(d) ? d : []).map(e => ({ plattform: e.plattform, pfad: e.pfad }));
+      draw();
+    }, e => { S.spoMsg = { err: 'Die Spiele-Ordner konnten nicht geladen werden: ' + e.message }; draw(); });
+  }
+  if (S.ui.focusSpOrdner) {
+    S.ui.focusSpOrdner = false;
+    setTimeout(() => { if (card.isConnected) card.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 50);
+  }
+  return card;
+}
+
+// ---------------------------------------------------------------- Sysinternals (Abschnitt 15)
+const SYS_INFO = { autorunsc: 'Zeigt alle Autostarts: Dienste, Treiber, Aufgaben, Anmeldung.', sigcheck: 'Prüft Signaturen von Systemdateien.' };
+const SYS_TITLE = 'Sysinternals (Microsoft)';
+function sysCard() {
+  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const token = S.rv;
+  const load = () => api('/api/sysinternals').then(d => {
+    if (token !== S.rv) return;
+    S.sys = d || {};
+    const prog = h('p', { class: 'note', 'aria-live': 'polite' });
+    body.replaceChildren(...sysBody(S.sys, prog).filter(Boolean));
+    if (S.sys.laufend && !S.sys.fehler) {
+      followJob(S.sys.laufend, l => { if (token === S.rv && l.length) prog.textContent = l[l.length - 1]; }).then(() => { if (token === S.rv) load(); }, () => { /* Anzeige bleibt */ });
+    }
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Der Sysinternals-Stand konnte nicht geladen werden: ' + e.message })); });
+  load();
+  return h('div', { class: 'card', id: 'sys-card' }, h('h2', { text: SYS_TITLE }), body);
+}
+function sysBody(d, prog) {
+  if (d.fehler) return [h('p', { class: 'rem', text: 'Der Sysinternals-Stand ist nicht lesbar: ' + d.fehler })];
+  const ro = readOnly(), running = !!d.laufend, dis = ro || running;
+  const tt = ro ? lockTitle() : (running ? 'Es läuft schon ein Sysinternals-Vorgang.' : null);
+  const ws = Array.isArray(d.werkzeuge) ? d.werkzeuge : [];
+  const da = ws.some(w => w.vorhanden);
+  const z = d.zustimmung || {};
+  const state = w => {
+    if (w.vorhanden && w.geprueft) return h('span', { class: 'ok', text: `✓ Signiert von ${w.signierer || 'Microsoft Corporation'}${w.version ? ' · Version ' + w.version : ''}${w.geladen ? ' · geladen am ' + fmtDate(w.geladen) : ''}` });
+    if (w.vorhanden) return h('span', { class: 'rem', text: '✗ ' + (w.grund || 'Die Prüfung ist fehlgeschlagen.') });
+    return h('span', { class: 'muted', text: 'nicht eingerichtet' });
+  };
+  const row = w => h('tr', null,
+    h('td', null, h('b', { text: w.titel || w.name }), h('div', { class: 'note', text: SYS_INFO[w.name] || '' })),
+    h('td', null, state(w)));
+  return [
+    h('p', { class: 'note', text: 'Kostenlose Werkzeuge von Microsoft. Morpheus lädt sie nur auf deinen Klick und prüft vor jedem Start die Microsoft-Signatur.' }),
+    ws.length ? h('div', { class: 'tablewrap' }, h('table', null, h('tbody', null, ws.map(row)))) : h('p', { class: 'muted', text: 'Keine Angaben zu den Werkzeugen.' }),
+    h('p', { class: z.akzeptiert ? 'note' : 'muted', text: z.akzeptiert ? `Lizenz angenommen am ${z.zeit ? fmtDate(z.zeit) : '?'}${z.benutzer ? ' (' + z.benutzer + ')' : ''}.` : 'Lizenz noch nicht angenommen.' }),
+    running ? h('p', { class: 'warn', text: 'Es läuft schon ein Sysinternals-Vorgang. Warte, bis er fertig ist.' }) : null,
+    running ? prog : null,
+    ro ? h('p', { class: 'note', text: lockTitle() }) : null,
+    h('div', { class: 'toolbar' },
+      h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: da ? 'Neu herunterladen …' : 'Herunterladen …', onclick: () => sysInstallDlg(d) }),
+      da ? h('button', { type: 'button', class: '', text: 'Lizenztext', onclick: () => sysEulaDlg(ws) }) : null,
+      (da || z.akzeptiert) ? h('button', { type: 'button', class: 'danger', disabled: dis, title: tt, text: da ? 'Entfernen …' : 'Zustimmung zurücknehmen …', onclick: () => sysRemoveDlg() }) : null,
+      running ? h('button', { type: 'button', class: 'sm ghost', text: 'Anzeige aktualisieren', onclick: refreshView }) : null),
+    h('p', { class: 'note', text: 'Die Ergebnisse erscheinen nach dem nächsten Scan unter Sicherheit (Autostart & Persistenz, Systemhärtung).' })];
+}
+/** Fehlertext für 403/409 verständlich machen. */
+function sysErr(e) {
+  if (e && e.status === 403) return 'Abgelehnt: ' + e.message;
+  if (e && e.status === 409) return 'Es läuft schon ein Sysinternals-Vorgang. ' + e.message;
+  return (e && e.message) || 'Der Vorgang ist fehlgeschlagen.';
+}
+function sysInstallDlg(d) {
+  const url = /^https:\/\//.test(String(d.lizenzUrl || '')) ? d.lizenzUrl : 'https://learn.microsoft.com/sysinternals/license-terms';
+  const ordner = d.ordner || 'C:\\ProgramData\\Morpheus\\tools';
+  const da = (d.werkzeuge || []).some(w => w.vorhanden);
+  const title = da ? 'Sysinternals neu herunterladen' : 'Sysinternals herunterladen';
+  let wb = null;
+  const chk = h('input', { type: 'checkbox', id: 'sys-ok', onchange: () => { if (wb) wb.disabled = !chk.checked; } });
+  dlgOpen(title, [
+    h('p', { text: 'Morpheus lädt Autoruns und Sigcheck herunter. Das passiert:' }),
+    h('ul', null,
+      h('li', { text: 'Quelle: download.sysinternals.com (Microsoft), zusammen ca. 4 MB.' }),
+      h('li', { text: `Ablage: ${ordner} (nur Administratoren dürfen dort schreiben).` }),
+      h('li', { text: 'Vor jedem Start prüft Morpheus die Microsoft-Signatur der Programme. Ein Abgleich mit VirusTotal findet nicht statt.' }),
+      h('li', { text: 'Außer der Download-Anfrage an Microsoft verlassen keine Daten deinen PC.' })),
+    h('h3', { text: 'Lizenz in Kürze' }),
+    h('p', { text: 'Die Werkzeuge sind kostenlos. Du nutzt sie nach den Sysinternals-Lizenzbedingungen von Microsoft. Du darfst die Programme nicht weitergeben oder verkaufen, und es gibt keine Gewähr.' }),
+    h('p', null, h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: 'Lizenzbedingungen lesen' })),
+    h('label', { class: 'chk' }, chk, 'Ich habe die Sysinternals-Lizenzbedingungen gelesen und nehme sie an.'),
+    h('div', { class: 'note', text: 'Windows fragt danach in einem eigenen Fenster nach deiner Bestätigung.' })],
+  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Herunterladen', primary: true, disabled: true, onClick: () => runSysInstall(title) }]);
+  wb = $('#dlg-buttons').lastElementChild;
+}
+async function runSysInstall(title) {
+  const jv = jobView([['Windows-Bestätigung', /bestätig/i], ['Autoruns laden und prüfen', /autoruns/i], ['Sigcheck laden und prüfen', /sigcheck/i]]);
+  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  let job = null, err = null;
+  try {
+    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    const r = await api('/api/sysinternals/install', { method: 'POST', body: { eulaAkzeptiert: true } });
+    job = await followJob(r.jobId, jv.lines);
+  } catch (e) { err = e; }
+  const ok = !err && !!job && job.status === 'done', res = job && job.ergebnis;
+  jv.finish(ok);
+  const body = [...jv.nodes];
+  if (err) body.push(h('p', { class: 'rem', text: sysErr(err) }));
+  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || (job && job.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (res) body.push(sysResult(res));
+  dlgOpen(title, body, [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  Dlg.running = false;
+  if (S.view === 'werkzeuge') refreshView();
+}
+function sysResult(res) {
+  const ws = [].concat(res.werkzeuge || []).filter(Boolean);
+  return h('div', null, h('h3', { text: 'Ergebnis' }),
+    ws.length ? h('ul', { class: 'result' }, ws.map(w => h('li', null, h('b', { text: w.titel || w.name }), ' ',
+      w.vorhanden && w.geprueft ? h('span', { class: 'ok', text: `Signiert von ${w.signierer || 'Microsoft Corporation'}${w.version ? ' · Version ' + w.version : ''}` }) : h('span', { class: 'rem', text: w.grund || 'nicht eingerichtet' })))) : null,
+    res.meldung ? h('p', { text: res.meldung }) : null);
+}
+async function sysEulaDlg(ws) {
+  const names = ws.map(w => ({ name: w.name, titel: w.titel || w.name })).filter(w => w.name);
+  const pre = h('pre', { class: 'log eula', tabindex: '0', 'aria-live': 'polite', text: 'Lädt …' });
+  const tabs = h('div', { class: 'toolbar' });
+  const show = async n => {
+    [...tabs.children].forEach((b, i) => b.classList.toggle('primary', names[i].name === n.name));
+    pre.textContent = 'Lädt …';
+    try {
+      const r = await api('/api/sysinternals/eula?name=' + encodeURIComponent(n.name));
+      pre.textContent = r && typeof r.text === 'string' && r.text ? r.text : 'Lizenztext nicht vorhanden (wird beim Herunterladen mitgeliefert).';
+    } catch (e) { pre.textContent = e.message; }
+  };
+  names.forEach(n => tabs.append(h('button', { type: 'button', class: 'sm', text: n.titel, onclick: () => show(n) })));
+  dlgOpen('Sysinternals-Lizenztext', [tabs, pre], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+  if (names.length) show(names[0]); else pre.textContent = 'Lizenztext nicht vorhanden (wird beim Herunterladen mitgeliefert).';
+}
+function sysRemoveDlg() {
+  dlgOpen('Sysinternals entfernen', [
+    h('p', { text: 'Die Werkzeuge werden gelöscht und die Lizenz-Zustimmung zurückgenommen. Die Sysinternals-Prüfungen im Scan werden dann übersprungen.' }),
+    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung.' })],
+  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Entfernen', danger: true, onClick: goSysRemove }]);
+}
+async function goSysRemove() {
+  const title = 'Sysinternals entfernen';
+  dlgOpen(title, [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Wartet auf Windows …', disabled: true }], { lock: true });
+  try {
+    await api('/api/sysinternals/entfernen', { method: 'POST' });
+    dlgOpen(title, [h('p', { class: 'ok', text: 'Die Werkzeuge wurden entfernt und die Lizenz-Zustimmung zurückgenommen.' })], [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  } catch (e) {
+    dlgOpen(title, [h('p', { class: 'rem', text: sysErr(e) })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+  }
+  Dlg.running = false;
+  if (S.view === 'werkzeuge') refreshView();
+}
+
+// Defender-Aufgabe (Signaturen, Schnellscan): Bestätigung in der GUI, dann Windows-Bestätigung, dann Job
+function startDefender(art) {
+  const sig = art === 'signaturen', title = sig ? 'Signaturen aktualisieren' : 'Schnellscan starten';
+  dlgOpen(title, [
+    h('p', { text: sig ? 'Microsoft Defender lädt die neuesten Virensignaturen und installiert sie. Das dauert meist weniger als eine Minute.' : 'Microsoft Defender prüft die wichtigsten Bereiche deines PCs auf Schadsoftware. Das dauert einige Minuten; du kannst den PC dabei weiter benutzen.' }),
+    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung. Morpheus ändert keine Einstellungen; findet Defender etwas, wendet er seine üblichen Maßnahmen an (z. B. Quarantäne).' })],
+  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Starten', primary: true, onClick: () => runDefender(art, title) }]);
+}
+async function runDefender(art, title) {
+  const jv = jobView([['Windows-Bestätigung', /bestätig/i], ['Stand lesen', /stand vorher/i], [art === 'signaturen' ? 'Signaturen aktualisieren' : 'Schnellscan', /signaturen werden|schnellscan läuft/i], ['Stand prüfen', /stand nachher/i], ['Funde lesen', /funde seit/i]]);
+  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  let job = null, err = null;
+  try {
+    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    const r = await api('/api/defender/run', { method: 'POST', body: { art } });
+    job = await followJob(r.jobId, jv.lines);
+  } catch (e) { err = e; }
+  const ok = !err && !!job && job.status === 'done', res = job && job.ergebnis;
+  jv.finish(ok);
+  const body = [...jv.nodes];
+  if (err) body.push(h('p', { class: 'rem', text: err.message }));
+  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (res) body.push(defResult(res));
+  dlgOpen(title, body, [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  Dlg.running = false;
+  if (S.view === 'werkzeuge') refreshView();
+}
+function defResult(res) {
+  const v = res.vorher || {}, n = res.nachher || {}, funde = [].concat(res.funde || []).filter(Boolean);
+  const cell = (st, k) => st.fehler ? 'nicht lesbar' : (k === 'signaturVersion' ? (st[k] || '–') : (st[k] ? fmtDate(st[k]) : (k === 'schnellscan' ? 'noch nie' : '–')));
+  const row = (label, k) => h('tr', null, h('td', { text: label }), h('td', { text: cell(v, k) }), h('td', { text: cell(n, k) }));
+  return h('div', null, h('h3', { text: 'Ergebnis' }),
+    h('div', { class: 'tablewrap' }, h('table', null, h('thead', null, h('tr', null, ['', 'Vorher', 'Nachher'].map(x => h('th', { text: x })))),
+      h('tbody', null, row('Signaturen vom', 'signaturen'), row('Signaturversion', 'signaturVersion'), row('Letzter Schnellscan', 'schnellscan')))),
+    h('h3', { text: 'Funde' }),
+    funde.length ? h('ul', { class: 'result' }, funde.map(f => h('li', null, h('b', { text: f.name || 'Unbekannter Fund' }), ' ', h('span', { class: 'muted', text: f.zeit ? fmtDate(f.zeit) : '' }), ' ', h('span', { class: f.erfolg === false ? 'rem' : 'warn', text: f.aktion || '' }),
+      f.dateien ? h('div', { class: 'note', text: f.dateien }) : null))) : h('p', { class: 'ok', text: 'Keine Funde.' }),
+    res.meldung ? h('p', { text: res.meldung }) : null,
+    res.dauerSek != null ? h('div', { class: 'note', text: 'Dauer: ' + fmtDur(res.dauerSek) }) : null);
+}
+
+// Offline-Scan: Warnung mit Häkchen, Windows-Bestätigung, dann Countdown (läuft im Server; die GUI zeigt nur an und meldet sich jede Sekunde)
+function startOffline() {
+  let wb = null;
+  const chk = h('input', { type: 'checkbox', id: 'off-ok', onchange: () => { if (wb) wb.disabled = !chk.checked; } });
+  dlgOpen('Microsoft Defender Offline-Scan', [
+    h('p', { class: 'warn', text: 'Der PC startet sofort neu (nach 15 Sekunden Countdown). Der Scan dauert ca. 15 Minuten, danach startet Windows normal. Vorher alle Dateien speichern und Programme schließen.' }),
+    h('label', { class: 'chk' }, chk, 'Ich habe alles gespeichert und verstanden, dass der PC neu startet.')],
+  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Weiter', danger: true, disabled: true, onClick: goOffline }]);
+  wb = $('#dlg-buttons').lastElementChild;
+}
+async function goOffline() {
+  const title = 'Microsoft Defender Offline-Scan';
+  dlgOpen(title, [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Wartet auf Windows …', disabled: true }], { lock: true });
+  try {
+    const st = await api('/api/defender/offline', { method: 'POST', body: { bestaetigt: true } });
+    openCountdown(st);
+  } catch (e) {
+    dlgOpen(title, [h('p', { class: 'rem', text: e.message })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+  }
+}
+function openCountdown(st0) {
+  const title = 'Microsoft Defender Offline-Scan';
+  const ctl = { alive: true, done: false, busy: false, fails: 0 };
+  const num = h('div', { class: 'cd-num', 'aria-hidden': 'true' }), txt = h('p', { class: 'cd-txt', role: 'timer', 'aria-live': 'off' }), msg = h('p', { class: 'note' });
+  const setRest = r => { const n = Math.max(0, Math.round(Number(r) || 0)); num.textContent = String(n); txt.textContent = `Der PC startet in ${n} ${n === 1 ? 'Sekunde' : 'Sekunden'} neu.`; };
+  const btns = () => [...$('#dlg-buttons').children];
+  const finish = s => {
+    if (ctl.done) return; ctl.done = ctl.alive = false;
+    const started = s.status === 'gestartet';
+    dlgOpen(title, [h('p', { class: s.status === 'fehler' ? 'rem' : (started ? 'warn' : ''), text: started ? 'Der PC startet jetzt neu …' : (s.meldung || (s.status === 'abgebrochen' ? 'Der Offline-Scan wurde abgebrochen. Es passiert nichts.' : 'Der Countdown ist beendet.')) }), started && s.meldung ? h('p', { class: 'note', text: s.meldung }) : null],
+      [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+  };
+  const act = async path => {
+    if (ctl.busy || ctl.done) return;
+    ctl.busy = true; btns().forEach(b => { b.disabled = true; });
+    try {
+      const s = await api('/api/defender/offline/' + path, { method: 'POST' });
+      if (s.status === 'countdown') { setRest(s.rest); msg.textContent = ''; btns().forEach(b => { b.disabled = false; }); } else finish(s);
+    } catch (e) { msg.textContent = e.message; btns().forEach(b => { b.disabled = false; }); }
+    ctl.busy = false;
+  };
+  const cancel = () => act('abbrechen'), now = () => act('jetzt');
+  setRest(st0.rest);
+  dlgOpen(title, [h('p', { class: 'warn', text: 'Speichere alles und schließe deine Programme.' }), num, txt, msg],
+    [{ label: 'Abbrechen', primary: true, onClick: cancel }, { label: 'Jetzt neu starten', danger: true, onClick: now }], { onEsc: cancel, onClose: () => { ctl.alive = false; } });
+  (async () => {   // genau eine Abfrage pro Sekunde, nie überlappend
+    while (ctl.alive) {
+      const t0 = Date.now();
+      try {
+        const s = await api('/api/defender/offline');
+        if (!ctl.alive) break;
+        ctl.fails = 0;
+        if (s.status === 'countdown') { if (!ctl.busy) msg.textContent = ''; setRest(s.rest); } else { finish(s); break; }
+      } catch (e) {
+        if (e.status === 401) break;
+        if (++ctl.fails >= 2 && !ctl.busy) msg.textContent = 'Keine Verbindung zu Morpheus. Der Server bricht den Countdown selbst ab, wenn er dich nicht mehr erreicht.';
+      }
+      await sleep(Math.max(0, 1000 - (Date.now() - t0)));
+    }
+  })();
+}
 
 // ---------------------------------------------------------------- Rechte Statusleiste
 const sbVisible = () => S.sbOn && window.matchMedia('(min-width:1400px)').matches;
@@ -1050,7 +1573,10 @@ function renderStatusLive() {
     cards.push(scCard('Laufwerke', src, isLive, drives.map(x => {
       const free = x.freePct != null ? Number(x.freePct) : (x.sizeGB ? x.freeGB / x.sizeGB * 100 : null);
       const tone = free == null ? 'grey' : free < 10 ? 'red' : free < 20 ? 'yellow' : 'green';
-      return h('div', { class: 'drow g-' + tone },
+      const letter = spLetter(x.letter);
+      return h('div', { class: 'drow g-' + tone, 'data-letter': letter, tabindex: '0', role: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': S.spPop && S.spPop.letter === letter ? 'true' : 'false', title: 'Größte Speicherverbraucher anzeigen',
+        onmouseenter: () => spHover(letter), onmouseleave: spLeave, onclick: () => spClick(letter, false),
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); spClick(letter, true); } } },
         h('div', { class: 'l1' }, h('i', { class: 'adot' }), h('b', { text: x.letter || '?' }), x.label ? h('span', { class: 'lab', text: x.label }) : null, x.type ? h('span', { class: 'chip type', text: x.type }) : null,
           h('span', { class: 'pct', text: free == null ? '–' : `${dec(100 - free, 0)} % belegt` })),
         h('div', { class: 'meter' }, h('i', { style: `width:${free == null ? 0 : clampPct(100 - free)}%` })),
@@ -1069,6 +1595,7 @@ function renderStatusLive() {
     ? top.map(p => h('div', { class: 'pr' }, h('span', { class: 'nm', title: p.name, text: p.name }), h('b', { text: p.cpu == null ? '–' : dec(p.cpu, 1) + ' %' })))
     : h('p', { class: 'wait', text: 'Keine Daten.' })));
   box.replaceChildren(...cards);
+  if (S.spPop) { syncSpRows(); placeSpPop(); }   // das offene Speicher-Fenster liegt außerhalb dieser Karten und bleibt stehen
 }
 
 const PROT = [
@@ -1174,7 +1701,7 @@ function applySb() {
   $('#app').classList.toggle('st-off', !S.sbOn);
   $('#st-toggle').setAttribute('aria-pressed', S.sbOn ? 'true' : 'false');
   renderStatusLive(); renderStatusReport();
-  if (sbVisible()) liveEnsure(); else liveStop();
+  if (sbVisible()) liveEnsure(); else { liveStop(); closeSpPop(false); }
 }
 function initStatusbar() {
   try { S.sbOn = localStorage.getItem(SB_KEY) !== '0'; } catch { S.sbOn = true; }
@@ -1183,7 +1710,7 @@ function initStatusbar() {
     try { localStorage.setItem(SB_KEY, S.sbOn ? '1' : '0'); } catch { /* ohne Speicher weiter */ }
     applySb();
   });
-  window.matchMedia('(min-width:1400px)').addEventListener('change', () => { if (sbVisible()) liveEnsure(); else liveStop(); });
+  window.matchMedia('(min-width:1400px)').addEventListener('change', () => { if (sbVisible()) liveEnsure(); else { liveStop(); closeSpPop(false); } });
   document.addEventListener('visibilitychange', () => { if (document.hidden) liveStop(); else liveEnsure(); });
   applySb();
 }
@@ -1192,6 +1719,170 @@ async function loadExtra() {
   if (j) S.journal = j;
   if (p) S.points = p;
   renderStatusReport();
+}
+
+// ---------------------------------------------------------------- Speicher-Fenster an der Laufwerkskarte
+// Datenquelle: das jüngere von Bericht (Speicher) und GET /api/speicher. Hover, Klick und Neuzeichnen laden und rechnen nichts.
+async function loadSpeicher() {
+  try { S.spApi = await api('/api/speicher'); } catch { S.spApi = null; }
+  pickSpeicher();
+}
+function pickSpeicher() {
+  const rep = S.report && S.report.Speicher && S.report.Speicher.stand ? S.report.Speicher : null;
+  const apiD = S.spApi && S.spApi.stand ? S.spApi : null;
+  const t = x => { const n = new Date(x.stand).getTime(); return isNaN(n) ? 0 : n; };
+  if (rep && (!apiD || t(rep) >= t(apiD))) { S.speicher = rep; S.spSrc = 'aus dem Bericht'; }
+  else if (apiD) { S.speicher = apiD; S.spSrc = 'neu berechnet'; }
+  else { S.speicher = null; S.spSrc = ''; }
+  if (S.spPop) renderSpPop();
+}
+function fmtBytes(b) {
+  b = Number(b); if (b == null || isNaN(b)) return '–';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+  while (b >= 1024 && i < 4) { b /= 1024; i++; }
+  return `${dec(b, i >= 4 ? 2 : (i === 3 ? 1 : 0))} ${u[i]}`;
+}
+const spLetter = l => String(l || '').replace(/[:\\\/]+$/, '').toUpperCase() + ':';
+const spRow = letter => [...document.querySelectorAll('.drow')].find(r => r.dataset.letter === letter) || null;
+const spTimer = { open: null, close: null };
+function spClear() { clearTimeout(spTimer.open); clearTimeout(spTimer.close); spTimer.open = spTimer.close = null; }
+function spEl() {
+  let p = $('#sp-pop');
+  if (!p) {
+    p = h('div', { id: 'sp-pop', class: 'sp-pop hide', role: 'dialog', tabindex: '-1' });
+    p.addEventListener('mouseenter', () => clearTimeout(spTimer.close));
+    p.addEventListener('mouseleave', () => spLeave());
+    p.addEventListener('keydown', e => {
+      if (e.key !== 'Tab') return;
+      const f = [...p.querySelectorAll('button:not(:disabled)')];
+      if (!f.length) return;
+      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+    });
+    document.body.append(p);
+  }
+  return p;
+}
+function syncSpRows() {
+  document.querySelectorAll('.drow').forEach(r => r.setAttribute('aria-expanded', S.spPop && S.spPop.letter === r.dataset.letter ? 'true' : 'false'));
+}
+function placeSpPop() {
+  const pop = $('#sp-pop'), P = S.spPop; if (!pop || !P) return;
+  const st = $('#status').getBoundingClientRect(), row = spRow(P.letter), vh = window.innerHeight;
+  const w = Math.max(260, Math.min(500, st.left - 24));
+  pop.style.width = w + 'px'; pop.style.maxHeight = (vh - 24) + 'px';
+  pop.style.left = Math.max(8, st.left - 8 - w) + 'px';
+  const top = row ? row.getBoundingClientRect().top - 8 : 12;
+  pop.style.top = Math.max(12, Math.min(top, vh - pop.offsetHeight - 12)) + 'px';
+}
+function openSpPop(letter, pinned, focusIn) {
+  spClear();
+  if (!sbVisible()) return;
+  const same = S.spPop && S.spPop.letter === letter;
+  S.spPop = { letter, pinned: !!pinned || !!(same && S.spPop.pinned) };
+  renderSpPop(); syncSpRows();
+  if (focusIn) { const c = $('#sp-pop [data-f="close"]'); if (c) c.focus(); }
+}
+function closeSpPop(restore) {
+  spClear();
+  const P = S.spPop; S.spPop = null;
+  const pop = $('#sp-pop'); if (pop) { pop.classList.add('hide'); pop.replaceChildren(); }
+  syncSpRows();
+  if (restore && P) { const r = spRow(P.letter); if (r) r.focus(); }
+}
+function spHover(letter) {
+  clearTimeout(spTimer.close);
+  if (S.spPop && (S.spPop.pinned ? S.spPop.letter !== letter : false)) return;
+  if (S.spPop && S.spPop.letter === letter) return;
+  clearTimeout(spTimer.open);
+  spTimer.open = setTimeout(() => openSpPop(letter, false), 300);
+}
+function spLeave() {
+  clearTimeout(spTimer.open);
+  if (!S.spPop || S.spPop.pinned) return;
+  clearTimeout(spTimer.close);
+  spTimer.close = setTimeout(() => { if (S.spPop && !S.spPop.pinned) closeSpPop(false); }, 250);
+}
+function spClick(letter, viaKey) {
+  spClear();
+  if (S.spPop && S.spPop.pinned && S.spPop.letter === letter) { closeSpPop(viaKey); return; }
+  openSpPop(letter, true, viaKey);
+}
+document.addEventListener('mousedown', e => {
+  if (!S.spPop) return;
+  if (e.target.closest && (e.target.closest('#sp-pop') || e.target.closest('.drow'))) return;
+  closeSpPop(false);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !S.spPop || $('#modal').classList.contains('on')) return;
+  e.preventDefault(); closeSpPop(true);
+});
+window.addEventListener('resize', () => { if (S.spPop) { if (sbVisible()) placeSpPop(); else closeSpPop(false); } });
+
+async function copyPath(p) {
+  try { await navigator.clipboard.writeText(p); toast('Pfad kopiert'); } catch { toast('Kopieren nicht möglich'); }
+}
+function spItem(label, path, bytes, max, extra, sub) {
+  const pct = max > 0 ? Math.max(1, Math.round(Number(bytes) / max * 100)) : 0;
+  return h('button', { type: 'button', class: 'sp-item', title: `${path}\nKlick kopiert den Pfad.`, onclick: () => copyPath(path) },
+    h('span', { class: 'sp-top' }, h('span', { class: 'sp-name', text: label }), extra, h('span', { class: 'sp-size', text: fmtBytes(bytes) })),
+    h('span', { class: 'sp-bar' }, h('i', { style: `width:${Math.min(100, pct)}%` })),
+    sub ? h('span', { class: 'sp-sub' }, sub) : null);
+}
+function spSection(title, list, empty, build) {
+  const max = list.reduce((m, x) => Math.max(m, Number(x.bytes) || 0), 0);
+  return h('div', { class: 'sp-sec' }, h('h4', { text: title }), list.length ? list.map(x => build(x, max)) : h('p', { class: 'note', text: empty }));
+}
+function renderSpPop() {
+  const P = S.spPop, pop = spEl();
+  if (!P) { pop.classList.add('hide'); pop.replaceChildren(); return; }
+  const had = pop.contains(document.activeElement) && document.activeElement !== pop ? document.activeElement.dataset.f : null;
+  const sp = S.speicher, lw = sp && (sp.laufwerke || []).find(x => spLetter(x.laufwerk) === P.letter);
+  const drive = ((S.live.data && S.live.data.drives) || []).find(x => spLetter(x.letter) === P.letter);
+  const bez = (lw && lw.bezeichnung) || (drive && drive.label) || '';
+  const kids = [h('div', { class: 'sp-head' }, h('b', { text: `${P.letter}${bez ? ' ' + bez : ''} – Größte Speicherverbraucher` }),
+    h('button', { type: 'button', class: 'sm ghost', 'data-f': 'close', 'aria-label': 'Schließen', title: 'Schließen (Esc)', text: '✕', onclick: () => closeSpPop(true) }))];
+  const refresh = h('button', { type: 'button', class: 'sm', 'data-f': 'refresh', disabled: readOnly() || !!S.spJob, title: readOnly() ? lockTitle() : null, text: S.spJob ? 'Wird berechnet …' : (lw ? 'Neu berechnen' : 'Jetzt berechnen'), onclick: spRefresh });
+  const prog = h('div', { class: 'note', id: 'sp-prog', 'aria-live': 'polite', text: S.spJob ? S.spJob.line : '' });
+  if (!sp || !sp.stand || !lw) {
+    kids.push(h('p', { text: `Für ${P.letter} gibt es noch keine Auswertung.` }), h('div', { class: 'sp-foot' }, refresh), prog);
+  } else {
+    kids.push(h('div', { class: 'note', text: `Stand: ${fmtDate(sp.stand)} · ${S.spSrc}${lw.uebersprungen ? ` · ${lw.uebersprungen} Ordner ohne Zugriff übersprungen` : ''}` }));
+    if (lw.fehler) kids.push(h('p', { class: 'rem', text: String(lw.fehler) }));
+    const folders = (lw.ordner || []).slice(0, 10), files = (lw.dateien || []).slice(0, 10);
+    const games = (sp.spiele || []).filter(g => spLetter(g.laufwerk) === P.letter).sort((a, b) => (Number(b.bytes) || 0) - (Number(a.bytes) || 0)).slice(0, 10);
+    kids.push(
+      spSection('Ordner', folders, 'Keine Ordner ausgewertet.', (x, max) => spItem(x.pfad, x.pfad, x.bytes, max)),
+      spSection('Dateien', files, 'Keine großen Dateien gefunden.', (x, max) => spItem(x.pfad, x.pfad, x.bytes, max, x.windows ? h('span', { class: 'chip type', text: 'Windows' }) : null)),
+      files.some(x => x.windows) ? h('p', { class: 'note', text: 'pagefile.sys (Auslagerungsdatei), hiberfil.sys (Ruhezustand/Schnellstart) und swapfile.sys gehören zu Windows. Nicht löschen. Verkleinern: Auslagerungsdatei unter Systemsteuerung > System > Erweiterte Systemeinstellungen > Leistung > Virtueller Arbeitsspeicher; hiberfil.sys mit „powercfg /hibernate off“ (schaltet auch Schnellstart ab) oder „powercfg /h /type reduced“.' }) : null,
+      spSection(`Spiele auf ${P.letter}`, games, `Keine Spiele auf ${P.letter} gefunden.`, (x, max) => spItem(x.name || x.pfad, x.pfad, x.bytes, max, x.plattform ? h('span', { class: 'chip type', text: x.plattform }) : null,
+        [`zuletzt gespielt: ${x.zuletztGespielt ? fmtShort(x.zuletztGespielt) : '–'}`, x.groesseUnsicher ? ' · Größe eingeschränkt lesbar' : ''])));
+    const hasGames = (dataTable('Installierte Spiele') || []).length > 0;
+    kids.push(h('div', { class: 'sp-foot' }, refresh, hasGames ? h('button', { type: 'button', class: 'link', 'data-f': 'games', text: 'Alle Spiele', onclick: () => { closeSpPop(false); openRaw(['Installierte Spiele']); } }) : null,
+      h('button', { type: 'button', class: 'link', 'data-f': 'spordner', text: 'Spiele-Ordner festlegen …', onclick: gotoSpOrdner })), prog,
+      h('p', { class: 'note', text: 'Deinstallieren nur über die jeweilige Plattform (Steam, Epic …). Morpheus löscht nichts.' }));
+  }
+  pop.setAttribute('aria-label', `Speicherverbraucher ${P.letter}`);
+  pop.replaceChildren(...kids.filter(k => k != null && k !== false));
+  pop.classList.remove('hide');
+  placeSpPop();
+  if (had) { const b = pop.querySelector(`[data-f="${had}"]:not(:disabled)`); (b || pop).focus({ preventScroll: true }); }
+}
+// Gemeinsamer Speicher-Job (Speicher-Fenster und Karte „Spiele-Ordner“); onLine bekommt jede neue letzte Fortschrittszeile
+async function startSpeicherRefresh(onLine) {
+  const r = await api('/api/speicher/refresh', { method: 'POST' });
+  const job = await followJob(r.jobId, lines => { const l = lines[lines.length - 1]; if (l && onLine) onLine(l); });
+  if (job.status === 'failed') throw new Error((job.ergebnis && job.ergebnis.error) || 'Die Berechnung ist fehlgeschlagen.');
+  await loadSpeicher();
+}
+async function spRefresh() {
+  if (S.spJob || S.spoJob || readOnly()) return;
+  S.spJob = { line: 'Wird gestartet …' }; renderSpPop();
+  try {
+    await startSpeicherRefresh(l => { if (S.spJob) { S.spJob.line = l; const p = $('#sp-prog'); if (p) p.textContent = l; } });
+    toast('Speicherverbraucher neu berechnet');
+  } catch (e) { toast(e.message); }
+  S.spJob = null; renderSpPop();
 }
 
 // ---------------------------------------------------------------- Routing

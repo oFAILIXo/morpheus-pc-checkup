@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<DataProtectionUserConfig>
+  <Version>1</Version>
+  <PCName>TESTPC</PCName>
+  <UserName>Demo</UserName>
+  <Enabled>true</Enabled>
+  <TargetName>Backup-Platte</TargetName>
+  <TargetUrl>E:\</TargetUrl>
+</DataProtectionUserConfig>

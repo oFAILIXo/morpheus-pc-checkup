@@ -1,0 +1,1 @@
+Error: Zugriff verweigert. Autoruns muss mit Administratorrechten ausgefuehrt werden.
