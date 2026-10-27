@@ -1,0 +1,11 @@
+﻿
+Tool zur Imageverwaltung für die Bereitstellung
+Version: 10.0.26100.1
+
+Abbildversion: 10.0.26100.2314
+
+[                           0.1%                           ]
+[==========================50.0%                           ]
+[==========================100.0%==========================]
+Es wurde keine Komponentenspeicherbeschädigung erkannt.
+Der Vorgang wurde erfolgreich beendet.

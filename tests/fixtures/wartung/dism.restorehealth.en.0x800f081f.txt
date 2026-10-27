@@ -1,0 +1,14 @@
+﻿
+Deployment Image Servicing and Management tool
+Version: 10.0.26100.1
+
+Image Version: 10.0.26100.2314
+
+[                           0.1%                           ]
+[==========================50.0%                           ]
+Error: 0x800f081f
+
+The source files could not be found.
+Use the "Source" option to specify the location of the files that are required to restore the feature. For more information on specifying a source location, see http://go.microsoft.com/fwlink/?LinkId=243077.
+
+The DISM log file can be found at C:\Windows\Logs\DISM\dism.log

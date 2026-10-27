@@ -1,0 +1,9 @@
+﻿
+Systemscan wird gestartet. Dieser Vorgang kann einige Zeit dauern.
+
+Die Überprüfungsphase des Systemscans wird gestartet.
+Überprüfung 12 % abgeschlossen.
+Überprüfung 57 % abgeschlossen.
+Überprüfung 100 % abgeschlossen.
+
+Der Windows-Ressourcenschutz hat keine Integritätsverletzungen gefunden.

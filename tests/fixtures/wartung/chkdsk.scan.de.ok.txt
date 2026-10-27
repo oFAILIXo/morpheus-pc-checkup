@@ -1,0 +1,18 @@
+﻿Der Dateisystemtyp ist NTFS.
+
+Stufe 1: Basisdateisystemstruktur wird überprüft ...
+  421312 Dateidatensätze verarbeitet.
+Dateiüberprüfung abgeschlossen.
+Stufe 2: Dateinamenverknüpfung wird überprüft ...
+  30 Prozent abgeschlossen. (118200 von 421312 Indexeinträgen verarbeitet)
+  467894 Indexeinträge verarbeitet.
+Stufe 3: Sicherheitsbeschreibungen werden überprüft ...
+  Überprüfung der Sicherheitsbeschreibungen abgeschlossen.
+
+Windows hat das Dateisystem überprüft und keine Probleme festgestellt.
+Es sind keine weiteren Aktionen erforderlich.
+
+  498233083 KB Speicherplatz insgesamt auf dem Datenträger
+  311040816 KB in 301245 Dateien
+     143284 KB in 61244 Indizes
+  187049000 KB auf dem Datenträger verfügbar

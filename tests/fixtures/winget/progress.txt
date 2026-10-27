@@ -1,0 +1,4 @@
+﻿   -    \                                 Name            Id            Version Available Source
+-----------------------------------------------
+Demo Editor     Demo.Editor   1.2.0   1.3.0     winget
+1 upgrades available.

@@ -1,0 +1,5 @@
+﻿
+Systemscan wird gestartet. Dieser Vorgang kann einige Zeit dauern.
+
+Es steht eine Systemreparatur aus, die einen Neustart erfordert. Starten Sie
+Windows neu, und führen Sie sfc erneut aus.

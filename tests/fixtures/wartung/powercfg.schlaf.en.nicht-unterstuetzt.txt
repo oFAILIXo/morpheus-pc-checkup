@@ -1,0 +1,2 @@
+﻿Unable to perform operation. An error occurred: The system does not support Modern Standby (S0 low power idle).
+The Sleep Study report cannot be created.

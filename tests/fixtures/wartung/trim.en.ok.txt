@@ -1,0 +1,17 @@
+﻿Microsoft Drive Optimizer
+Copyright (c) Microsoft Corp.
+
+Invoking retrim on Demo-SSD (C:)...
+
+The operation completed successfully.
+
+Post Defragmentation Report:
+
+ Volume Information:
+   Volume size                 = 465.12 GB
+   Free space                  = 178.38 GB
+
+ Retrim:
+   Backed allocations size     = 463.40 GB
+   Allocations trimmed         = 176.52 GB
+   Total space trimmed         = 176.52 GB

@@ -1,0 +1,5 @@
+﻿Name                 Id                      Version  Verfügbar Quelle
+-----------------------------------------------------------------------
+Ein sehr langer Prog… Demo.LangerName        1.0      2.0       winget
+Altes Programm       Demo.Altlast            1.0      1.1       winget
+2 Aktualisierungen verfügbar.

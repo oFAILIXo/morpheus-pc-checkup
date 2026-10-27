@@ -1,0 +1,5 @@
+﻿
+Beginning system scan.  This process will take some time.
+
+There is a system repair pending which requires reboot to complete.  Restart
+Windows and run sfc again.

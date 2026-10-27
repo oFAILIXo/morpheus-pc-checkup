@@ -1,0 +1,13 @@
+﻿
+Beginning system scan.  This process will take some time.
+
+Beginning verification phase of system scan.
+Verification 12% complete.
+Verification 57% complete.
+Verification 100% complete.
+
+Windows Resource Protection found corrupt files and successfully repaired
+them.
+For online repairs, details are included in the CBS log file located at
+windir\Logs\CBS\CBS.log. For example C:\Windows\Logs\CBS\CBS.log. For offline
+repairs, details are included in the log file provided by the /OFFLOGFILE flag.

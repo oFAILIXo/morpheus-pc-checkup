@@ -284,6 +284,74 @@ Describe 'Undo-PcCheckChange' {
         Test-Path -LiteralPath (Get-FakeFile $script:root 'a') | Should Be $false
     }
 
+    It 'Datenordner-Reparatur (18.10): Eintrag vor der Reparatur braucht -VorReparaturBestaetigt, danach nicht' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        $dir = Join-Path $script:root 'state'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $rep = Join-Path $dir 'datenordner-reparatur.json'
+        $zukunft = (Get-Date).AddHours(1).ToString('yyyy-MM-ddTHH:mm:ss')
+        [IO.File]::WriteAllText($rep, ('{"version":1,"zeit":"' + $zukunft + '","konten":[]}'))
+        $msg = $null
+        try { Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue | Out-Null } catch { $msg = $_.Exception.Message }
+        $msg | Should Be 'Dieser Eintrag stammt aus der Zeit vor der Reparatur des Datenordners. Bitte ausdrücklich bestätigen.'
+        Read-FakeFile $script:root 'a' | Should Be 'an'
+        (Get-TestJournal $script:root)[0].status | Should Be 'erledigt'
+        # Unlesbare Datei: Eintrag gilt als älter
+        [IO.File]::WriteAllText($rep, 'kein json')
+        $msg = $null
+        try { Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue | Out-Null } catch { $msg = $_.Exception.Message }
+        $msg | Should Match 'vor der Reparatur des Datenordners'
+        # Mit Bestätigung läuft die Rücknahme
+        [IO.File]::WriteAllText($rep, ('{"version":1,"zeit":"' + $zukunft + '","konten":[]}'))
+        $u = Undo-PcCheckChange -Root $script:root -EntryId $entry.id -VorReparaturBestaetigt -InformationAction SilentlyContinue
+        $u.status | Should Be 'erledigt'
+        Test-Path -LiteralPath (Get-FakeFile $script:root 'a') | Should Be $false
+    }
+
+    It 'Datenordner-Reparatur (18.10): Eintrag nach der Reparatur und Datei fehlt brauchen keine Bestätigung' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        $dir = Join-Path $script:root 'state'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $dir 'datenordner-reparatur.json'), '{"version":1,"zeit":"2000-01-01T00:00:00","konten":[]}')
+        $u = Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue
+        $u.status | Should Be 'erledigt'
+    }
+
+    It 'Datenordner-Reparatur (18.10): Version 2 sperrt nach Id in eintraege, nicht nach der fälschbaren Zeit' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        $dir = Join-Path $script:root 'state'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $rep = Join-Path $dir 'datenordner-reparatur.json'
+        # gefälschter Eintrag: Zeit 2099 (scheinbar nach der Reparatur), aber Id in eintraege -> gesperrt
+        $fake = [pscustomobject]@{ id = 'X-1'; zeit = '2099-01-01T00:00:00' }
+        [IO.File]::WriteAllText($rep, '{"version":2,"zeit":"2026-01-01T00:00:00","konten":[],"eintraege":["X-1"],"journalUnlesbar":false}')
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag $fake) | Should Be $true
+        # Eintrag nach der Reparatur (Id nicht in eintraege), auch mit alter Zeit -> frei
+        $neu = [pscustomobject]@{ id = 'X-2'; zeit = '2000-01-01T00:00:00' }
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag $neu) | Should Be $false
+        # unlesbare Datei und journalUnlesbar -> gesperrt
+        [IO.File]::WriteAllText($rep, 'kein json')
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag $neu) | Should Be $true
+        [IO.File]::WriteAllText($rep, '{"version":2,"zeit":"2026-01-01T00:00:00","konten":[],"eintraege":[],"journalUnlesbar":true}')
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag $neu) | Should Be $true
+        # Version 1 (ohne eintraege): Zeitvergleich
+        [IO.File]::WriteAllText($rep, '{"version":1,"zeit":"2026-01-01T00:00:00","konten":[]}')
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag ([pscustomobject]@{ id = 'a'; zeit = '2025-12-31T00:00:00' })) | Should Be $true
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag ([pscustomobject]@{ id = 'a'; zeit = '2026-02-01T00:00:00' })) | Should Be $false
+        # keine Datei -> frei
+        Remove-Item -LiteralPath $rep -Force
+        (Test-PcCheckVorReparatur -DataRoot $script:root -Eintrag $fake) | Should Be $false
+        # Undo-PcCheckChange: Id des echten Eintrags in eintraege -> Bestätigung nötig, 2099-Zeit hilft nicht
+        [IO.File]::WriteAllText($rep, ('{"version":2,"zeit":"2000-01-01T00:00:00","konten":[],"eintraege":["' + $entry.id + '"],"journalUnlesbar":false}'))
+        $msg = $null
+        try { Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue | Out-Null } catch { $msg = $_.Exception.Message }
+        $msg | Should Match 'vor der Reparatur des Datenordners'
+        Read-FakeFile $script:root 'a' | Should Be 'an'
+    }
+
     It 'nimmt nichts zurück, wenn der Wiederherstellungspunkt fehlt' {
         Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
         $entry = (Get-TestJournal $script:root)[0]
@@ -301,6 +369,20 @@ Describe 'Undo-PcCheckChange' {
         $undo = (Get-TestJournal $script:root) | Where-Object { $_.art -eq 'rueckgaengig' }
         { Undo-PcCheckChange -Root $script:root -EntryId $undo.id -InformationAction SilentlyContinue | Out-Null } | Should Throw
         { Undo-PcCheckChange -Root $script:root -EntryId '19990101-000000-01' -InformationAction SilentlyContinue | Out-Null } | Should Throw
+    }
+
+    It 'lehnt Protokoll-Einträge (art wartung/update) ab und ändert nichts' {
+        $e1 = [pscustomobject]@{ id = '20261026-120000-01'; zeit = '2026-10-26T12:00:00'; art = 'wartung'; aktion = 'dism.restorehealth'; titel = 'DISM'; status = 'erledigt'; umkehrbar = $false }
+        $e2 = [pscustomobject]@{ id = '20261026-120001-01'; zeit = '2026-10-26T12:00:01'; art = 'update'; aktion = 'winget.upgrade'; titel = 'Update: Demo'; status = 'erledigt'; umkehrbar = $false }
+        PcCheckSafetyWriteJournal $script:root @($e1, $e2)
+        $vorher = [IO.File]::ReadAllText((Join-Path $script:root 'changes\journal.json'))
+        foreach ($id in $e1.id, $e2.id) {
+            $msg = $null
+            try { Undo-PcCheckChange -Root $script:root -EntryId $id -Force -InformationAction SilentlyContinue | Out-Null } catch { $msg = $_.Exception.Message }
+            $msg | Should Be 'Für diesen Eintrag gibt es kein Rückgängig.'
+        }
+        $script:fakeCreateCalls.Count | Should Be 0
+        [IO.File]::ReadAllText((Join-Path $script:root 'changes\journal.json')) | Should Be $vorher
     }
 
     It 'lässt fehlgeschlagene Einträge nicht zurücknehmen' {

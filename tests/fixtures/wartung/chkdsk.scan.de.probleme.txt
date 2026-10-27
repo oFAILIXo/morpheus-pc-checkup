@@ -1,0 +1,11 @@
+﻿Der Dateisystemtyp ist NTFS.
+
+Stufe 1: Basisdateisystemstruktur wird überprüft ...
+  421312 Dateidatensätze verarbeitet.
+Dateiüberprüfung abgeschlossen.
+Stufe 2: Dateinamenverknüpfung wird überprüft ...
+  Der Indexeintrag Demo.tmp im Verzeichnis 0x1b2 ist ungültig.
+
+Es wurden Fehler gefunden. CHKDSK kann im schreibgeschützten Modus nicht fortfahren.
+Windows hat das Dateisystem überprüft und Probleme gefunden.
+Führen Sie chkdsk /scan oder /spotfix aus, oder führen Sie chkdsk /f offline aus.

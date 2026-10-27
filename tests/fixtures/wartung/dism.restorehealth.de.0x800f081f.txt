@@ -1,0 +1,14 @@
+﻿
+Tool zur Imageverwaltung für die Bereitstellung
+Version: 10.0.26100.1
+
+Abbildversion: 10.0.26100.2314
+
+[                           0.1%                           ]
+[==========================50.0%                           ]
+Fehler: 0x800f081f
+
+Die Quelldateien wurden nicht gefunden.
+Geben Sie mit der Option "Source" den Speicherort der Dateien an, die zum Wiederherstellen des Features erforderlich sind. Weitere Informationen zum Angeben eines Quellspeicherorts finden Sie unter http://go.microsoft.com/fwlink/?LinkId=243077.
+
+Die DISM-Protokolldatei befindet sich unter "C:\Windows\Logs\DISM\dism.log".

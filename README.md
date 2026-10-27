@@ -63,14 +63,16 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 **Verbessern**
 - **17 Anpassungen per Klick:** jede mit Bestätigungsdialog, Befehl zum Nachlesen und Erklärung.
 - **Checkliste:** Punkte als „erledigt“ oder „später“ markieren. Der nächste Lauf zeigt, was wirklich behoben ist.
-- **Update-Dialog am Ende:** listet Programm-Updates (winget) und installiert nur, was du auswählst.
+- **Wartung & Reparatur (ab 2.4):** DISM, SFC, Komponentenspeicher, chkdsk, DNS leeren, ReTrim, Zeit abgleichen, Energieberichte und Zuverlässigkeitsverlauf, mit festen Befehlen, Windows-Bestätigung und verständlicher Zusammenfassung.
+- **Programme aktualisieren (ab 2.4):** winget-Updates in der Oberfläche mit Auswahl, Fortschritt und Ergebnis; im Konsolen-Scan weiter der Update-Dialog am Ende.
 
 **Absichern**
 - **Wiederherstellungspunkt vor jeder Änderung**, Rückgängig für jede Änderung einzeln.
 - **Änderungsjournal** mit Verlauf aller Anpassungen.
 - **Akzeptanzliste** für Befunde, die bewusst so gewollt sind. Ab 2.3.1 lassen sie sich direkt in der GUI akzeptieren und wieder zurücknehmen.
 - **Defender-Werkzeuge:** Signaturen aktualisieren, Schnellscan, Offline-Scan.
-- **24-Stunden-Sperre erkannt:** Die GUI zeigt ein Banner und erklärt, wie sie sich aufheben lässt.
+- **24-Stunden-Sperre erkannt:** Die GUI zeigt ein Banner und erklärt, wie sie sich aufheben lässt. Unter Werkzeuge legst du einen Wiederherstellungspunkt auch von Hand an.
+- **Datenordner reparieren (ab 2.4):** Haben Benutzerkonten zusätzliche Rechte auf den Datenordner bekommen (z. B. per „Fortsetzen“ im Explorer), bietet Morpheus die Reparatur an.
 
 **Überwachen**
 - **Live-Statusleiste:** CPU, RAM, GPU mit Temperatur, Laufwerke, Netzwerk und Top-Prozesse. Dazu die Schutz-Ampeln aus dem Bericht. Auf Wunsch ein- und ausblendbar.
@@ -93,7 +95,7 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 | Neuer Scan | Optionen, Start, Live-Protokoll; danach öffnet sich der neue Bericht |
 | Rohdaten | Detailtabellen hinter den Prüfungen |
 | Einstellungen | Profil, Zeitraum und Akzeptanzliste (Regeln ansehen und zurücknehmen) |
-| Werkzeuge | Defender-Signaturen aktualisieren, Schnellscan, Offline-Scan (mit Countdown, der PC startet neu), eigene Spiele-Ordner, Sysinternals-Werkzeuge einrichten |
+| Werkzeuge | Wartung & Reparatur (Wiederherstellungspunkt anlegen, DISM, SFC, Komponentenspeicher, chkdsk, DNS, ReTrim, Zeit, Energieberichte, Zuverlässigkeitsverlauf); Defender-Signaturen aktualisieren, Schnellscan, Offline-Scan (mit Countdown, der PC startet neu); Programme aktualisieren (winget); eigene Spiele-Ordner; Sysinternals-Werkzeuge einrichten |
 
 Die Suche liegt oben. Mit der Taste `/` springst du direkt dorthin.
 
@@ -186,14 +188,24 @@ Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
 - Der Code liegt unter `C:\Program Files\Morpheus`, die Daten unter `C:\ProgramData\Morpheus`. Beides können nur Administratoren ändern.
 - Auch was Morpheus nachlädt, kommt nur aus Ordnern, die nur Administratoren ändern können (ab 2.3.3): PowerShell-Module nur aus `C:\Windows\System32` und `C:\Program Files`, Windows-Programme mit vollem Pfad, winget nur aus dem signierten App-Installationsprogramm, temporäre Dateien unter `C:\ProgramData\Morpheus\temp`.
 - Vor jeder Änderung wird ein Wiederherstellungspunkt geprüft. Jede Änderung lässt sich einzeln zurücknehmen.
+- Wartungswerkzeuge und Programm-Updates (ab 2.4) laufen nur aus einem festen Katalog mit festen Programmpfaden (System32 bzw. signiertes winget-Paket). Die Oberfläche schickt nur eine Werkzeug-Id, ein Laufwerk aus der vom Server ermittelten Liste oder Paket-Ids aus der zuletzt vom Server gesuchten Liste.
 - **Jede Änderung und jedes Rückgängig bestätigt zusätzlich ein Windows-Dialog** („Morpheus – Änderung bestätigen“). Er gehört zum Prozess mit Adminrechten; Windows verhindert, dass Programme ohne Adminrechte darin klicken oder tippen. So kann auch ein Schadprogramm, das das Morpheus-Fenster fernsteuert, nichts ändern. „Nein“ ist vorbelegt.
 - Die Daten unter `C:\ProgramData\Morpheus` können nur Administratoren lesen und ändern. Berichte enthalten Programme, Konten und Netzwerkdetails; auch andere Benutzerkonten des PCs sehen sie nicht. Ansehen kannst du sie in Morpheus unter „Berichte“.
-- **Den Ordner `C:\ProgramData\Morpheus` nicht im Explorer über „Fortsetzen“ öffnen.** Der Explorer trägt dabei dauerhaft Vollzugriff für dein Konto ein. Dann könnte jedes Programm, das unter deinem Konto läuft, Journal, Akzeptanzliste und Zwischendateien ändern. Morpheus erkennt das beim nächsten Start und benutzt den Ordner nicht mehr. Zum Ansehen eine PowerShell als Administrator öffnen, z. B. `Get-ChildItem C:\ProgramData\Morpheus\reports`. Ist es schon passiert: zusätzliche Rechte in einer Admin-PowerShell entfernen.
+- **Den Ordner `C:\ProgramData\Morpheus` nicht im Explorer über „Fortsetzen“ öffnen.** Der Explorer trägt dabei dauerhaft Vollzugriff für dein Konto ein. Dann könnte jedes Programm, das unter deinem Konto läuft, Journal, Akzeptanzliste und Zwischendateien ändern. Morpheus erkennt das beim nächsten Start und benutzt den Ordner nicht mehr. Zum Ansehen eine PowerShell als Administrator öffnen, z. B. `Get-ChildItem C:\ProgramData\Morpheus\reports`. Ist es schon passiert: zusätzliche Rechte in einer Admin-PowerShell entfernen. Ab 2.4 bietet Morpheus dann beim Start an, die Rechte selbst zu reparieren (Banner „Die Rechte des Datenordners wurden geändert“, Knopf „Rechte reparieren …“, nach Windows-Bestätigung). Danach Morpheus neu starten und unter „Änderungen“ sowie „Einstellungen > Akzeptanzliste“ prüfen, ob alle Einträge von dir stammen.
   ```powershell
   icacls C:\ProgramData\Morpheus /remove:g "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)" /T /C
   ```
 - Änderungen sind nur per POST mit JSON möglich.
-- Der Server endet mit dem Fenster.
+- Der Server endet mit dem Fenster. Läuft noch ein Werkzeug, wartet er, bis es fertig ist.
+
+### Datenordner reparieren (ab 2.4)
+
+- **Wann:** Nur wenn Benutzerkonten zusätzliche Rechte auf `C:\ProgramData\Morpheus` haben. Bei fremdem Besitzer oder Verknüpfungen im Ordner legt Morpheus den Ordner weiterhin beiseite.
+- **Was passiert:** Morpheus entfernt die zusätzlichen Rechte (nach Windows-Bestätigung). `temp` und `tools` werden neu angelegt, `tools` wird bei Bedarf neu geladen (Sysinternals).
+- Journal, Akzeptanzliste und Checkliste bleiben erhalten und werden neu geschrieben. Berichte bleiben unverändert.
+- **Stattdessen neu anlegen:** Der alte Ordner wird als `Morpheus.unsicher-<Datum>` beiseitegelegt, danach entsteht ein leerer Ordner.
+- **Rückgängig:** Für ältere Journal-Einträge gibt es das nur mit einer Zusatzbestätigung. Prüfe vorher, ob du die Änderung selbst vorgenommen hast.
+- Danach Morpheus neu starten.
 
 ## Wo liegen meine Daten?
 
@@ -262,6 +274,35 @@ Manches ist auf deinem PC absichtlich so, z. B. ein genutztes Fernwartungsprogra
 
 Passende Befunde erscheinen dann als „Akzeptiert“ und zählen nicht in den Zustandswert. Ein enges Muster (`Match`) sorgt dafür, dass die Warnung zurückkehrt, sobald sich etwas ändert. Mit `Until` meldet sich ein Punkt nach einem Datum wieder. `accepted.psd1` ist per `.gitignore` vom Repo ausgeschlossen.
 
+## Wartung & Reparatur (ab 2.4)
+
+Unter **Werkzeuge > Wartung & Reparatur** startet Morpheus Windows-eigene Werkzeuge mit festen Befehlen. Jedes Werkzeug zeigt den genauen Befehl, läuft im Hintergrund mit Live-Ausgabe und fragt vorher im Windows-Dialog nach. Es gibt drei Klassen:
+
+| Klasse | Bedeutung | Werkzeuge |
+|---|---|---|
+| liest nur | ändert nichts | DISM `/CheckHealth`, `/ScanHealth`, `/AnalyzeComponentStore`; `chkdsk C: /scan` (Laufwerk wählbar); `powercfg /energy`, `/batteryreport`, `/sleepstudy` |
+| harmlos | kleine Wartung ohne Risiko | Wiederherstellungspunkt anlegen; `ipconfig /flushdns`; ReTrim für SSDs (`defrag C: /L`, dasselbe wie `Optimize-Volume -ReTrim`); `w32tm /resync` |
+| nicht umkehrbar | Reparatur bzw. Bereinigung | DISM `/RestoreHealth` (braucht Internet), `sfc /scannow`, DISM `/StartComponentCleanup` |
+
+- **Nicht umkehrbar heißt:** Unter „Änderungen“ gibt es dafür kein „Rückgängig“. Vorher legt Morpheus automatisch einen Wiederherstellungspunkt an und prüft ihn. Klappt das nicht (z. B. 24-Stunden-Sperre), startet nichts. Erst nach einer ausdrücklichen Zusatzbestätigung geht es ohne Punkt weiter; der Windows-Dialog sagt das dann deutlich.
+- **Reihenfolge bei Systemdateien:** 1. CheckHealth, 2. ScanHealth, 3. RestoreHealth, 4. `sfc /scannow`. SFC repariert aus dem Komponentenspeicher, den DISM vorher in Ordnung bringt.
+- **Komponentenspeicher:** Morpheus verwendet kein `/ResetBase` (das macht installierte Updates dauerhaft). Den Ordner `WinSxS` nie von Hand löschen.
+- **Abbrechen** geht bei lesenden Werkzeugen, chkdsk, ReTrim und dem Energiebericht. DISM-Reparatur, Bereinigung und SFC sollte man nicht unterbrechen; dort gibt es keinen Abbruch-Knopf.
+- **Ergebnis:** Morpheus fasst die Ausgabe verständlich zusammen (deutsche und englische Windows-Ausgaben) und schreibt ein Protokoll mit Befehl, Dauer, Exit-Code und Kurzfassung ins Änderungsjournal.
+- **Energieberichte** landen in `C:\ProgramData\Morpheus\reports` und öffnen sich in Morpheus im abgeschotteten Rahmen.
+- **Zuverlässigkeitsverlauf** (`perfmon /rel`) öffnet sich ohne Adminrechte. Klappt das nicht: `Win + R`, `perfmon /rel`.
+- Bewusst nicht dabei (erst später bzw. nur als Anleitung): `chkdsk /f`, Speichertest, Windows Update zurücksetzen, alte Treiber entfernen, Netzwerk-Reset.
+
+## Programme aktualisieren (ab 2.4)
+
+Unter **Werkzeuge > Programme aktualisieren** sucht Morpheus mit winget nach Updates, du wählst die Programme aus, und Morpheus installiert sie mit Fortschritt und Ergebnis je Programm.
+
+- Vorher entsteht ein Wiederherstellungspunkt. **Programm-Updates lassen sich nicht über „Änderungen“ zurücknehmen**; im Journal steht je Programm ein Protokoll.
+- Angeboten werden nur Programme aus der zuletzt in Morpheus gesuchten Liste (gleiche Regeln wie im Konsolendialog unten).
+- „Abbrechen“ hört nach dem gerade laufenden Programm auf.
+- **Bekanntes Restrisiko:** winget legt heruntergeladene Installer in einem Unterordner `WinGet` des Temp-Ordners ab und gibt diesen Ordner deinem Konto frei. Ein Programm, das schon unter deinem Konto läuft, könnte einen Installer kurz vor dem Start austauschen; er liefe dann mit Adminrechten. Das betrifft alle Versionen von Morpheus (Update-Dialog in der GUI und am Ende des Konsolen-Scans) und genauso jedes `winget upgrade` in einem Admin-Terminal. Morpheus legt den Ordner vor jedem Lauf nur für Administratoren an, winget gibt ihn aber trotzdem frei (getestet am 27.10.2026). Morpheus zeigt das nach jedem Lauf an („WinGet hat den Ordner für … freigegeben“). Die Behebung folgt in 2.5: winget läuft dann ohne Adminrechte, Installer, die Adminrechte brauchen, fragen selbst per Windows-Dialog nach.
+- Morpheus startet winget nur aus dem signierten App-Installer-Paket unter `C:\Program Files\WindowsApps`, nie über den Suchpfad (der App-Alias im Benutzerprofil wäre von Programmen ohne Adminrechte austauschbar). Das gilt ab 2.4 auch für den Scan.
+
 ## Sysinternals-Werkzeuge (ab 2.3)
 
 Morpheus kann zwei kostenlose Werkzeuge von Microsoft Sysinternals nutzen: **Autoruns** (alle Autostarts: Dienste, Treiber, geplante Aufgaben, Anmeldung, Explorer) und **Sigcheck** (Signaturen der Dateien in `System32` und `System32\drivers`). Sie sind nicht enthalten, sondern werden nur auf deinen Klick geladen:
@@ -279,7 +320,7 @@ Morpheus kann zwei kostenlose Werkzeuge von Microsoft Sysinternals nutzen: **Aut
 
 ## Update-Dialog am Ende
 
-Nach dem fertigen Bericht listet das Script verfügbare **Programm**-Updates nummeriert auf und fragt, welche installiert werden sollen (`1,3`, `a` für alle, Enter für keine).
+Gilt für den reinen Scan in der Konsole (`pc-check.cmd`); in der GUI geht das unter Werkzeuge > Programme aktualisieren. Nach dem fertigen Bericht listet das Script verfügbare **Programm**-Updates nummeriert auf und fragt, welche installiert werden sollen (`1,3`, `a` für alle, Enter für keine).
 
 - winget lädt die Updates aus den Herstellerquellen und **akzeptiert dabei die Lizenzbedingungen der Pakete**.
 - Nicht angeboten werden Spiele und Launcher, Programme mit eigener Update-Funktion (Edge, Teams, Outlook, VS Code, Autodesk Fusion) und Einträge, die winget kennt, Windows aber nicht mehr als installiert führt.
@@ -293,7 +334,7 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 ## Datenschutz
 
 - Alles läuft **lokal**. Es werden keine Daten an den Autor oder Dritte geschickt.
-- Netzwerkzugriffe gibt es nur für die Windows-Update-Suche, winget und die UPnP-Abfrage am eigenen Router.
+- Netzwerkzugriffe gibt es nur für die Windows-Update-Suche, winget und die UPnP-Abfrage am eigenen Router, sowie auf deinen Klick für Sysinternals, DISM `/RestoreHealth` (Windows Update) und den Zeitabgleich (`w32tm /resync`).
 - Der Bericht enthält viele Details deines PCs (Programme, Konten, Netzwerk, Treiber). Er bleibt lokal und ist per `.gitignore` ausgeschlossen. **Nicht unbedacht weitergeben oder hochladen.** Für Fragen an eine KI die anonymisierte Kopierfunktion nutzen und den Text vorher kurz durchlesen.
 
 ## Was geprüft wird
@@ -309,7 +350,7 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 - Windows-Update-Suche, winget und die UPnP-Abfrage gehen ins Netz bzw. zum Router. Der Scan selbst lädt nichts von Sysinternals; das geschieht nur per Klick in der GUI.
 - Autoruns und Sigcheck (falls eingerichtet) laufen je 1–3 Minuten. Sie merken sich die angenommene Lizenz in der Registry des angemeldeten Benutzers (`HKCU\Software\Sysinternals`).
 - Die Speicherauswertung zählt alle Dateien der festen Laufwerke (nur Namen und Größen, keine Inhalte), folgt keinen Verknüpfungen oder Junctions und dauert je nach Laufwerken 1–3 Minuten.
-- Nur der Update-Dialog installiert etwas, und nur, was du ausdrücklich auswählst.
+- Nur der Update-Dialog bzw. „Programme aktualisieren“ installiert etwas, und nur, was du ausdrücklich auswählst. Reparaturen unter „Wartung & Reparatur“ laufen nur auf deinen Klick nach Windows-Bestätigung.
 
 ## Entwicklung
 
@@ -320,6 +361,8 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 
 ## Versionen
 
+- **2.4.0:** Werkzeuge > Wartung & Reparatur: neue Klasse „nicht umkehrbare Aktion“ mit festem Befehlskatalog, Windows-Bestätigung, Hintergrund-Job mit Live-Ausgabe und Abbruch, geprüftem Wiederherstellungspunkt vor Reparaturen und Protokoll im Journal; Knopf „Wiederherstellungspunkt jetzt anlegen“; DISM (CheckHealth, ScanHealth, RestoreHealth, AnalyzeComponentStore, StartComponentCleanup) und `sfc /scannow` mit verständlicher Zusammenfassung; `chkdsk /scan`, DNS leeren, ReTrim, Zeit abgleichen, Energieberichte, Zuverlässigkeitsverlauf. Werkzeuge > Programme aktualisieren (winget) mit Auswahl, Fortschritt und Ergebnis. winget nur noch aus dem signierten App-Installer-Paket (auch im Scan). Datenordner-Rechte in der GUI reparieren statt beiseitelegen (#63).
+  - **Behoben:** Die Verbindung zur GUI brach ab, wenn das Morpheus-Fenster 1–2 Minuten im Hintergrund lag (Edge drosselt dann die Seite, der Server wertete das als geschlossenes Fenster). Betroffen waren alle Versionen seit 2.1. Jetzt gilt das Ende der Edge-Prozesse mit dem Morpheus-Profil als Signal; das Lebenszeichen der Seite ist nur noch Rückfall (10 Minuten), und Edge startet ohne Drosselung des Hintergrundfensters.
 - **2.3.3:** Sicherheits-Hotfix gegen Rechteausweitung. Morpheus fand winget und PowerShell-Module bisher auch in Ordnern, die Programme ohne Adminrechte beschreiben können, und hätte dort abgelegte Fälschungen mit Adminrechten gestartet. Jetzt gilt: winget nur aus dem signierten App-Installationsprogramm (sonst wird die Prüfung übersprungen), Module nur aus System32 und Program Files, alle Windows-Programme mit vollem Pfad, temporäre Dateien im gesicherten Datenordner, kein Standardbrowser mit Adminrechten. Ein neuer Test hält das für künftige Erweiterungen fest.
 - **2.3.2:** Prüfung „Wiederherstellung“ unterscheidet „Computerschutz aus“ und „Speicher zu klein“ (zeigt die Grenze und von Windows gelöschte Punkte); neue Anpassung „Speicher für Wiederherstellungspunkte vergrößern“; Warnung, wenn der Speicher zu klein ist; Zustände aller Anpassungen werden beim Start gelesen, „Ausführen“ erscheint nur noch bei offenen Punkten.
 - **2.3.1:** Befunde und unsignierte Systemdateien (je SHA256) in der GUI akzeptieren und zurücknehmen, nur nach Windows-Bestätigung; Prüfhilfe für unsignierte Systemdateien mit „Mit Defender prüfen“ je Datei, VirusTotal-Link und Hash kopieren; breites Layout für WQHD und größer; „Scan starten“ orange umrandet; Tabellen mit deckender Fläche, Zebra-Zeilen, festem Kopf und besserem Kontrast.
@@ -361,7 +404,7 @@ Morpheus ist ein privates Hilfsmittel ohne Gewähr. Die Empfehlungen im Bericht 
 
 ## English
 
-**Morpheus – PC Check-up** is a security and performance check for Windows 11 PCs with a GUI. The scan reads only. It runs about 110 checks (Defender, firewall, core isolation, Secure Boot, TPM, vulnerable drivers, autostart, RAM/XMP, refresh rate, power plan, gaming settings, crashes …). The GUI applies recommendations per click. Every change is protected by a restore point and can be reverted individually. The report texts are currently German only.
+**Morpheus – PC Check-up** is a security and performance check for Windows 11 PCs with a GUI. The scan reads only. It runs about 110 checks (Defender, firewall, core isolation, Secure Boot, TPM, vulnerable drivers, autostart, RAM/XMP, refresh rate, power plan, gaming settings, crashes …). The GUI applies recommendations per click. Every change is protected by a restore point and can be reverted individually. Since 2.4 the *Werkzeuge* (tools) view also runs Windows maintenance tools (DISM, SFC, chkdsk, ReTrim, power reports) and winget program updates, each after a Windows confirmation. Known residual risk: winget shares its installer download folder with your user account, so a program already running under your account could swap an installer before it starts with admin rights (the same applies to any `winget upgrade` in an admin terminal); version 2.5 will run winget without admin rights. The texts are currently German only; an English interface is planned for 2.5.
 
 **Quick start (3 steps):**
 

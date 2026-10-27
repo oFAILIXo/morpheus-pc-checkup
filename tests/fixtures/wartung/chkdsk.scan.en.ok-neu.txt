@@ -1,0 +1,37 @@
+﻿The type of the file system is NTFS.
+
+Stage 1: Examining basic file system structure ...
+Progress: 52000 of 421312 done; Stage:  12%; Total:   4%; ETA: 0:00:20
+Progress: 104000 of 421312 done; Stage:  24%; Total:   8%; ETA: 0:00:20
+Progress: 156000 of 421312 done; Stage:  36%; Total:  12%; ETA: 0:00:20
+Progress: 208000 of 421312 done; Stage:  48%; Total:  16%; ETA: 0:00:20
+Progress: 260000 of 421312 done; Stage:  60%; Total:  20%; ETA: 0:00:20
+Progress: 312000 of 421312 done; Stage:  72%; Total:  24%; ETA: 0:00:20
+Progress: 364000 of 421312 done; Stage:  84%; Total:  28%; ETA: 0:00:20
+Progress: 416000 of 421312 done; Stage:  96%; Total:  32%; ETA: 0:00:20
+  421312 file records processed.
+File verification completed.
+Stage 2: Examining file name linkage ...
+Progress: 58000 of 467894 done; Stage:  12%; Total:  37%; ETA: 0:00:12
+Progress: 116000 of 467894 done; Stage:  24%; Total:  41%; ETA: 0:00:12
+Progress: 174000 of 467894 done; Stage:  36%; Total:  45%; ETA: 0:00:12
+Progress: 232000 of 467894 done; Stage:  48%; Total:  49%; ETA: 0:00:12
+Progress: 290000 of 467894 done; Stage:  60%; Total:  53%; ETA: 0:00:12
+Progress: 348000 of 467894 done; Stage:  72%; Total:  57%; ETA: 0:00:12
+Progress: 406000 of 467894 done; Stage:  84%; Total:  61%; ETA: 0:00:12
+Progress: 464000 of 467894 done; Stage:  96%; Total:  65%; ETA: 0:00:12
+  467894 index entries processed.
+Stage 3: Examining security descriptors ...
+Progress: 100000 of 421312 done; Stage:  25%; Total:  74%; ETA: 0:00:05
+Progress: 200000 of 421312 done; Stage:  50%; Total:  82%; ETA: 0:00:05
+Progress: 300000 of 421312 done; Stage:  75%; Total:  90%; ETA: 0:00:05
+Progress: 400000 of 421312 done; Stage: 100%; Total:  98%; ETA: 0:00:05
+  Security descriptor verification completed.
+
+Windows has scanned the file system and found no problems.
+No further action is required.
+
+  498233083 KB total disk space.
+  311040816 KB in 301245 files.
+     143284 KB in 61244 indexes.
+  187049000 KB available on disk.

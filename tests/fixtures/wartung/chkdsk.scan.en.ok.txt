@@ -1,0 +1,19 @@
+﻿The type of the file system is NTFS.
+
+Stage 1: Examining basic file system structure ...
+  421312 file records processed.
+File verification completed.
+ Phase duration (File record verification): 2.31 seconds.
+Stage 2: Examining file name linkage ...
+  30 percent complete. (118200 of 421312 index entries processed)
+  467894 index entries processed.
+Stage 3: Examining security descriptors ...
+  Security descriptor verification completed.
+
+Windows has scanned the file system and found no problems.
+No further action is required.
+
+  498233083 KB total disk space.
+  311040816 KB in 301245 files.
+     143284 KB in 61244 indexes.
+  187049000 KB available on disk.

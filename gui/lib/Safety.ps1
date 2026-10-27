@@ -662,13 +662,42 @@ function Invoke-PcCheckChange {
     $results.ToArray()
 }
 
+function Test-PcCheckVorReparatur {
+    # Datenordner-Reparatur (18.10): Gilt der Journal-Eintrag als "vor der Reparatur" (kann von einem Programm mit Schreibrechten stammen)?
+    # Ja, wenn die Sperrdatei state\datenordner-reparatur.json existiert UND (sie nicht lesbar ist ODER journalUnlesbar true ist
+    # ODER die Id des Eintrags in "eintraege" steht ODER - nur bei altem Format ohne "eintraege" - die Zeit des Eintrags nicht
+    # nach der Reparatur liegt bzw. nicht lesbar ist). Die Zeit allein reicht nicht: Sie steht im Journal und ist fälschbar.
+    param([Parameter(Mandatory)][string]$DataRoot, [Parameter(Mandatory)]$Eintrag)
+    $repFile = Join-Path $DataRoot 'state\datenordner-reparatur.json'
+    if (-not (Test-Path -LiteralPath $repFile -PathType Leaf)) { return $false }
+    $j = $null
+    try { $j = ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($repFile, [Text.Encoding]::UTF8)) } catch { return $true }
+    if ($null -eq $j) { return $true }
+    $ju = $j.PSObject.Properties['journalUnlesbar']
+    if ($ju -and ($ju.Value -eq $true)) { return $true }
+    $ep = $j.PSObject.Properties['eintraege']
+    if ($ep) {
+        $id = [string]$Eintrag.id
+        foreach ($x in @($ep.Value)) { if ([string]$x -ceq $id) { return $true } }
+        return $false
+    }
+    # Altes Format (version 1): Zeitvergleich. Unlesbare Zeiten gelten als älter.
+    $fmt = [string[]]@('yyyy-MM-ddTHH:mm:ss', 'yyyy-MM-ddTHH:mm:ss.FFFFFFF')
+    $ci = [Globalization.CultureInfo]::InvariantCulture
+    $repZeit = $null; $eintragZeit = $null
+    try { $repZeit = [datetime]::ParseExact([string]$j.zeit, $fmt, $ci, [Globalization.DateTimeStyles]::None) } catch { }
+    try { $eintragZeit = [datetime]::ParseExact([string]$Eintrag.zeit, $fmt, $ci, [Globalization.DateTimeStyles]::None) } catch { }
+    return (($null -eq $repZeit) -or ($null -eq $eintragZeit) -or ($eintragZeit -lt $repZeit))
+}
+
 function Undo-PcCheckChange {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$EntryId,
         [switch]$Force,
-        [string]$DataRoot
+        [string]$DataRoot,
+        [switch]$VorReparaturBestaetigt
     )
     if (-not $DataRoot) { $DataRoot = $Root }
     $jobStart = Get-Date
@@ -676,9 +705,14 @@ function Undo-PcCheckChange {
     $entry = $null
     foreach ($e in @(PcCheckSafetyReadJournal $DataRoot)) { if ([string]$e.id -ceq $EntryId) { $entry = $e } }
     if ($null -eq $entry) { throw "Journal-Eintrag '$EntryId' nicht gefunden." }
-    if ([string]$entry.art -cne 'ausfuehren') { throw 'Nur ausgeführte Änderungen lassen sich zurücknehmen. Eine Rücknahme kann nicht erneut zurückgenommen werden; dafür die Aktion neu ausführen.' }
+    if ([string]$entry.art -cne 'ausfuehren') { throw 'Für diesen Eintrag gibt es kein Rückgängig.' }
     if ([string]$entry.status -cne 'erledigt') {
         throw "Der Eintrag hat den Status '$($entry.status)' und lässt sich nicht zurücknehmen (nur 'erledigt')."
+    }
+    # Datenordner-Reparatur (18.10): Einträge aus der Zeit davor können von einem Programm mit Schreibrechten stammen.
+    # Ohne ausdrückliche Bestätigung keine Rücknahme. Ist die Datei unlesbar oder die Zeit nicht lesbar, gilt der Eintrag als älter.
+    if ((-not $VorReparaturBestaetigt) -and (Test-PcCheckVorReparatur -DataRoot $DataRoot -Eintrag $entry)) {
+        throw 'Dieser Eintrag stammt aus der Zeit vor der Reparatur des Datenordners. Bitte ausdrücklich bestätigen.'
     }
     $a = PcCheckSafetyFindAction $catalog ([string]$entry.aktion)
     if ($null -eq $a) { throw "Die Aktion '$($entry.aktion)' ist nicht mehr im Katalog; Rücknahme nicht möglich." }

@@ -206,6 +206,7 @@ details.how ol{margin:8px 0;padding-left:20px;font-size:13px;color:var(--b1)}
 .banner>svg{color:var(--yellow);margin-top:2px}
 .banner>div{min-width:0;flex:1}
 .banner b{color:var(--t-yellow)}
+.banner p{margin:4px 0 0}.banner .brow{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap}
 .banner.b-err{background:#dc322f1a;border-color:#dc322f66}.banner.b-err>svg{color:var(--red)}.banner.b-err b{color:var(--t-red)}
 .banner.b-info{background:#268bd21a;border-color:#268bd266}.banner.b-info>svg{color:var(--blue)}.banner.b-info b{color:var(--t-blue)}
 
@@ -450,3 +451,45 @@ button.sp-item:focus-visible{outline:2px solid var(--cyan)}
 pre.log.eula{max-height:340px;min-height:120px}
 /* Scan-Protokoll: nutzt die Fensterhöhe unter den Optionen (2.3.1), mindestens 320 px */
 pre.log.scanlog{height:calc(100vh - 340px);min-height:320px;max-height:none;font-size:13.5px}
+
+/* Wartung & Reparatur, Programme aktualisieren (Abschnitt 18). Nur vorhandene Tokens; Text auf --surface mindestens --b1 (4.86:1) */
+.wt-legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:10px 0 4px;font-size:12.5px;color:var(--b1)}
+.wt-legend>span{display:inline-flex;align-items:center;gap:8px}
+.wt-group{margin-top:22px}
+.wt-group:first-child{margin-top:0}
+.wt-group>h3{margin:0 0 6px;padding-bottom:6px;border-bottom:1px solid var(--line);color:var(--b2);font-size:14.5px}
+.wt-group>h3.wt-sub{margin-top:16px;border-bottom:0;font-size:13px}
+.wt-row{padding:14px 0;border-top:1px solid var(--line)}
+.wt-list>.wt-row:first-child{border-top:0}
+.wt-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.wt-title{color:var(--b2);font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.wt-expl{margin:6px 0 0;color:var(--b1);font-size:13px}
+.wt-meta{margin:4px 0 0;color:var(--b1);font-size:12px}
+.wt-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.wt-acts select{max-width:100%}
+.wt-help p{margin:6px 0;color:var(--b1);font-size:12.5px}
+.wt-help b{color:var(--b2)}
+.wt-state{display:flex;flex-wrap:wrap;gap:8px 22px;margin:10px 0 4px;color:var(--b1);font-size:13px}
+.wt-state>span{display:inline-flex;align-items:center;gap:6px}
+.wt-run{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 4px;padding:10px 14px;border-radius:var(--r-sm);background:var(--surface2);border:1px solid var(--line2);color:var(--b2)}
+.wt-box{margin:12px 0;padding:10px 14px;border-radius:var(--r-sm);background:#cb4b1622;border:1px solid var(--line2);color:var(--b2);font-size:13px}
+.wt-box b{color:var(--b3)}
+.wt-dur{font-size:12px;color:var(--b1)}
+.wt-msg{white-space:pre-wrap;overflow-wrap:anywhere}
+.wt-res{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
+.wt-pk{margin:6px 0;padding-left:20px}
+.wt-pk li{margin:3px 0;color:var(--b1)}
+.wt-reps{display:flex;flex-direction:column}
+.wt-rep{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)}
+.wt-rep:first-child{border-top:0}
+.wt-rep b{color:var(--b2);font-weight:600}
+.wt-rep .wt-meta{margin:0;flex:1}
+.wt-report{margin-top:12px;padding:12px;border:1px solid var(--line2);border-radius:var(--r-sm);background:var(--b03)}
+.wt-report .toolbar{margin-top:0}
+.wt-frame{display:block;width:100%;height:70vh;border:1px solid var(--line);border-radius:6px;background:#fff}
+/* Update-Tabelle: ohne Zebra, damit auch grauer Text (--b0) auf --b03 mindestens 4.5:1 hat (4.74:1) */
+.wt-upd tbody tr:nth-child(even){background:var(--b03)}
+.wt-upd tbody tr:hover{background:#0b4150}
+.wt-upd tbody tr.dim td{color:var(--b0)}
+.wt-upd td .note{color:var(--b0);margin-top:0}
+@media (max-width:760px){.wt-run{align-items:flex-start}.wt-frame{height:60vh}}

@@ -1,0 +1,2 @@
+﻿Der Vorgang kann nicht ausgeführt werden. Es ist ein Fehler aufgetreten: Das System unterstützt Modern Standby (S0-Leerlaufmodus mit niedrigem Energieverbrauch) nicht.
+Der Schlafstudienbericht kann nicht erstellt werden.

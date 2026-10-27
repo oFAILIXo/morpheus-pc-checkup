@@ -1,0 +1,8 @@
+﻿   - 
+   \ 
+Name                 Id                      Version  Verfügbar Quelle
+-----------------------------------------------------------------------
+Demo Editor          Demo.Editor             1.2.0    1.3.0     winget
+Beispiel Player      Beispiel.Player         4.0      4.1       winget
+Epic Games Launcher  EpicGames.Launcher      15.0     15.1      winget
+3 Aktualisierungen verfügbar.
