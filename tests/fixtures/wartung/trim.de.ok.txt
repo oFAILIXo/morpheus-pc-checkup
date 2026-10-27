@@ -1,0 +1,17 @@
+﻿Microsoft Drive Optimizer
+Copyright (c) Microsoft Corp.
+
+Retrim wird für Demo-SSD (C:) aufgerufen ...
+
+Der Vorgang wurde erfolgreich abgeschlossen.
+
+Bericht nach der Defragmentierung:
+
+ Volumeinformationen:
+   Volumegröße                 = 465,12 GB
+   Freier Speicherplatz        = 178,38 GB
+
+ Retrim:
+   Größe der gesicherten Zuordnungen = 463,40 GB
+   Getrimmte Zuordnungen             = 176,52 GB
+   Insgesamt getrimmter Speicherplatz = 176,52 GB

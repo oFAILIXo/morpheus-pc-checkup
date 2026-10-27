@@ -89,7 +89,7 @@ $script:BenutzerTemp = $env:TEMP
 $env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
 foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 
-$ScriptVersion = '2.3.3'
+$ScriptVersion = '2.4.0'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
@@ -322,17 +322,6 @@ function Get-PackagedAncestor {
     $null
 }
 
-# Ordnet ein winget-Update ein. Der Update-Dialog bietet nur Kategorie 'Programm' an:
-# Spiele und Launcher sowie Programme mit eigener Update-Funktion aktualisieren sich selbst.
-function Get-UpdateCategory {
-    param([string]$Id, [string]$Name)
-    $gamePublishers = 'Blizzard|ElectronicArts|EpicGames|Valve|Ubisoft|RockstarGames|CloudImperiumGames|GOG|Amazon\.Games|RiotGames|Wargaming|Paradox|Bethesda|Mojang|Roblox|Overwolf|BattlestateGames|Microsoft\.Xbox|Microsoft\.GamingApp'
-    if ($Id -match "^($gamePublishers)\." -or $Name -match 'Launcher|Game') { return 'Spiel/Launcher' }
-    # Vial meldet keine Version und würde bei jedem Lauf neu installiert
-    if ($Id -in 'Autodesk.Fusion', 'Microsoft.Edge', 'Microsoft.Teams', 'Microsoft.Outlook', 'Microsoft.VisualStudioCode', 'Vial.Vial') { return 'aktualisiert sich selbst' }
-    'Programm'
-}
-
 # Bewertet eine einzelne Defender-Ausnahme: 'CRIT', 'WARN' oder $null (unauffällig).
 function Get-ExclusionRisk {
     param([ValidateSet('Pfad', 'Prozess', 'Endung')][string]$Type, [string]$Value)
@@ -385,6 +374,9 @@ $script:SpeicherLib = $false
 $script:SicherungLib = $false
 $speicherLibPfad = Join-Path $PSScriptRoot 'gui\lib\Speicher.ps1'
 if (Test-Path -LiteralPath $speicherLibPfad) { . $speicherLibPfad; $script:SpeicherLib = $true }
+$script:WingetLib = $false
+$wingetLibPfad = Join-Path $PSScriptRoot 'gui\lib\Winget.ps1'
+if (Test-Path -LiteralPath $wingetLibPfad) { . $wingetLibPfad; $script:WingetLib = $true }
 $sicherungLibPfad = Join-Path $PSScriptRoot 'gui\lib\Sicherung.ps1'
 if (Test-Path -LiteralPath $sicherungLibPfad) { . $sicherungLibPfad; $script:SicherungLib = $true }
 # Akzeptanzliste: früh einlesen, weil die Sigcheck-Prüfung die Datei-Regeln (je SHA256) braucht
@@ -2034,71 +2026,22 @@ else {
     Invoke-Check 'Software-Updates (winget)' {
         # winget nur aus dem signierten App-Installationsprogramm unter Program Files\WindowsApps, nie über PATH (2.3.3)
         if (-not $script:PfadLib) { Add-Finding SKIP 'winget nicht geprüft: gui\lib\Systempfade.ps1 fehlt'; return }
+        if (-not $script:WingetLib) { Add-Finding SKIP 'gui\lib\Winget.ps1 fehlt'; return }
         $wgInfo = Get-MorpheusWinget
         if (-not $wgInfo.Pfad) { Add-Finding SKIP ('winget nicht gefunden: ' + $wgInfo.Grund) 'Morpheus startet winget nur aus dem signierten App-Installationsprogramm unter C:\Program Files\WindowsApps, nie über PATH. Abhilfe: App-Installer im Microsoft Store aktualisieren.'; return }
-        $wg = [pscustomobject]@{ Source = $wgInfo.Pfad }
-        $text = ''; $errText = ''; $exit = $null
-        # Beim ersten Aufruf aktualisiert winget seine Quelle und liefert dabei gelegentlich nichts: einmal wiederholen.
-        for ($attempt = 1; $attempt -le 2 -and -not $text.Trim(); $attempt++) {
-            $psi = New-Object System.Diagnostics.ProcessStartInfo
-            $psi.FileName = $wg.Source
-            $psi.Arguments = 'upgrade --source winget --include-unknown --disable-interactivity'
-            $psi.UseShellExecute = $false
-            $psi.RedirectStandardOutput = $true
-            $psi.RedirectStandardError = $true
-            $psi.CreateNoWindow = $true
-            $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
-            $proc = [Diagnostics.Process]::Start($psi)
-            $stdout = $proc.StandardOutput.ReadToEndAsync()
-            $stderr = $proc.StandardError.ReadToEndAsync()
-            if (-not $proc.WaitForExit(180000)) {
-                try { $proc.Kill() } catch {}
-                Add-Finding SKIP 'winget hat nicht innerhalb von 3 Minuten geantwortet'
-                return
-            }
-            $text = [string]$stdout.Result
-            $errText = [string]$stderr.Result
-            $exit = $proc.ExitCode
+        $wu = Get-MorpheusWingetUpdates -InformationAction SilentlyContinue
+        switch ($wu.status) {
+            'zeitlimit' { Add-Finding SKIP 'winget hat nicht innerhalb von 3 Minuten geantwortet'; return }
+            'fehler' { Add-Finding SKIP ('winget-Abfrage fehlgeschlagen: ' + $wu.fehler); return }
+            'unlesbar' { Add-Finding SKIP $wu.fehler; return }
+            'keine' { Add-Finding OK 'Alle über winget erkannten Programme aktuell'; return }
         }
-        # Fortschrittsanzeigen arbeiten mit \r; pro Zeile zählt nur der Teil nach dem letzten \r (ohne das CR des Zeilenendes).
-        $lines = @($text -split "`n" | ForEach-Object { $_.TrimEnd("`r").Split("`r")[-1] } | Where-Object { $_.Trim() })
-        $sep = -1
-        for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^-{10,}') { $sep = $i; break } }
-        if ($sep -lt 1) {
-            if ($text -match 'No installed package|Keine installierten|No available upgrade|Keine verfügbaren') { Add-Finding OK 'Alle über winget erkannten Programme aktuell' }
-            else { Add-Finding SKIP ("Ausgabe nicht auswertbar (Exit-Code $exit): " + ((@($lines | Select-Object -Last 2) + $errText.Trim()) -join ' ')) }
-            return
-        }
-        $starts = @([regex]::Matches($lines[$sep - 1], '\S+') | ForEach-Object Index)
-        $rows = for ($i = $sep + 1; $i -lt $lines.Count; $i++) {
-            $l = $lines[$i]
-            if ($l -match '^\d+ \D') { break }
-            $cols = for ($c = 0; $c -lt $starts.Count; $c++) {
-                $s = $starts[$c]
-                $e = if ($c + 1 -lt $starts.Count) { [Math]::Min($starts[$c + 1], $l.Length) } else { $l.Length }
-                if ($s -lt $e) { $l.Substring($s, $e - $s).Trim() } else { '' }
-            }
-            [pscustomobject][ordered]@{ Name = $cols[0]; Id = $cols[1]; Installiert = $cols[2]; Verfuegbar = $cols[3] }
-        }
-        # Abgleich mit der Programmliste von Windows: winget führt in seinem Index teils Programme, die längst deinstalliert sind.
-        $arpNames = @(foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*') {
-                Get-ItemProperty $k -ErrorAction SilentlyContinue | Where-Object DisplayName | ForEach-Object { ([string]$_.DisplayName).Trim() }
-            })
-        # Nur für angebotene Programme nötig; Store-Apps haben oft einen anderen Paketnamen als ihre winget-ID.
-        $rows = @(foreach ($r in $rows) {
-                $cat = Get-UpdateCategory -Id $r.Id -Name $r.Name
-                if ($cat -eq 'Programm') {
-                    $name = $r.Name.TrimEnd([char]0x2026, '.', ' ')
-                    $installed = [bool]($arpNames | Where-Object { $_ -like "$name*" } | Select-Object -First 1) -or [bool](Get-AppxPackage -Name $r.Id -ErrorAction SilentlyContinue)
-                    if (-not $installed) { $cat = 'nicht mehr installiert' }
-                }
-                $r | Add-Member -NotePropertyName Kategorie -NotePropertyValue $cat -PassThru
-            })
+        $rows = @($wu.zeilen)
         $script:WingetUpdates = $rows
         Add-Table 'Verfügbare Software-Updates (winget)' $rows
         $manual = @($rows | Where-Object Kategorie -EQ 'Programm')
         $other = @($rows | Where-Object Kategorie -NE 'Programm')
-        if ($manual.Count) { Add-Finding WARN "$($manual.Count) Programme mit verfügbaren Updates: $((($manual | Select-Object -First 8 | ForEach-Object Name) -join ', '))" 'Am Ende des Laufs bietet das Script die Updates zur Auswahl an (oder: winget upgrade --id <Id>).' }
+        if ($manual.Count) { Add-Finding WARN "$($manual.Count) Programme mit verfügbaren Updates: $((($manual | Select-Object -First 8 | ForEach-Object Name) -join ', '))" 'In Morpheus unter Werkzeuge > Programme aktualisieren auswählen und installieren (oder am Ende des Konsolen-Laufs).' }
         elseif ($other.Count) { Add-Finding INFO "Nur Spiele/Launcher bzw. selbstaktualisierende Programme offen ($($other.Count)): $((($other | ForEach-Object Name) -join ', '))" 'Aktualisieren sich beim nächsten Start selbst.' }
         else { Add-Finding OK 'Alle über winget erkannten Programme aktuell' }
     }
@@ -3777,7 +3720,8 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
             A "<li><span class=`"badge b-$($f.Status)`">$($statusName[$f.Status])</span> <a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a><div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
         }
         A '</ol>'
-        if ($todo.Count -gt 3) { A "<p class=`"muted`">Insgesamt $($todo.Count) Punkte mit Handlungsbedarf; alle zeigt der Filter „Probleme“.</p>" }
+        # Typografische Anführungszeichen nur in einfach gequoteten Strings (in "…" beenden sie in PS 5.1 den String)
+        if ($todo.Count -gt 3) { A ('<p class="muted">Insgesamt {0} Punkte mit Handlungsbedarf; alle zeigt der Filter „Probleme“.</p>' -f $todo.Count) }
         A '</div>'
     }
     else { A '<div class="card">Kein Handlungsbedarf. 🎉</div>' }
@@ -3787,7 +3731,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
             A "<li><a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a>$(Get-Levels $f)<div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
         }
         A '</ol>'
-        if ($tips.Count -gt 5) { A "<p class=`"muted`">Insgesamt $($tips.Count) Tipps; alle zeigt der Filter „Tipps“.</p>" }
+        if ($tips.Count -gt 5) { A ('<p class="muted">Insgesamt {0} Tipps; alle zeigt der Filter „Tipps“.</p>' -f $tips.Count) }
         A '</div>'
     }
 
@@ -3940,14 +3884,22 @@ if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
             foreach ($u in $selected) { $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = 'nicht aktualisiert (winget nicht gefunden)' } }
             $selected = @()
         }
+        # Von winget gekürzte oder ungültige Ids nicht übergeben (2.4)
+        elseif ($script:WingetLib) { $selected = @($selected | Where-Object { Test-MorpheusWingetId -Id $_.Id }) }
+        # WinGet-Ordner in TEMP vorab nur für Administratoren und SYSTEM anlegen (2.4, W11/G3)
+        $wgOrdner = ($wg -and $script:WingetLib -and $selected -and (Get-Command -Name Initialize-MorpheusWingetOrdner -CommandType Function -ErrorAction SilentlyContinue))
+        if ($wgOrdner) {
+            $io = Initialize-MorpheusWingetOrdner
+            if (-not $io.ok) { Write-Host ('  WinGet-Ordner ließ sich nicht vorbereiten: ' + $io.meldung) -ForegroundColor Yellow }
+        }
         foreach ($u in $selected) {
             while ($true) {
                 Write-Host "`n=== Aktualisiere $($u.Name) ($($u.Installiert) -> $($u.Verfuegbar))" -ForegroundColor Cyan
-                & $wg upgrade --id $u.Id --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+                & $wg @(((Get-MorpheusWingetUpgradeArgumente -Id $u.Id) -split ' '))
                 $code = $LASTEXITCODE
                 if ($code -eq 0) { $result = 'aktualisiert'; break }
                 # 0x8A150006: Installer abgebrochen, meist weil das Programm noch läuft
-                if ($code -eq -1978335226) {
+                if ((Get-MorpheusWingetErgebnis -ExitCode $code).status -eq 'laeuft-noch') {
                     Write-Host '  Der Installer hat abgebrochen, meist weil das Programm noch läuft (bei Git: Git-Bash-Fenster schließen).' -ForegroundColor Yellow
                     if ((Read-Host '  Programm schließen und erneut versuchen? (j/n)') -match '^\s*j') { continue }
                     $result = 'abgebrochen (Programm lief noch)'
@@ -3958,13 +3910,21 @@ if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
             Write-Host "  -> $result" -ForegroundColor $(if ($result -eq 'aktualisiert') { 'Green' } else { 'Red' })
             $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = $result }
         }
+        if ($wgOrdner) {
+            $wgTest = Test-MorpheusWingetOrdner
+            $wgOrdnerText = [string]$wgTest.text
+            Write-Host ('  ' + $wgOrdnerText) -ForegroundColor $(if ($wgTest.gehalten) { 'Green' } else { 'Yellow' })
+        }
     }
     else { Write-Host '  Keine Updates ausgewählt.' }
     $updateResults = @($results)
+    $wgOrdnerZeile = $null
+    if ($wgOrdnerText) { $wgOrdnerZeile = $wgOrdnerText }
 
     # Ergebnis an den Bericht anhängen
     $lines = @('', "## Updates nach dem Lauf ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))", '')
     if ($results) { $lines += (ConvertTo-MdTable $results) } else { $lines += '_Keine Updates ausgewählt._' }
+    if ($wgOrdnerZeile) { $lines += ''; $lines += $wgOrdnerZeile }
     [IO.File]::AppendAllText($mdPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
     try { Write-HtmlReport -Path $htmlPath } catch { Write-Warning "HTML-Bericht konnte nicht aktualisiert werden: $($_.Exception.Message)" }
     Write-Host "`nUpdate-Ergebnis an den Bericht angehängt (im Browser mit F5 neu laden)." -ForegroundColor Green

@@ -148,10 +148,10 @@ Describe 'Admin-Code: statische Pruefung (Teil A)' {
         $anzahlPcCheck | Should BeGreaterThan 0
     }
 
-    It 'GuiJobScripts: genau 7 Eintraege, jeder beginnt mit der Haertung' {
+    It 'GuiJobScripts: genau 9 Eintraege (2.4: wartung, updatesuche), jeder beginnt mit der Haertung' {
         $eintraege = @(Get-GuiJobScripts)
-        $eintraege.Count | Should Be 7
-        (($eintraege | ForEach-Object { $_.Key } | Sort-Object) -join ',') | Should Be 'defender,refresh,run,scan,speicher,sysinternals,undo'
+        $eintraege.Count | Should Be 9
+        (($eintraege | ForEach-Object { $_.Key } | Sort-Object) -join ',') | Should Be 'defender,refresh,run,scan,speicher,sysinternals,undo,updatesuche,wartung'
         $funde = @()
         foreach ($e in $eintraege) {
             if (-not $e.Block) { $funde += ('{0}: kein Scriptblock' -f $e.Key); continue }

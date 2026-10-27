@@ -1,0 +1,4 @@
+﻿
+Systemscan wird gestartet. Dieser Vorgang kann einige Zeit dauern.
+
+Der Windows-Ressourcenschutz konnte den angeforderten Vorgang nicht ausführen.

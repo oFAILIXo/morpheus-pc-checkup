@@ -1,0 +1,8 @@
+﻿
+Tool zur Imageverwaltung für die Bereitstellung
+Version: 10.0.26100.1
+
+Abbildversion: 10.0.26100.2314
+
+[==========================100.0%==========================]
+Der Vorgang wurde erfolgreich beendet.

@@ -1,6 +1,6 @@
 # pc-check GUI (v2.0): Architektur
 
-Stand: 27.10.2026 (Version 2.3.3)
+Stand: 27.10.2026 (Version 2.4.0)
 
 Dieses Dokument ist der Vertrag für alle Teilaufgaben. Wer an einem Teil arbeitet, hält sich an Dateinamen, API und Schema. Abweichungen erst hier eintragen, dann umsetzen.
 
@@ -666,3 +666,234 @@ Aufrufer: `pc-check-gui.ps1` (lädt die Datei, setzt TEMP nach `Initialize-Morph
 ### 17.3 Test
 
 `tests\Systempfade.Tests.ps1` prüft die Regeln aus 17.1 statisch über den Syntaxbaum aller Admin-Dateien und die Funktionen aus 17.2 mit Attrappen. Ein neuer Aufruf eines externen Programms ohne vollen Pfad oder ein neuer Job ohne Modulpfad lässt den Test scheitern.
+
+## 18. Ergänzungen v2.4: Wartung & Reparatur und Update-Dialog (Vertrag für alle Teilaufgaben)
+
+### 18.1 Grundsätze
+
+- **Neue Klasse „nicht umkehrbare Aktion“** neben den umkehrbaren Katalog-Aktionen (Abschnitt 8). Klassen je Werkzeug: `diagnose` (liest nur), `wartung` (harmlos), `reparatur` (Reparatur, Bereinigung, Programm-Update: nicht umkehrbar).
+- **Fester Katalog** in `gui\lib\Wartung.ps1`. Der Browser schickt nur eine Werkzeug-Id, ggf. ein Laufwerk (aus der Liste, die der Server selbst ermittelt) und bei winget Paket-Ids (nur aus der Liste, die der Server zuletzt selbst gesucht hat). Nie einen Befehl, Pfad oder freien Parameter.
+- **Programme nur über feste Pfade**, nie über `PATH` oder Umgebungsvariablen: System32 über `[Environment]::GetFolderPath('System')`, Windows-Ordner über `GetFolderPath('Windows')` (Grund: `%SystemRoot%`/`%windir%` lassen sich über `HKCU\Environment` umbiegen). winget nur aus dem signierten Paket `Microsoft.DesktopAppInstaller` unter `<ProgramFiles>\WindowsApps\` (18.4), nie `%LOCALAPPDATA%\Microsoft\WindowsApps\winget.exe` (vom Benutzer beschreibbar).
+- **Kein PowerShell-Cmdlet aus Benutzer-Modulpfaden:** Die Werkzeuge sind EXE-Dateien. ReTrim läuft als `defrag.exe <LW> /L` (dasselbe wie `Optimize-Volume -ReTrim`), weil ein erhöhtes PowerShell Module zuerst aus `Dokumente\WindowsPowerShell\Modules` lädt.
+- **Windows-Bestätigung im Admin-Prozess vor jedem Start** (Ausnahme: „Zuverlässigkeitsverlauf öffnen“, startet ohne Adminrechte und ändert nichts). Der Dialogtext stammt aus dem Katalog; eingesetzt werden nur geprüfte Laufwerksbuchstaben und winget-Namen/Versionen über `Format-GuiDialogWert`.
+- **Wiederherstellungspunkt vor jeder `reparatur`** über `PcCheckSafetyEnsureRestorePoint` aus `Safety.ps1` (gleiche Prüfung: neue Sequenznummer). Fehlt er, startet nichts; Ergebnis `status = 'punkt-fehlt'`. Erst danach darf der Client `ohnePunkt: true` schicken, und der Server nimmt das nur an, wenn derselbe Werkzeug-Start in dieser Sitzung in den letzten 15 Minuten mit `punkt-fehlt` endete (einmal verwendbar). Der Windows-Dialog sagt dann ausdrücklich „OHNE Wiederherstellungspunkt“.
+- **Hintergrund-Job** (`Start-Job`, Art `wartung`) mit Live-Ausgabe. Es läuft höchstens ein `wartung`-Job; `wartung` mit Klasse `wartung`/`reparatur` gilt als ändernd (`Mutating`, sperrt `run`/`undo` und umgekehrt).
+- **Abbruch** je Werkzeug: `sofort` (Prozessbaum beenden; nur bei lesenden bzw. unkritischen Werkzeugen), `nach-paket` (winget: nach dem laufenden Paket) oder `nein` (DISM-Reparatur, Bereinigung und SFC: Microsoft rät davon ab, sie zu unterbrechen). Signal: eine Flag-Datei unter `<DataRoot>\state\wartung\`, deren Namen nur der Server kennt.
+- **Journal:** Jeder Lauf bekommt vor dem Start einen Eintrag (`status = 'begonnen'`) und danach das Ergebnis (18.6). Kein „Rückgängig“: `Undo-PcCheckChange` und `POST /api/journal/<id>/undo` lehnen alles außer `art = 'ausfuehren'` ab.
+- **Live-Ausgabe ist Daten:** Zeilen werden bereinigt (Steuer- und Bidi-Zeichen raus, höchstens 500 Zeichen), Fortschrittsbalken gedrosselt, höchstens 4000 Zeilen je Job, angezeigt nur über `textContent`.
+- **Tests rufen nie echte Werkzeuge auf** (DISM, SFC, chkdsk, winget, defrag, powercfg, w32tm, ipconfig, Wiederherstellungspunkt). Alles läuft über `$script:MorpheusWartungImpl` bzw. `$script:MorpheusWingetImpl`; der Prozess-Runner wird nur mit `cmd.exe /c echo …`/`ping 127.0.0.1` getestet.
+
+### 18.2 Neue Dateien
+
+| Datei | Inhalt | geladen von |
+|---|---|---|
+| `gui\lib\Wartung.ps1` | Katalog, Laufwerke, Prozess-Runner, `Invoke-MorpheusWartung`, Berichte, Zuverlässigkeitsverlauf | `pc-check-gui.ps1`, Job `wartung` |
+| `gui\lib\WartungAuswertung.ps1` | reine Funktionen: Zeilen bereinigen, Fortschritt erkennen, Ergebnis zusammenfassen (DE/EN) | `Wartung.ps1` |
+| `gui\lib\Winget.ps1` | sicherer winget-Pfad, Liste parsen, Kategorien, Upgrade-Argumente, Exit-Codes | `pc-check.ps1`, `Wartung.ps1`, Job `updatesuche` |
+| `tests\fixtures\wartung\*.txt` | Beispielausgaben (deutsch und englisch, UTF-8 mit BOM) | Tests |
+
+Alle unter `gui\lib\*.ps1` und damit in `Get-MorpheusCodeFiles`. `Wartung.ps1` lädt `WartungAuswertung.ps1`, `Winget.ps1` und `Safety.ps1` (gleicher Ordner) per Dot-Source, falls deren Funktionen fehlen. Kein `Add-Type` mit C#.
+
+### 18.3 Katalog (`Wartung.ps1`)
+
+`$script:MorpheusWartungKatalog` (geordnet). Platzhalter in `Argumente`: nur `{LW}` (`^[A-Z]:$`), `{BERICHT}` (vom Job erzeugter voller Pfad, in `"…"`) und `{ID}` (winget, 18.4). `Programm`: Dateiname in System32 oder `winget`.
+
+| Id | Gruppe | Schritt | Klasse | Programm und Argumente | Abbruch | Parameter | Zeitlimit |
+|---|---|---|---|---|---|---|---|
+| `wiederherstellung.punkt` | Wiederherstellung | 1 | wartung | (kein Prozess) `Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS` | nein | – | – |
+| `dism.checkhealth` | Systemdateien | 1 | diagnose | `Dism.exe /Online /Cleanup-Image /CheckHealth` | sofort | – | 600 s |
+| `dism.scanhealth` | Systemdateien | 2 | diagnose | `Dism.exe /Online /Cleanup-Image /ScanHealth` | sofort | – | 3600 s |
+| `dism.restorehealth` | Systemdateien | 3 | reparatur | `Dism.exe /Online /Cleanup-Image /RestoreHealth` | nein | – | 7200 s |
+| `sfc.scannow` | Systemdateien | 4 | reparatur | `sfc.exe /scannow` | nein | – | 3600 s |
+| `dism.analyze` | Komponentenspeicher | 1 | diagnose | `Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore` | sofort | – | 1800 s |
+| `dism.cleanup` | Komponentenspeicher | 2 | reparatur | `Dism.exe /Online /Cleanup-Image /StartComponentCleanup` | nein | – | 7200 s |
+| `chkdsk.scan` | Diagnose | 1 | diagnose | `chkdsk.exe {LW} /scan` | sofort | `laufwerk` | 3600 s |
+| `perfmon.rel` | Diagnose | 2 | diagnose | (kein Job) `perfmon /rel`, gestartet ohne Adminrechte (18.3.2) | – | – | – |
+| `dns.flush` | Wartung | 1 | wartung | `ipconfig.exe /flushdns` | nein | – | 60 s |
+| `trim` | Wartung | 2 | wartung | `defrag.exe {LW} /L` (= `Optimize-Volume -DriveLetter X -ReTrim`) | sofort | `ssd` | 1800 s |
+| `zeit.resync` | Wartung | 3 | wartung | `w32tm.exe /resync` | nein | – | 120 s |
+| `powercfg.energy` | Energieberichte | 1 | diagnose | `powercfg.exe /energy /output {BERICHT} /duration 60` | sofort | – | 240 s |
+| `powercfg.akku` | Energieberichte | 2 | diagnose | `powercfg.exe /batteryreport /output {BERICHT}` | nein | – | 120 s |
+| `powercfg.schlaf` | Energieberichte | 3 | diagnose | `powercfg.exe /sleepstudy /output {BERICHT}` | nein | – | 120 s |
+| `winget.upgrade` | Programme | 1 | reparatur | `winget upgrade --id {ID} --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity` je Paket | nach-paket | `ids` | 1800 s je Paket |
+
+Weitere Felder je Eintrag: `Titel`, `Erklaerung` (1–2 Sätze), `Dauer` (Text, z. B. „5–20 Minuten“), `Internet` (bool, `dism.restorehealth` und `winget.upgrade`), `Hinweis` (Text oder `$null`), `Punkt` (= Klasse `reparatur`), `Kodierung` (`oem` Standard, d. h. UTF-16LE erkennen, sonst OEM-Codepage; `utf8` für winget), `Bericht` (`energy`, `akku`, `schlaf` oder `$null`). **Kein `/ResetBase`, kein `chkdsk /f`**, kein Netzwerk-Reset.
+
+Berichtsdateien: `<DataRoot>\reports\morpheus-<art>_<yyyy-MM-dd_HHmmss>.html`, Muster `^morpheus-(energy|akku|schlaf)_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}\.html\z`.
+
+#### 18.3.1 Funktionen
+
+| Funktion | Rückgabe |
+|---|---|
+| `Get-MorpheusWartungWerkzeuge` | Array öffentlicher Objekte `{ id, gruppe, schritt, klasse, titel, erklaerung, befehl, dauer, abbruch, parameter, punkt, internet, hinweis, bericht }`; `befehl` = Anzeige mit `<LW>` bzw. `<Paket-Id>` als Platzhalter, `abbruch` ∈ `sofort`/`nach-paket`/`nein`, `parameter` ∈ `laufwerk`/`ssd`/`ids`/`$null`, `bericht` bool |
+| `Get-MorpheusWartungLaufwerke` | `[{ laufwerk:'C:', bezeichnung, ssd:[bool\|null] }]`: feste Laufwerke (`Win32_LogicalDisk` `DriveType=3`), SSD über `Get-Partition`/`Get-PhysicalDisk` `MediaType` (unbekannt = `$null`) |
+| `Test-MorpheusWartungAuftrag -Werkzeug -Laufwerk -Laufwerke` | `$null` oder deutscher Fehlertext. Rein. Prüft Id (`-ceq` im Katalog, nicht `winget.upgrade`, nicht `perfmon.rel`), Laufwerk Pflicht genau bei `laufwerk`/`ssd` (`^[A-Z]:$`, in der Liste, bei `ssd` mit `ssd = $true`), sonst verboten |
+| `Get-MorpheusWartungBefehl -Werkzeug [-Laufwerk] [-Id] [-Bericht]` | genaue Befehlszeile mit vollem Programmpfad (für Log und Journal) |
+| `Get-MorpheusWartungBerichte -DataRoot` | `[{ name, art, titel, zeit }]` aus `reports\`, nur Musternamen, neueste zuerst, höchstens 20 |
+| `Invoke-MorpheusWartungProzess -Datei -Argumente [-Kodierung oem\|utf8] [-AbbruchDatei] [-ZeitlimitSek] [-Zeile <scriptblock param($Text)>]` | `{ exitCode, text, abgebrochen:[bool], zeitueberschritten:[bool], dauerSek }`. `Process` mit `UseShellExecute = $false`, `CreateNoWindow`, Stdout/Stderr als Bytes über `BaseStream.ReadAsync` (Polling alle 200 ms), Decoder je Kodierung (UTF-16LE, wenn in den ersten Bytes ≥ 30 % der ungeraden Stellen 0 sind), Zeilen an `\r` und `\n` getrennt, `text` höchstens 256 KB. Abbruch (Flag-Datei existiert) oder Zeitlimit: `taskkill.exe /PID <id> /T /F` aus System32, dann `Kill()` |
+| `Invoke-MorpheusWartung -Root -DataRoot -Werkzeug [-Laufwerk] [-Pakete <Array von { id, name, von, auf }>] [-OhnePunkt] [-AbbruchDatei]` | Ergebnis (18.6). Wirft nur bei falschen Argumenten. Fortschritt per `Write-Information "[HH:mm:ss] …"`; einziges Ausgabeobjekt ist das Ergebnis |
+| `Start-MorpheusZuverlaessigkeit` | `{ ok, meldung }` |
+
+Log-Zeilen des Jobs (die Oberfläche erkennt daran die Schritte): `Lege Wiederherstellungspunkt an: …` / `Wiederherstellungspunkt #n geprüft` (aus Safety), `Starte: <Befehl>`, dann die Ausgabezeilen, `Ergebnis: <Text>`. Bei winget je Paket `Paket i/n: <Name> (<von> → <auf>)`.
+
+Testbarkeit: `$script:MorpheusWartungImpl` (nur gesetzt, wenn noch nicht vorhanden): `Prozess` (`param($Datei, $Argumente, $Kodierung, $AbbruchDatei, $ZeitlimitSek, $Zeile)` → wie `Invoke-MorpheusWartungProzess`), `Punkt` (`param($Beschreibung, $JobStart)` → `PcCheckSafetyEnsureRestorePoint`), `Laufwerke`, `Ohne` (`param($Datei, $Argumente)` → Programm ohne Adminrechte starten), `WingetPfad` (→ `Get-MorpheusWingetPfad`), `Jetzt`.
+
+#### 18.3.2 Zuverlässigkeitsverlauf ohne Adminrechte
+
+`Start-MorpheusZuverlaessigkeit` startet `<Windows>\explorer.exe` mit dem festen Argument `shell:::{BB64F8A7-BEE7-4E1A-AB8D-7D8273F7FDB6}\pageReliabilityView`. Der Explorer übergibt das an die laufende Explorer-Instanz des Benutzers, die Ansicht läuft also ohne Adminrechte (wie das Öffnen des HTML-Berichts). Kein Windows-Dialog nötig: Es startet nur eine Ansicht ohne Rechte. Klappt das nicht, sagt die Oberfläche: `Win + R`, `perfmon /rel`.
+
+### 18.4 winget (`Winget.ps1`)
+
+| Funktion | Rückgabe |
+|---|---|
+| `Get-MorpheusWingetPfad` | `{ pfad, grund }`. `pfad` nur, wenn: Paket `Microsoft.DesktopAppInstaller` (`Get-AppxPackage`) mit `InstallLocation` unter `<ProgramFiles>\WindowsApps\` (`GetFullPath`, Präfix ohne Groß-/Kleinschreibung), `winget.exe` existiert, kein Reparse Point (Datei und Paketordner), Authenticode `Valid`, Signierer mit `O=Microsoft Corporation`. Sonst `pfad = $null`, `grund` deutsch |
+| `ConvertFrom-MorpheusWingetListe -Text` | `{ status:'ok'\|'keine'\|'unlesbar', zeilen:[{ Name, Id, Installiert, Verfuegbar }] }` (Logik aus `pc-check.ps1` 2.3: `\r`-Fortschritt, Trennlinie `^-{10,}`, Spalten aus der Kopfzeile, Ende bei `^\d+ \D`) |
+| `Get-MorpheusUpdateKategorie -Id -Name` | `Programm` \| `Spiel/Launcher` \| `aktualisiert sich selbst` (bisher `Get-UpdateCategory`) |
+| `Get-MorpheusWingetUpdates [-Text]` | `{ status, stand, zeilen:[{ Name, Id, Installiert, Verfuegbar, Kategorie }], fehler, exitCode }`: winget (Impl) ausführen, parsen, Kategorie, Abgleich mit der Programmliste (`nicht mehr installiert`) |
+| `Test-MorpheusWingetId -Id` | bool: `^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$` |
+| `Get-MorpheusWingetUpgradeArgumente -Id` | Argumentzeile (18.3); wirft bei ungültiger Id |
+| `Get-MorpheusWingetErgebnis -ExitCode` | `{ status:'aktualisiert'\|'neustart'\|'laeuft-noch'\|'kein-update'\|'fehlgeschlagen', text }` (bekannte Codes laut winget-Dokumentation `returnCodes.md`) |
+
+`$script:MorpheusWingetImpl`: `Paket`, `Signatur`, `Ausfuehren` (`param($Pfad, $Argumente, $ZeitlimitMs)` → `{ text, fehlerText, exitCode, zeitueberschritten }`), `ArpNamen`, `Appx` (`param($Id)` → bool). `pc-check.ps1` lädt `Winget.ps1` wie `Speicher.ps1` und nutzt den sicheren Pfad auch für Prüfung und Konsolendialog (fehlt die Datei: `SKIP`).
+
+### 18.5 API
+
+| Methode und Pfad | Antwort / Zweck |
+|---|---|
+| `GET /api/wartung` | `{ werkzeuge:[…], laufwerke:[…], berichte:[…], laufend:{ jobId, werkzeug, abbruch }\|null, punktFehlt:[Werkzeug-Ids], safety:<7.3> }`. Laufwerke 60 s zwischengespeichert |
+| `POST /api/wartung/start` | Body `{ werkzeug, laufwerk?, ohnePunkt? }` → 403 Nur-Lesen → `Test-MorpheusWartungAuftrag` (400) → 409 bei laufendem `wartung`-Job oder (Klasse ≠ diagnose) laufender Änderung → `ohnePunkt` nur bei Klasse `reparatur` und gültiger Freigabe (sonst 400) → Windows-Bestätigung → Job `wartung` → `{ jobId }` |
+| `POST /api/wartung/abbrechen` | Body `{ jobId }` → nur laufender `wartung`-Job mit Abbruch ≠ `nein` (sonst 409) → Flag-Datei → `{ ok:true, meldung }` |
+| `POST /api/wartung/zuverlaessigkeit` | `Start-MorpheusZuverlaessigkeit` → `{ ok, meldung }` |
+| `GET /api/updates` | `{ stand, liste:[{ id, name, installiert, verfuegbar, kategorie }], fehler, suche:<jobId\|null>, laufend:<jobId\|null>, punktFehlt:[bool] }` aus der letzten Suche dieser Sitzung (`stand = null`, wenn noch nicht gesucht) |
+| `POST /api/updates/suchen` | 403 Nur-Lesen; läuft schon eine Suche: deren `{ jobId }`; sonst Job `updatesuche` (ohne Windows-Dialog, liest nur) → `{ jobId }`; Ergebnis `{ stand, liste, fehler }` wird im Server gespeichert |
+| `POST /api/updates/installieren` | Body `{ ids:[…], ohnePunkt? }` → 1–30 Ids, ohne Doppelte, jede `-ceq` in der gespeicherten Liste mit Kategorie `Programm` (sonst 400) → Sperren wie bei `wartung/start` → Windows-Bestätigung mit Liste (Name, von → auf) → Job `wartung` mit `winget.upgrade` und den Paketen → `{ jobId }` |
+| `POST /api/report-ticket`, `GET /report/<name>` | nehmen zusätzlich Wartungsberichte (Muster 18.3) an; gleiche Lesemarke, gleiche CSP, iframe ohne `allow-same-origin` |
+| `POST /api/journal/<id>/undo` | 400 „Für diesen Eintrag gibt es kein Rückgängig.“, wenn `art ≠ 'ausfuehren'` |
+
+Job-Scripts: `wartung = { param($Root, $SafetyPath, $WartungPath, $DataRoot, $Werkzeug, $Laufwerk, $PaketeJson, $OhnePunkt, $AbbruchDatei) … }` (Pakete als JSON-Text `[{ id, name, von, auf }]`, weil `Start-Job` Objekte serialisiert), `updatesuche = { param($Root, $WingetLibPath) … Get-MorpheusWingetUpdates }`. Beide in der Nur-Lesen-Sperre von `Start-GuiJob`; `wartung` verlangt einen Bestätigungstext. `Update-GuiJobs`: Ergebnis `wartung` mit `status = 'punkt-fehlt'` → Freigabe `$script:Gui.PunktFehlt[<werkzeug>] = Zeit`; Ergebnis `updatesuche` → `$script:Gui.Updates`.
+
+**Bestätigungstexte** (Beispiele, `<…>` aus dem Katalog):
+- diagnose: „Morpheus-Werkzeug mit Administratorrechten starten?\n\n<Titel>\nBefehl: <befehl>\n\nDieses Werkzeug liest nur und ändert nichts.\n\nHast du das gerade nicht selbst in Morpheus angeklickt, wähle 'Nein'.“
+- wartung: wie oben, statt „liest nur“: „Harmlose Wartung: <Erklaerung>“.
+- reparatur: „… NICHT UMKEHRBAR: Das Ergebnis lässt sich nicht unter 'Änderungen' zurücknehmen. Vorher legt Morpheus einen Wiederherstellungspunkt an und prüft ihn; fehlt er, startet nichts.“ Mit `ohnePunkt`: „ACHTUNG: OHNE Wiederherstellungspunkt. Windows konnte eben keinen anlegen. Fortfahren nur, wenn du das bewusst so willst.“
+- winget: „Diese Programme mit winget aktualisieren?\n\n• <Name>: <von> → <auf> …\n\nProgramm-Updates lassen sich nicht über 'Änderungen' zurücknehmen. Vorher wird ein Wiederherstellungspunkt angelegt. winget lädt aus den Herstellerquellen und nimmt die Lizenzbedingungen der Pakete an.“
+
+### 18.6 Ergebnis und Journal
+
+**Ergebnis von `Invoke-MorpheusWartung`:**
+```json
+{ "werkzeug": "dism.restorehealth", "titel": "…", "klasse": "reparatur",
+  "status": "erledigt|fehlgeschlagen|abgebrochen|zeitueberschreitung|punkt-fehlt",
+  "befehl": "C:\\WINDOWS\\system32\\Dism.exe /Online /Cleanup-Image /RestoreHealth", "laufwerk": null,
+  "exitCode": 0, "dauerSek": 812,
+  "zusammenfassung": { "ergebnis": "ok|repariert|reparierbar|problem|fehler|unbekannt", "text": "…", "empfehlung": "…|null", "details": ["…"] },
+  "punkt": { "seq": 58, "zeit": "2026-10-26T15:30:12" }, "ohnePunkt": false,
+  "meldung": "…", "bericht": "morpheus-energy_2026-10-26_153012.html|null", "journal": "20261026-153012-01|null",
+  "pakete": [ { "id": "Demo.App", "name": "Demo App", "von": "1.0", "auf": "1.1", "status": "aktualisiert|neustart|laeuft-noch|kein-update|fehlgeschlagen|abgebrochen", "exitCode": 0, "dauerSek": 41, "text": "…" } ] }
+```
+`status`: `erledigt`, wenn der Prozess normal endete und `zusammenfassung.ergebnis` ≠ `fehler`; bei winget, wenn kein Paket fehlschlug. `punkt-fehlt`: nichts gestartet, kein Journal-Eintrag, `meldung` = Ursache und Befehl aus `PcCheckSafetyDiagnose`.
+
+**Journal-Eintrag** (Felder wie 7.4, dazu neue):
+```json
+{ "id": "…", "zeit": "…", "art": "wartung|update", "aktion": "dism.restorehealth", "titel": "DISM: Komponentenspeicher reparieren",
+  "variante": "C:|<winget-Id>|null", "vorher": null, "nachher": null, "wiederherstellungspunkt": { "seq": 58, "zeit": "…" },
+  "status": "begonnen|erledigt|fehlgeschlagen|abgebrochen", "bezug": null, "meldung": "<Kurzfassung, höchstens 500 Zeichen>",
+  "benutzer": "…", "befehl": "…", "dauerSek": 812, "exitCode": 0, "umkehrbar": false, "ohnePunkt": false }
+```
+winget: ein Eintrag je Paket mit `art = 'update'`, `titel = 'Update: <Name> <von> → <auf>'`, `variante = <Id>`. Der Knopf „Wiederherstellungspunkt jetzt anlegen“ schreibt `art = 'wartung'`, `aktion = 'wiederherstellung.punkt'` mit dem Punkt (nur bei Erfolg).
+
+### 18.7 Auswertung (`WartungAuswertung.ps1`)
+
+| Funktion | Rückgabe |
+|---|---|
+| `Format-MorpheusWartungZeile -Text` | bereinigte Zeile (Steuerzeichen außer Tab, U+2028/2029, U+202A–202E, U+2066–2069 entfernt; getrimmt; höchstens 500 Zeichen) |
+| `Get-MorpheusWartungFortschritt -Zeile` | Prozentzahl (double) oder `$null`: DISM `[====  25.0%  ]`, SFC „Verification 45% complete.“ / „Überprüfung 45 % abgeschlossen.“, chkdsk „Stage 1 … 30 percent“ / „Stufe … 30 Prozent“, defrag „… 30% complete“ |
+| `Get-MorpheusWartungZusammenfassung -Werkzeug -Text [-ExitCode]` | `{ ergebnis, text, empfehlung, details }` |
+| `Get-MorpheusWartungKurzfassung -Zusammenfassung [-ExitCode] [-DauerSek]` | Text ≤ 500 Zeichen fürs Journal |
+
+Erkennung jeweils deutsch und englisch, tolerant gegenüber Leerzeichen und Groß-/Kleinschreibung; ohne Treffer zählt der Exit-Code (`0` → `unbekannt` mit „Beendet mit Code 0, Ausgabe nicht eindeutig“, sonst `fehler`). Mindestens:
+- **DISM Check/ScanHealth:** keine Beschädigung → `ok`; „kann repariert werden“/„repairable“ → `reparierbar` (Empfehlung: RestoreHealth, danach SFC); „nicht reparierbar“ → `fehler` (Empfehlung: Inplace-Upgrade).
+- **RestoreHealth:** erfolgreich → `repariert` bzw. `ok`; `0x800f081f`/„Quelldateien wurden nicht gefunden“ → `fehler` (Internet bzw. Windows Update prüfen).
+- **SFC:** keine Integritätsverletzungen → `ok`; repariert → `repariert`; einige nicht reparierbar → `problem` (Empfehlung: DISM RestoreHealth, dann erneut SFC; Details in `%WinDir%\Logs\CBS\CBS.log`); Reparatur ausstehend/Neustart → `problem` (neu starten); „konnte den Vorgang nicht ausführen“ → `fehler`.
+- **AnalyzeComponentStore:** tatsächliche Größe, freigebbare Pakete, „Bereinigung empfohlen: Ja/Nein“ in `details`; Ja → `reparierbar` mit Empfehlung StartComponentCleanup, Nein → `ok`.
+- **StartComponentCleanup:** erfolgreich → `ok`.
+- **chkdsk /scan:** keine Probleme → `ok`; Probleme gefunden → `problem` (Empfehlung: Reparatur beim nächsten Start nur nach Datensicherung; Morpheus macht `chkdsk /f` nicht selbst).
+- **ipconfig, w32tm, defrag:** Erfolgsmeldung bzw. Exit-Code; w32tm „no time data was available“/„keine Zeitdaten“ → `problem`.
+- **powercfg:** Bericht vorhanden → `ok` (energy: Anzahl Fehler/Warnungen in `details`); „keine Akkus“/„no batteries“ bzw. Modern Standby fehlt (Schlafstudie) → `problem` mit Erklärung.
+
+### 18.8 Oberfläche
+
+- **„Werkzeuge“** bekommt an erster Stelle die Karte **„Wartung & Reparatur“** (danach Microsoft Defender, Programme aktualisieren, Sysinternals, Spiele-Ordner) und ersetzt den Platzhalter durch **„Programme aktualisieren (winget)“**.
+- **Wartung & Reparatur:** Legende der Klassen als Chips: „liest nur“ (`chip INFO`), „harmlos“ (`chip OK`), „nicht umkehrbar“ (`chip WARN`). Abschnitte je Gruppe (`h3`) in Katalog-Reihenfolge. Je Werkzeug Titel, Chip, Erklärung, Dauer, ggf. „braucht Internet“, „▸ Befehl zeigen“ (`cmdBlock`), Laufwerksauswahl (`laufwerk`: alle; `ssd`: nur SSDs) und der Knopf „Starten …“ (türkis `primary` bei diagnose/wartung, normal bei reparatur). Systemdateien erklären die Reihenfolge (1–4, „SFC repariert aus dem Komponentenspeicher, den DISM vorher in Ordnung bringt“); Komponentenspeicher mit Hinweis „WinSxS nie von Hand löschen; Morpheus verwendet kein /ResetBase“.
+- **Wiederherstellungspunkt:** Zustand aus `safety` (Schutz an/aus, 24-h-Sperre, Speicher klein, letzter Punkt) und Knopf „Wiederherstellungspunkt jetzt anlegen“. Bei aktiver Sperre der Hinweis, dass Windows innerhalb von 24 Stunden keinen weiteren Punkt anlegt, mit dem Befehl aus `safety.befehl` (`cmdBlock`) und dem Verweis auf die README („24-Stunden-Sperre“). Schutz aus: Knopf gesperrt mit Befehl `safety.befehlSchutz`.
+- **Ablauf je Werkzeug:** Dialog mit Erklärung, genauem Befehl, Klasse; bei `reparatur` deutlich „Nicht umkehrbar: kein Rückgängig unter ‚Änderungen‘. Vorher wird ein Wiederherstellungspunkt angelegt und geprüft.“ → „Starten“ → `jobView` mit Schritten (Windows-Bestätigung, ggf. Wiederherstellungspunkt, Werkzeug läuft, Ergebnis) und Live-Log → Knopf „Abbrechen“ nur bei `abbruch ≠ 'nein'`, „Im Hintergrund weiterlaufen lassen“ schließt den Dialog (die Karte zeigt „läuft …“ mit „Anzeigen“) → Ergebnis: Chip je `ergebnis`, Text, Empfehlung, Details, Dauer, Exit-Code, ggf. „Bericht öffnen“.
+- **`punkt-fehlt`:** Meldung mit Ursache und Befehl, Häkchen „Ich habe verstanden: ohne Wiederherstellungspunkt gibt es kein Netz. Trotzdem starten.“, erst dann roter Knopf „Ohne Wiederherstellungspunkt starten“ (`danger`) → erneuter Start mit `ohnePunkt: true`.
+- **Energieberichte:** Liste „Erstellte Berichte“ (Titel, Zeit, „Öffnen“). Öffnen zeigt den Bericht im iframe (`sandbox="allow-scripts"`, ohne `allow-same-origin`) über eine Lesemarke; im Mock über `window.PCCHECK_REPORT_SRC`.
+- **Diagnose:** Knopf „Zuverlässigkeitsverlauf öffnen“ (`POST /api/wartung/zuverlaessigkeit`), Hinweis „öffnet sich ohne Adminrechte; sonst Win + R, perfmon /rel“.
+- **Programme aktualisieren:** „Nach Updates suchen“ (Job mit Log) → Tabelle mit Häkchen für `Programm`, andere Kategorien grau mit Grund → „Ausgewählte aktualisieren …“ → Dialog: Liste, Chip „nicht umkehrbar“, „Programm-Updates lassen sich nicht über ‚Änderungen‘ zurücknehmen. Vorher wird ein Wiederherstellungspunkt angelegt.“, Hinweis „Programme vorher schließen“ → Job wie oben, „Abbrechen“ heißt hier „Nach dem aktuellen Programm aufhören“ → Ergebnis-Tabelle (Programm, von, auf, Ergebnis). Danach neue Suche anbieten.
+- **Änderungen (Journal):** Einträge mit `art` `wartung`/`update` zeigen Chip „Protokoll“ und „kein Rückgängig“ (beide `chip INFO`), Befehl (`code`), Dauer, Exit-Code, Kurzfassung und ggf. den Wiederherstellungspunkt bzw. „ohne Wiederherstellungspunkt“ (`chip WARN`). Kein Rückgängig-Knopf.
+- **Hilfetexte:** `pc-check.hilfe.psd1` Abschnitt `Wartung = @{ '<Werkzeug-Id>' = @{ Was; Wann; Hinweis } }`, angezeigt als „ⓘ Mehr“ am Werkzeug.
+- **Design v3:** keine neue Akzent-Stelle, keine orange Schrift außer in Warn-Chips; `reparatur` nie mit orangem Rahmen. Kein `innerHTML` mit Daten.
+
+### 18.9 Nachträge nach Review und Sicherheitsprüfung
+
+- **Alle `wartung`-Jobs gelten als Änderung** (auch Klasse `diagnose`), weil jeder Lauf ins Journal schreibt und das Journal ohne Sperre geschrieben wird. Wartungs-Jobs und `run`/`undo` schließen sich gegenseitig aus (409).
+- Der Defender-Offline-Scan (Start und „jetzt“) antwortet 409, solange ein `wartung`-Job oder eine Änderung läuft.
+- `updates/suchen` antwortet 409 während eines `winget.upgrade`-Laufs, `updates/installieren` 409 während einer Suche. `GET /api/updates` liefert zusätzlich `wartungLaeuft` (Werkzeug-Id oder `null`).
+- winget-Zeilen, deren Id `Test-MorpheusWingetId` nicht besteht (von winget mit „…“ gekürzt), bekommen die Kategorie `Id gekürzt` und sind nicht wählbar; der Server lehnt solche Ids zusätzlich mit 400 ab.
+- Die Freigabe „ohne Punkt“ gilt bei `winget.upgrade` nur für genau dieselbe Paketmenge wie der gescheiterte Lauf.
+- `Get-MorpheusWingetUpdates -Fortschritt` schreibt die Fortschrittszeilen (GUI-Job); ohne den Schalter steuert der Aufrufer sie (Konsolen-Scan).
+- Prozess-Runner: Fortschrittszeilen gehen nicht in `text`; `text` = erste 64 KB + letzte 192 KB. Nach Prozessende höchstens 2 s Rest lesen, kein Beenden des Prozessbaums nach normalem Ende.
+- `Format-GuiDialogWert` und `Format-MorpheusWartungZeile` entfernen zusätzlich U+0085, U+061C, U+200B–U+200F und U+FEFF.
+- Nach dem Merge des Hotfixes 2.3.3 (`gui\lib\Systempfade.ps1`) nutzt 2.4 dessen `Get-MorpheusWinget` und `Get-MorpheusSystemProgramm` statt eigener Auflösung, und die Jobs `wartung` und `updatesuche` setzen als erste Anweisung den gehärteten `PSModulePath`.
+
+### 18.10 Datenordner-Rechte reparieren
+
+**Anlass:** „Fortsetzen“ im Explorer trägt dem Benutzerkonto dauerhaft Vollzugriff `(OI)(CI)(F)` auf `C:\ProgramData\Morpheus` ein. Bisher legt Morpheus den Ordner dann beiseite bzw. startet im Nur-Lesen-Modus ohne Ausweg in der GUI.
+
+**Zustand erkennen (`Install.ps1`):** `Get-MorpheusDatenordnerZustand -Path` → `{ zustand: 'ok'|'reparierbar'|'beiseite'|'fehlt', konten: [{ sid, name, rechte: 'lesen'|'schreiben' }], objekte: <Anzahl Objekte mit Zusatzrechten>, gruende: [string] }`. Rein lesend, ohne Verknüpfungen zu betreten (eigener Stapel wie `MorpheusTreeItems`), `temp` wird wie bisher nur als Ordner geprüft, sein Inhalt nicht.
+- `beiseite`: der Ordner selbst oder ein Objekt darin ist eine Verknüpfung (Reparse Point) bzw. kein Ordner, oder ein Besitzer ist nicht Administratoren/SYSTEM/TrustedInstaller, oder ein Objekt ist nicht lesbar.
+- `reparierbar`: sonst, wenn es Allow-Einträge für andere SIDs gibt (geerbt oder nicht, nur Lesen oder mehr).
+- `ok`: keine solchen Einträge. `fehlt`: der Ordner existiert nicht.
+- `Initialize-MorpheusDataDir` legt einen `reparierbaren` Ordner **nicht** beiseite, sondern wirft eine Ausnahme mit `Data['datenordner'] = 'reparierbar'` und `Data['zustand'] = <Zustand>` (Text deutsch). `beiseite` wie bisher. Neuer Schalter `-Beiseite` erzwingt das Beiseitelegen auch bei `reparierbar` (für „Neu anlegen“).
+
+**Reparieren (`Repair-MorpheusDatenordner -Path`):** nur mit Adminrechten, nur bei Zustand `reparierbar` (sonst throw). Je Objekt einzeln (kein `icacls /T`, keine Verknüpfungen betreten): alle nicht geerbten Allow-Einträge für andere als die vertrauenswürdigen SIDs entfernen (`.NET`-ACL des Objekts, `RemoveAccessRuleSpecific`, dann `SetAccessControl`); am obersten Ordner Vererbung von ProgramData aus (`SetAccessRuleProtection($true, $false)`), Administratoren und SYSTEM Vollzugriff wie bei `New-MorpheusSecureDirectory`. Danach:
+- `temp` und `tools` löschen (Verknüpfungen nur selbst entfernen), `temp` neu anlegen.
+- `state`: alles außer `checklist.json` löschen.
+- Dateien, die Wirkung haben, **neu schreiben** (Inhalt in eine neue Datei kopieren, dann `[IO.File]::Replace`), damit offene Schreib-Handles eines Programms ins Leere gehen: `changes\journal.json`, `accepted.psd1`, `state\checklist.json`.
+- Berichte (`reports\`) bleiben unverändert (nur Anzeige, CSP, Sandbox).
+- `state\datenordner-reparatur.json` = `{ "version": 1, "zeit": "yyyy-MM-ddTHH:mm:ss", "konten": [ { "sid", "name" } ] }` atomar schreiben.
+- Zum Schluss `Get-MorpheusDatenordnerZustand` erneut: muss `ok` sein, sonst throw mit Gründen.
+- Rückgabe `{ zustand, entfernt: <Anzahl Einträge>, meldung }`. Fortschritt per `Write-Information`.
+
+**GUI-Start (`pc-check-gui.ps1`):** Wirft `Initialize-MorpheusDataDir` mit `datenordner = 'reparierbar'`, startet die GUI im Nur-Lesen-Modus mit `$roReason` (deutsch, nennt die Konten) und übergibt `-DatenordnerZustand <Zustand>` und `-DatenordnerPfad <Pfad>` an `Initialize-GuiServer`. Nur in diesem Fall (Code sicher, Adminrechte, Grund Datenordner) ist die Reparatur erlaubt.
+
+**API:**
+| Methode und Pfad | Antwort / Zweck |
+|---|---|
+| `GET /api/session` | zusätzlich `datenordner: { zustand, konten, objekte, pfad, repariert:[bool] }` oder `null` |
+| `POST /api/datenordner/reparieren` | Body `{ art: 'reparieren'|'neu' }` (genau diese Texte). Nur wenn der Server mit Zustand `reparierbar` gestartet wurde und noch nicht repariert hat, sonst 409. **Einzige ändernde Route im Nur-Lesen-Modus.** Windows-Bestätigung (Text nennt Pfad, Konten, was gelöscht/neu geschrieben wird bzw. bei `neu`: „Der Ordner wird beiseitegelegt und leer neu angelegt“). Dann synchron `Repair-MorpheusDatenordner` bzw. `Initialize-MorpheusDataDir -Beiseite` → `{ ok, meldung, zustand }`; danach `repariert = $true`, Hinweis: Morpheus neu starten (der Server wechselt nicht im Betrieb in den normalen Modus). |
+| `POST /api/journal/<id>/undo` | Liegt `zeit` des Eintrags vor `zeit` aus `state\datenordner-reparatur.json`, ist `vorReparatur: true` im Body Pflicht (sonst 409 mit Code-Text „vor der Reparatur des Datenordners“); der Windows-Dialog sagt dann: „Dieser Eintrag stammt aus der Zeit, in der der Datenordner ungeschützt war. Prüfe in ‚Änderungen‘, ob du diese Änderung selbst vorgenommen hast.“ `Undo-PcCheckChange` bekommt dafür `-VorReparaturBestaetigt` und prüft selbst ebenfalls. |
+
+**Oberfläche:** Banner (Nur-Lesen) „Die Rechte des Datenordners wurden geändert“ mit Konten (z. B. „Vollzugriff für DEMO-PC\demo“), Ursache „meist ‚Fortsetzen‘ im Explorer“, Risiko („Programme unter diesem Konto könnten Morpheus' Daten ändern“), Knöpfe „Rechte reparieren …“ (primär) und „Stattdessen neu anlegen …“. Dialog vor der Reparatur: was passiert (Rechte entfernen, `temp`/`tools`/Zustand neu, Journal/Akzeptanzliste/Checkliste bleiben, Berichte bleiben), danach Windows-Bestätigung. Ergebnis: Erfolg + Knopf „Morpheus beenden“ (`POST /api/shutdown`) mit Hinweis „über das Startmenü neu starten“. Nach dem Neustart (Datei `datenordner-reparatur.json` jünger als 7 Tage): Hinweis in „Änderungen“ und „Einstellungen > Akzeptanzliste“: „Bitte prüfen, ob alle Einträge von dir stammen.“ Rückgängig für ältere Einträge: Zusatzdialog, dann `vorReparatur: true`.
+
+**Prinzip 4:** Nach der Reparatur ist der Ordner wieder nur für Administratoren änderbar. Bis dahin gelten die Daten als nicht vertrauenswürdige Eingabe: Anzeige bleibt, alles mit Wirkung wird geprüft, neu geschrieben oder neu erzeugt. Code liegt nicht im Datenordner.
+
+**Tests:** `Get-MorpheusDatenordnerZustand` und `Repair-MorpheusDatenordner` mit echten Ordnern unter `$TestDrive` (eigene ACL-Einträge für eine harmlose SID wie `S-1-5-32-545` BUILTIN\Benutzer, eine Verknüpfung per `mklink /J` nur, wenn ohne Adminrechte möglich, sonst Attrappe), Server-Route und Undo-Sperre mit Attrappen. Keine Änderung an `C:\ProgramData`.
+
+### 18.11 Nachträge nach dem zweiten Review
+
+- **Gesicherter Temp-Ordner auch im Nur-Lesen-Modus:** Ist der Datenordner `reparierbar`, legt `pc-check-gui.ps1` einen frischen Ordner `<ProgramData>\Morpheus-Temp-<16 Hex>` per `New-MorpheusSecureDirectory` an und setzt TEMP/TMP mit `Set-MorpheusTempPfad` darauf (der Windows-Bestätigungsdialog kompiliert beim ersten Aufruf C#-Code in den Temp-Ordner). Klappt das nicht, bietet Morpheus keine Reparatur an. `Initialize-GuiServer -TempSicher`; die Reparatur-Route antwortet ohne gesicherten Temp-Ordner 409. Der Ordner wird beim Beenden entfernt.
+- **Sperrdatei Version 2:** `state\datenordner-reparatur.json` = `{ "version": 2, "zeit", "konten", "eintraege": ["<Journal-Id>", …], "journalUnlesbar": false }`. Sie entsteht **direkt nach** dem Schutz des obersten Ordners, vor allen anderen Schritten. `Test-PcCheckVorReparatur -DataRoot -Eintrag` (Safety.ps1, vom Server mitbenutzt): gesperrt, wenn die Datei existiert und sie unlesbar ist, `journalUnlesbar` gilt, die Id in `eintraege` steht oder (nur Version 1) die Zeit davor liegt. Die Zeit eines Eintrags allein entscheidet nicht mehr (sie stammt aus dem ungeschützten Journal).
+- **Reparatur robuster:** Reparse- und Identitätsprüfung (`CreationTimeUtc`) des obersten Ordners direkt vor und nach dem ersten Rechte-Schritt; danach erst `temp`/`tools` leeren, dann Unterobjekte; Fehler beim Löschen oder Neuschreiben einzelner Dateien sind Warnungen (`warnungen`), keine Abbrüche; erneuter Aufruf bei Zustand `ok` ohne Sperrdatei holt die Schritte nach. Unterobjekte mit abgeschalteter Vererbung erben danach wieder. Unsichere Elternordner ergeben `beiseite`.
+- `Install-Morpheus` fängt `reparierbar` ab, überspringt die Datenübernahme und legt die Startmenü-Verknüpfung trotzdem an.
+- `POST /api/checklist` ist im Nur-Lesen-Modus gesperrt (403); die Oberfläche ändert die Checkliste dann auch lokal nicht.
+- **winget-Download-Ordner (bekanntes Restrisiko):** `Initialize-MorpheusWingetOrdner` und `Test-MorpheusWingetOrdner` (Winget.ps1) vor bzw. nach jedem installierenden winget-Lauf (GUI-Update-Dialog und Konsolendialog). Ergebnisfeld `wingetOrdner = { gehalten, konten, text }`, Texte „WinGet-Ordner: Rechte gehalten (nur Administratoren und SYSTEM).“ bzw. „WinGet hat den Ordner für <Konten> freigegeben.“ Der Test zeigt: winget gibt den Ordner trotzdem frei; die Behebung (winget ohne Adminrechte) folgt in 2.5.
+
+### 18.12 Ende des Servers: Edge-Prozesse statt Heartbeat (Test am 27.10.2026)
+
+Lag das Morpheus-Fenster 1–2 Minuten im Hintergrund, drosselte bzw. fror Edge die Seite ein (Intensive Wake-up Throttling, Effizienzmodus); der Heartbeat blieb aus, und der Server endete nach 45 s mit „Kein Heartbeat mehr“. Betroffen waren alle Versionen seit 2.1.
+- `Test-GuiServerEnde` (reine Funktion, von `Start-GuiServerLoop` genutzt): Mit Edge-Profil ist das Ende der `msedge.exe`-Prozesse mit unserem `--user-data-dir` maßgeblich („Fenster geschlossen“). Der Heartbeat beendet dann nur, wenn die Prozesszählung seit über 60 s nicht gelingt oder nie Edge-Prozesse gesehen wurden, und erst nach `HeartbeatTimeoutSec` (Standard jetzt 600 s). Ohne Edge (Standardbrowser, `-NoBrowser`) gilt der Heartbeat nach dem ersten Eingang mit 600 s. Laufende Jobs verhindern das Ende wie bisher.
+- Edge startet zusätzlich mit `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows`.
+- `app.js`: bei `visibilitychange` (sichtbar) und `focus` sofort ein Heartbeat; ist der Server weg, sofort der Hinweis „Morpheus läuft nicht mehr. Bitte über das Startmenü neu starten.“
+- Der Offline-Countdown (Defender) bleibt streng: ohne Abfrage der sichtbaren Seite binnen 3 s oder ohne Edge-Prozesse bricht er ab.

@@ -176,8 +176,16 @@ async function initToken() {
 }
 let hbFail = 0;
 function startHeartbeat() {
-  const beat = () => api('/api/heartbeat', { method: 'POST' }).then(() => { hbFail = 0; }, e => { if (e.status === 401) return; if (++hbFail >= 3) fatal('Verbindung zur GUI verloren. Das Fenster kann geschlossen werden.'); });
-  setInterval(beat, 10000);
+  // sofort=true (Fenster wieder sichtbar/fokussiert): Ein Verbindungsfehler heißt, der Server ist beendet
+  const beat = (sofort) => api('/api/heartbeat', { method: 'POST' }).then(() => { hbFail = 0; }, e => {
+    if (e.status === 401) return;
+    if (sofort === true && e.status === 0) { fatal('Morpheus läuft nicht mehr. Bitte über das Startmenü neu starten.'); return; }
+    if (++hbFail >= 3) fatal('Verbindung zur GUI verloren. Das Fenster kann geschlossen werden.');
+  });
+  setInterval(() => beat(false), 10000);
+  // Edge drosselt Hintergrundfenster: beim Zurückkehren sofort ein Lebenszeichen senden
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(true); });
+  window.addEventListener('focus', () => beat(true));
 }
 /** Job abfragen, bis er fertig ist. onLines bekommt neue Logzeilen. */
 async function followJob(id, onLines) {
@@ -399,21 +407,27 @@ function openUndoDialog(e) {
   ];
   dlgOpen('Änderung rückgängig machen', body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: '↶ Rückgängig', primary: true, onClick: () => startUndo(e, false) }]);
 }
-async function startUndo(e, force) {
+async function startUndo(e, force, vorRep) {
   const title = 'Rückgängig: ' + (e.titel || e.aktion);
   const jv = jobView(RUN_STEPS);
   dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
   let job = null, err = null;
   try {
     jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
-    const r = await api(`/api/journal/${encodeURIComponent(e.id)}/undo`, { method: 'POST', body: force ? { force: true } : {} });
+    const r = await api(`/api/journal/${encodeURIComponent(e.id)}/undo`, { method: 'POST', body: Object.assign({}, force ? { force: true } : null, vorRep ? { vorReparatur: true } : null) });
     job = await followJob(r.jobId, jv.lines);
   } catch (x) { err = x; }
   const msg = err ? err.message : (job && job.status === 'failed' && job.ergebnis && job.ergebnis.error) || '';
+  if (!vorRep && /vor der Reparatur des Datenordners/i.test(msg)) {
+    Dlg.running = false;
+    dlgOpen(title, [h('p', { class: 'warn', text: 'Dieser Eintrag stammt aus der Zeit, in der der Datenordner ungeschützt war. Hast du diese Änderung selbst vorgenommen?' })],
+      [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Ja, trotzdem zurücknehmen', danger: true, onClick: () => startUndo(e, force, true) }]);
+    return;
+  }
   if (!force && FORCE_RE.test(msg)) {
     Dlg.running = false;
     dlgOpen(title, [h('p', { class: 'warn', text: msg }), h('p', { text: 'Der Zustand hat sich seit der Änderung geändert. Trotzdem auf den früheren Wert zurücksetzen?' })],
-      [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Trotzdem zurücksetzen', danger: true, onClick: () => startUndo(e, true) }]);
+      [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Trotzdem zurücksetzen', danger: true, onClick: () => startUndo(e, true, vorRep) }]);
     return;
   }
   finishJob(title, jv, job, err, 'Fertig');
@@ -520,6 +534,8 @@ function sysTool(f) {
   return h('div', { class: 'deftool' }, h('a', { href: '#/werkzeuge', text }));
 }
 function toggleMark(check, state) {
+  // Im Nur-Lesen-Modus speichert der Server nichts (403), also auch lokal nichts ändern
+  if (readOnly()) { toast('Im Nur-Lesen-Modus wird die Checkliste nicht gespeichert.'); return; }
   const m = S.checklist[check];
   if (m && m.state === state) delete S.checklist[check];
   else S.checklist[check] = { state, date: new Date().toLocaleDateString('de-DE'), report: S.report.Meta.Erstellt };
@@ -532,8 +548,82 @@ function reportBar() {
   return banner('info', 'doc', h('b', { text: 'Du siehst den Bericht vom ' + fmtDate(S.report.Meta.Erstellt) + '. ' }), 'Es gibt einen neueren. ',
     h('button', { type: 'button', class: 'link', text: 'Zum neuesten Bericht', onclick: async () => { try { await showReport(S.reports[0].name); refreshView(); } catch (e) { toast(e.message); } } }));
 }
+// ---- Datenordner-Rechte (Vertrag 18.10)
+const dOrd = () => (S.session && S.session.datenordner) || null;
+const dOrdRepariert = d => Array.isArray(d.repariert) ? !!d.repariert[0] : !!d.repariert;
+const dOrdReparierbar = () => { const d = dOrd(); return !!(d && d.zustand === 'reparierbar' && !dOrdRepariert(d)); };
+function dOrdKonten(d) { return (d.konten || []).map(k => (k.rechte === 'schreiben' ? 'Vollzugriff für ' : 'Leserecht für ') + (k.name || k.sid)).join(', '); }
+function dOrdHinweis() {
+  // Der Server liefert reparaturZeit auf oberster Ebene von /api/session (auch im normalen Modus, höchstens 7 Tage alt)
+  const zeit = S.session && S.session.reparaturZeit;
+  if (!zeit || dOrdReparierbar()) return null;
+  return banner('', 'warn', h('b', { text: 'Der Datenordner wurde am ' + fmtDate(zeit) + ' repariert. ' }), 'Bitte prüfen, ob alle Einträge von dir stammen.');
+}
+function dOrdBanner() {
+  const d = dOrd();
+  const b = banner('err', 'warn', h('b', { text: 'Die Rechte des Datenordners wurden geändert' }),
+    h('p', { text: (dOrdKonten(d) || 'Weitere Konten') + (d.pfad ? ' auf ' + d.pfad : '') + '. Ursache: meist „Fortsetzen“ im Explorer.' }),
+    h('p', { text: 'Risiko: Programme unter diesem Konto könnten Morpheus’ Daten ändern. Bis zur Reparatur ist Morpheus im Nur-Lesen-Modus.' }),
+    h('div', { class: 'brow' },
+      h('button', { type: 'button', class: 'sm primary', 'data-f': 'repair', text: 'Rechte reparieren …', onclick: () => openDatenordner('reparieren') }), ' ',
+      h('button', { type: 'button', class: 'sm', 'data-f': 'neu', text: 'Stattdessen neu anlegen …', onclick: () => openDatenordner('neu') })));
+  b.classList.add('dord-banner');
+  return b;
+}
+/** Das Datenordner-Banner gehört auf jede Ansicht (auch ohne Bericht, z. B. auf der Übersicht beim Start). */
+function dOrdBannerEinsetzen(node) {
+  if (!dOrdReparierbar() || !node || node.querySelector('.dord-banner')) return;
+  const h1 = node.querySelector('h1');
+  const b = dOrdBanner();
+  if (h1 && h1.parentNode) {
+    // nach Titel und Untertitel einfügen
+    let nach = h1;
+    if (nach.nextElementSibling && nach.nextElementSibling.classList.contains('sub')) nach = nach.nextElementSibling;
+    nach.after(b);
+  } else node.prepend(b);
+}
+function openDatenordner(art) {
+  const d = dOrd() || {}, neu = art === 'neu';
+  const body = neu ? [
+    h('p', { text: `Der Ordner wird beiseitegelegt (${(d.pfad || 'C:\\ProgramData\\Morpheus')}.unsicher-<Datum>) und leer neu angelegt.` }),
+    h('p', { class: 'warn', text: 'Berichte, Journal und Akzeptanzliste sind dann in Morpheus nicht mehr sichtbar.' }),
+    h('p', { class: 'muted', text: 'Windows fragt danach in einem eigenen Fenster nach.' })]
+  : [
+    h('p', { text: 'Das passiert:' }),
+    h('ul', null,
+      h('li', { text: 'Die Rechte der genannten Konten werden entfernt' + (dOrdKonten(d) ? ' (' + dOrdKonten(d) + ')' : '') + '.' }),
+      h('li', { text: 'temp, tools und der gespeicherte Zustand werden neu angelegt.' }),
+      h('li', { text: 'Journal, Akzeptanzliste und Checkliste bleiben und werden neu geschrieben.' }),
+      h('li', { text: 'Berichte bleiben unverändert.' }),
+      h('li', { text: 'Die Sysinternals-Werkzeuge werden bei Bedarf neu geladen.' })),
+    h('p', { class: 'muted', text: 'Windows fragt danach in einem eigenen Fenster nach.' })];
+  dlgOpen(neu ? 'Datenordner neu anlegen' : 'Rechte des Datenordners reparieren', body,
+    [{ label: 'Abbrechen', onClick: dlgClose }, neu ? { label: 'Neu anlegen', danger: true, onClick: () => runDatenordner(art) } : { label: 'Rechte reparieren', primary: true, onClick: () => runDatenordner(art) }]);
+}
+async function runDatenordner(art) {
+  const title = art === 'neu' ? 'Datenordner neu anlegen' : 'Rechte des Datenordners reparieren';
+  dlgOpen(title, [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Läuft …', disabled: true }], { lock: true });
+  let r = null, err = null;
+  try { r = await api('/api/datenordner/reparieren', { method: 'POST', body: { art } }); } catch (x) { err = x; }
+  Dlg.running = false;
+  if (err || !r || r.ok === false) {
+    const msg = err ? (err.status === 403 ? 'Im Windows-Dialog abgelehnt. Es wurde nichts geändert.' : err.message) : (r && r.meldung) || 'Das hat nicht geklappt.';
+    dlgOpen(title, [h('p', { class: 'rem', text: msg })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    return;
+  }
+  const d = dOrd(); if (d) d.repariert = [true];
+  const note = h('p', { class: 'muted' });
+  const quit = async () => {
+    try { await api('/api/shutdown', { method: 'POST' }); } catch { /* Server beendet sich, die Antwort kann ausbleiben */ }
+    note.textContent = 'Morpheus wurde beendet. Morpheus über das Startmenü neu starten.';
+    dlgOpen(title, [h('p', { class: 'ok', text: 'Morpheus wurde beendet.' }), h('p', { text: 'Morpheus über das Startmenü neu starten.' })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+  };
+  dlgOpen(title, [h('p', { class: 'ok', text: r.meldung || 'Fertig.' }), h('p', { text: 'Morpheus muss neu gestartet werden, damit es wieder normal arbeitet.' }), note],
+    [{ label: 'Später', onClick: () => { dlgClose(); refreshView(); } }, { label: 'Morpheus beenden', primary: true, onClick: quit }]);
+}
 function safetyBanner() {
   const s = safety();
+  if (dOrdReparierbar()) return dOrdBanner();
   if (readOnly()) {
     return banner('err', 'warn', h('b', { text: 'Nur-Lesen-Modus: ' }), (S.session.readOnlyReason || 'Morpheus läuft nicht aus einem gesicherten Ordner.') + ' Änderungen, „Rückgängig“ und Scans sind gesperrt. Starte Morpheus über das Startmenü bzw. ',
       h('code', { text: 'C:\\Program Files\\Morpheus\\pc-check-gui.cmd' }), '.');
@@ -895,7 +985,30 @@ V.checkliste = () => {
 
 // ---------------------------------------------------------------- Ansicht: Änderungen
 const JSTAT = { begonnen: 'begonnen', erledigt: 'erledigt', fehlgeschlagen: 'fehlgeschlagen', 'fehlgeschlagen-zurueckgesetzt': 'fehlgeschlagen, zurückgesetzt', zurueckgenommen: 'zurückgenommen' };
+/** Protokoll-Eintrag einer Wartung bzw. eines Programm-Updates (Abschnitt 18.8): kein Rückgängig, kein „vorher → nachher“. */
+function journalWartung(e) {
+  const st = e.status, failed = String(st).startsWith('fehl');
+  const color = failed ? 'var(--red)' : (st === 'erledigt' ? 'var(--cyan)' : (st === 'begonnen' ? 'var(--yellow)' : 'var(--b01)'));
+  const chip = st === 'erledigt' ? h('span', { class: 'chip OK', text: 'erledigt' })
+    : failed ? h('span', { class: 'chip CRIT', text: 'fehlgeschlagen' })
+      : st === 'abgebrochen' ? h('span', { class: 'chip INFO', text: 'abgebrochen' })
+        : st === 'begonnen' ? h('span', { class: 'chip WARN', text: 'begonnen (unterbrochen?)' })
+          : h('span', { class: 'chip INFO', text: String(st || '') });
+  const meta = [];
+  if (e.dauerSek != null) meta.push('Dauer ' + fmtDur(e.dauerSek));
+  if (e.exitCode != null) meta.push('Exit-Code ' + e.exitCode);
+  return h('div', { class: 'ev', style: `--c:${color}` },
+    h('div', { class: 'h' }, h('b', { text: e.titel || e.aktion }), h('span', { class: 'chip INFO', text: 'Protokoll' }), h('span', { class: 'chip INFO', text: 'kein Rückgängig' }), chip,
+      h('span', { class: 'when', title: fmtDate(e.zeit), text: fmtWhen(e.zeit) })),
+    h('div', { class: 'm' },
+      e.befehl ? h('div', null, h('code', { text: e.befehl })) : null,
+      meta.length ? h('div', { text: meta.join(' · ') }) : null,
+      e.ohnePunkt ? h('div', null, h('span', { class: 'chip WARN', text: 'ohne Wiederherstellungspunkt' }))
+        : (e.wiederherstellungspunkt && e.wiederherstellungspunkt.seq != null ? h('div', null, 'Wiederherstellungspunkt ', h('code', { text: '#' + e.wiederherstellungspunkt.seq })) : null),
+      e.meldung ? h('div', { class: 'note', text: e.meldung }) : null));
+}
 function journalEvent(e) {
+  if (e.art === 'wartung' || e.art === 'update') return journalWartung(e);
   const undone = e.status === 'zurueckgenommen', failed = String(e.status).startsWith('fehl'), isUndo = e.art === 'rueckgaengig';
   const color = failed ? 'var(--red)' : undone ? 'var(--b01)' : isUndo ? 'var(--green)' : 'var(--cyan)';
   const chip = failed ? h('span', { class: 'chip CRIT', text: JSTAT[e.status] || e.status })
@@ -934,7 +1047,7 @@ V.aenderungen = () => {
       : [h('p', { class: 'muted', text: 'Keine Wiederherstellungspunkte gefunden.' })]));
   }).catch(e => rbox.replaceChildren(h('h2', { text: 'Wiederherstellungspunkte' }), h('p', { class: 'rem', text: e.message })));
   return h('section', null, h('h1', { text: 'Änderungen' }), h('p', { class: 'sub', text: 'Jede Änderung lässt sich einzeln zurücknehmen. Wiederherstellungspunkte sind das Netz darunter.' }),
-    safetyBanner(), h('div', { class: 'grid g-hero' }, jbox, rbox));
+    safetyBanner(), dOrdHinweis(), h('div', { class: 'grid g-hero' }, jbox, rbox));
 };
 
 // ---------------------------------------------------------------- Ansicht: Berichte
@@ -1074,7 +1187,7 @@ V.einstellungen = () => {
       h('tr', null, h('td', { text: 'Computerschutz' }), h('td', null, s.schutzAn === false ? h('span', { class: 'rem', text: 'aus' }) : h('span', { class: 'ok', text: `an${s.laufwerk ? ' (' + s.laufwerk + ')' : ''}` }), ' · 24-h-Sperre ', s.sperre24h ? h('span', { class: 'warn', text: 'aktiv' }) : h('span', { class: 'ok', text: 'aus' }))),
       h('tr', null, h('td', { text: 'Letzter Wiederherstellungspunkt' }), h('td', { text: s.letzterPunkt ? fmtDate(s.letzterPunkt) : '–' })),
       h('tr', null, h('td', { text: 'Morpheus-Version' }), h('td', { text: (S.session && S.session.version) || '' }))))),
-    h('h2', { text: 'Akzeptanzliste' }),
+    h('h2', { text: 'Akzeptanzliste' }), dOrdHinweis(),
     h('div', { class: 'card' }, akzBody),
     h('h2', { text: `Akzeptierte Abweichungen (${acc.length})` }),
     h('div', { class: 'card' }, acc.length ? acc.map(f => findingRow(f, { hint: true })) : h('p', { class: 'muted', text: 'Keine akzeptierten Abweichungen im angezeigten Bericht.' })));
@@ -1232,10 +1345,12 @@ V.werkzeuge = () => {
   }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Der Defender-Stand konnte nicht geladen werden: ' + e.message })); });
   return h('section', null, h('h1', { text: 'Werkzeuge' }), h('p', { class: 'sub', text: 'Kleine Helfer für den PC. Sie starten nur, wenn du es auslöst, und fragen vorher in Windows nach.' }),
     readOnly() ? safetyBanner() : null,
+    // Reihenfolge (2.4): Wartung & Reparatur zuerst
+    wartungCard(),
     h('div', { class: 'card' }, h('h2', { text: 'Microsoft Defender' }), body),
+    updCard(),
     sysCard(),
-    spOrdnerCard(),
-    h('div', { class: 'card muted' }, 'Hier kommt in Version 2.4 die Aktualisierung von Programmen (winget) dazu.'));
+    spOrdnerCard());
 };
 
 // Eigene Spiele-Ordner (Abschnitt 14.8). Entwurf in S.spOrdner: [{ plattform, pfad }], bleibt beim Neuzeichnen erhalten.
@@ -1549,6 +1664,417 @@ function openCountdown(st0) {
       await sleep(Math.max(0, 1000 - (Date.now() - t0)));
     }
   })();
+}
+
+// ---------------------------------------------------------------- Wartung & Reparatur, Programme aktualisieren (Abschnitt 18)
+const WT_KLASSE = { diagnose: ['INFO', 'liest nur'], wartung: ['OK', 'harmlos'], reparatur: ['WARN', 'nicht umkehrbar'] };
+const WT_ERG = { ok: ['OK', 'in Ordnung'], repariert: ['OK', 'repariert'], reparierbar: ['WARN', 'reparierbar'], problem: ['WARN', 'Problem'], fehler: ['CRIT', 'Fehler'], unbekannt: ['INFO', 'nicht eindeutig'] };
+const WT_STATUS = { erledigt: 'Erledigt', fehlgeschlagen: 'Fehlgeschlagen', abgebrochen: 'Abgebrochen', zeitueberschreitung: 'Zeitlimit überschritten' };
+const WT_PAKET = { aktualisiert: ['OK', 'aktualisiert'], 'kein-update': ['OK', 'kein Update nötig'], neustart: ['WARN', 'Neustart nötig'], 'laeuft-noch': ['WARN', 'Programm läuft noch'], fehlgeschlagen: ['CRIT', 'fehlgeschlagen'], abgebrochen: ['INFO', 'abgebrochen'] };
+const WT_GRUPPEN_OHNE = ['Wiederherstellung', 'Programme'];
+const WT_PUNKT_ID = 'wiederherstellung.punkt', WT_WINGET_ID = 'winget.upgrade';
+const WT_WIN_TEXT = 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …';
+const WT = new Map();          // jobId -> Verfolger eines laufenden Wartungs- bzw. Update-Jobs (bleibt auch ohne Dialog aktiv)
+const WT_SEARCH = new Map();   // jobId -> Verfolger einer Update-Suche
+S.wt = { tools: [], sel: new Set(), report: null, scrollReport: false };
+
+const klasseChip = k => { const c = WT_KLASSE[k] || ['INFO', String(k || '')]; return h('span', { class: 'chip ' + c[0], text: c[1] }); };
+const wtChip = (tab, key, fallback) => { const c = tab[key]; return h('span', { class: 'chip ' + (c ? c[0] : 'INFO'), text: c ? c[1] : (fallback || String(key || '')) }); };
+const wtErr = e => e && e.status === 403 ? 'Abgelehnt: ' + e.message : ((e && e.message) || 'Der Vorgang ist fehlgeschlagen.');
+/** Werkzeug aus dem zuletzt geladenen Katalog (mit Rückfall für winget und den Wiederherstellungspunkt). */
+function wtTool(id) {
+  const w = (S.wt.tools || []).find(x => x.id === id);
+  if (w) return w;
+  if (id === WT_WINGET_ID) return { id, titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', punkt: true, abbruch: 'nach-paket', befehl: 'winget upgrade --id <Paket-Id> --exact --source winget --silent' };
+  if (id === WT_PUNKT_ID) return { id, titel: 'Wiederherstellungspunkt anlegen', erklaerung: 'Legt jetzt einen Wiederherstellungspunkt an und prüft ihn.', klasse: 'wartung', punkt: false, abbruch: 'nein', dauer: 'etwa eine Minute', befehl: "Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS" };
+  return { id, titel: String(id || 'Wartung'), klasse: 'wartung', punkt: false, abbruch: 'nein' };
+}
+function wtCfg(id, abbruch) {
+  const w = wtTool(id), winget = id === WT_WINGET_ID;
+  return { w, title: winget ? 'Programme aktualisieren' : w.titel, winget, punkt: !!w.punkt || winget || id === WT_PUNKT_ID, abbruch: abbruch || w.abbruch || 'nein' };
+}
+function wtSteps(cfg) {
+  const st = [['Windows-Bestätigung', /bestätig/i]];
+  if (cfg.punkt) st.push(['Wiederherstellungspunkt anlegen und prüfen', /wiederherstellungspunkt/i]);
+  if (cfg.w.id !== WT_PUNKT_ID) st.push([cfg.winget ? 'Programme werden aktualisiert' : 'Werkzeug läuft', /^\[[^\]]*\] (Starte:|Paket \d)/]);
+  // winget: nur die Abschlusszeile „<ok> von <n> Programmen erledigt …“ (jedes Paket meldet auch „Ergebnis: <Name>: …“)
+  st.push(['Ergebnis', cfg.winget ? /Ergebnis: \d+ von \d+/ : /Ergebnis:/]);
+  return st;
+}
+const wtBefehl = (w, lw) => String(w.befehl || '').replace(/<LW>/g, lw || '<LW>');
+
+/** Verfolger für einen Job anlegen (oder den vorhandenen liefern). Läuft bis zum Ende, auch wenn kein Dialog offen ist. */
+function wtCtl(jobId, cfg) {
+  let c = WT.get(jobId);
+  if (c) return c;
+  c = { jobId, cfg, jv: jobView(wtSteps(cfg)), bg: true, done: false, cancelling: false, job: null, err: null };
+  c.jv.lines(['Windows-Bestätigung erteilt, der Auftrag läuft.']);
+  WT.set(jobId, c);
+  followJob(jobId, c.jv.lines).then(j => { c.job = j; }, e => { c.err = e; }).then(() => wtDone(c));
+  return c;
+}
+function wtShow(c) {
+  c.bg = false;
+  if (c.done) { wtResultDlg(c); return; }
+  const btns = [];
+  if (c.cfg.abbruch !== 'nein') btns.push({ label: c.cancelling ? 'Abbruch angefordert …' : (c.cfg.winget ? 'Nach dem aktuellen Programm aufhören' : 'Abbrechen'), disabled: c.cancelling, onClick: ev => wtCancel(c, ev.currentTarget) });
+  btns.push({ label: 'Im Hintergrund weiterlaufen lassen', onClick: () => wtBackground(c) });
+  dlgOpen(c.cfg.title, [...c.jv.nodes, c.cfg.abbruch === 'nein' ? h('div', { class: 'note', text: 'Dieses Werkzeug lässt sich nicht sicher abbrechen. Du kannst das Fenster im Hintergrund weiterlaufen lassen.' }) : null], btns, { lock: true });
+}
+function wtBackground(c) {
+  c.bg = true; dlgClose();
+  if (S.view === 'werkzeuge') refreshView();
+}
+async function wtCancel(c, btn) {
+  if (c.cancelling) return;
+  c.cancelling = true; btn.disabled = true; btn.textContent = 'Abbruch angefordert …';
+  try {
+    const r = await api('/api/wartung/abbrechen', { method: 'POST', body: { jobId: c.jobId } });
+    if (r && r.meldung) toast(r.meldung);
+  } catch (e) { c.cancelling = false; btn.disabled = false; btn.textContent = c.cfg.winget ? 'Nach dem aktuellen Programm aufhören' : 'Abbrechen'; toast(e.message); }
+}
+function wtDone(c) {
+  c.done = true; WT.delete(c.jobId);
+  loadSession().catch(() => {});
+  if (c.cfg.winget) S.wt.sel.clear();
+  const res = c.job && c.job.ergebnis;
+  // Ids des gescheiterten winget-Laufs merken: ohne Punkt verlangt der Server genau diese Menge
+  if (c.cfg.winget) {
+    if (res && res.status === 'punkt-fehlt') S.wt.punktIds = c.cfg.ids || [].concat(res.pakete || []).filter(Boolean).map(p => p.id).filter(Boolean);
+    else if (res && res.status) S.wt.punktIds = null;
+  }
+  if (c.bg) {
+    const pf = res && res.status === 'punkt-fehlt';
+    const st = c.err ? c.err.message : (res && res.status ? (WT_STATUS[res.status] || (pf ? 'kein Wiederherstellungspunkt, nichts gestartet. Unter „Werkzeuge“ kannst du bewusst ohne Punkt starten.' : res.status)) : (c.job && c.job.status === 'failed' ? 'fehlgeschlagen' : 'fertig'));
+    toast(`${c.cfg.title}: ${st}`);
+  } else wtResultDlg(c);
+  if (S.view === 'werkzeuge') refreshView();
+}
+
+/** Start: Windows-Bestätigung abwarten, dann dem Job im Dialog folgen. post(ohnePunkt) liefert { jobId }. */
+async function wtRun(cfg, post, ohnePunkt) {
+  dlgOpen(cfg.title, [h('p', { text: WT_WIN_TEXT }), h('div', { class: 'note', text: 'Danach beginnt die Arbeit; dieses Fenster zeigt den Ablauf.' })], [{ label: 'Wartet auf Windows …', disabled: true }], { lock: true });
+  let r;
+  try { r = await post(!!ohnePunkt); }
+  catch (e) {
+    dlgOpen(cfg.title, [h('p', { class: 'rem', text: wtErr(e) })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    if (S.view === 'werkzeuge') refreshView();
+    return;
+  }
+  // Ohne Wiederherstellungspunkt gibt es den Schritt nicht; er soll nicht als erledigt erscheinen
+  const c = wtCtl(r.jobId, ohnePunkt ? { ...cfg, punkt: false } : cfg);
+  c.cfg.post = post;
+  wtShow(c);
+  if (S.view === 'werkzeuge') refreshView();
+}
+const wtPostWinget = ids => ohne => api('/api/updates/installieren', { method: 'POST', body: { ids, ...(ohne ? { ohnePunkt: true } : {}) } });
+const wtPostStart = (w, lw) => ohne => api('/api/wartung/start', { method: 'POST', body: { werkzeug: w.id, ...(lw ? { laufwerk: lw } : {}), ...(ohne ? { ohnePunkt: true } : {}) } });
+
+function wtStartDlg(w, lw) {
+  const cfg = wtCfg(w.id), cmd = wtBefehl(w, lw);
+  const body = [
+    w.erklaerung ? h('p', { text: w.erklaerung }) : null,
+    h('p', null, klasseChip(w.klasse), w.dauer ? [' ', h('span', { class: 'wt-dur', text: 'Dauer: ' + w.dauer })] : null, lw ? [' ', h('span', { class: 'wt-dur', text: 'Laufwerk: ' + lw })] : null),
+    cmdBlock(cmd, true, /^Checkpoint-Computer/.test(cmd) ? 'PowerShell · Administrator' : 'Eingabeaufforderung · Administrator'),
+    w.klasse === 'reparatur' ? h('div', { class: 'wt-box', role: 'note' }, h('b', { text: 'Nicht umkehrbar: ' }), 'kein Rückgängig unter „Änderungen“. Vorher wird ein Wiederherstellungspunkt angelegt und geprüft.') : null,
+    w.internet ? h('p', { class: 'note', text: 'Braucht eine Internetverbindung (Windows Update).' }) : null,
+    w.hinweis ? h('p', { class: 'note', text: w.hinweis }) : null,
+    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung.' })];
+  dlgOpen(w.titel, body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Starten', primary: true, onClick: () => wtRun(cfg, wtPostStart(w, lw)) }]);
+}
+
+function wtResultNodes(res, cfg) {
+  const z = res.zusammenfassung || {}, kids = [h('h3', { text: 'Ergebnis' })];
+  kids.push(h('p', { class: 'wt-res' }, h('b', { text: WT_STATUS[res.status] || res.status || '' }), z.ergebnis ? [' ', wtChip(WT_ERG, z.ergebnis)] : null,
+    res.ohnePunkt ? [' ', h('span', { class: 'chip WARN', text: 'ohne Wiederherstellungspunkt' })] : null));
+  if (z.text) kids.push(h('p', { text: z.text }));
+  if (z.empfehlung) kids.push(h('p', null, h('b', { text: 'Empfehlung: ' }), z.empfehlung));
+  const det = [].concat(z.details || []).filter(Boolean);
+  if (det.length) kids.push(h('ul', { class: 'explain' }, det.map(x => h('li', { text: String(x) }))));
+  const pk = [].concat(res.pakete || []).filter(Boolean);
+  if (pk.length) kids.push(h('div', { class: 'tbl-scroll wt-upd' }, h('table', null,
+    h('thead', null, h('tr', null, ['Programm', 'von', 'auf', 'Ergebnis'].map(x => h('th', { text: x })))),
+    h('tbody', null, pk.map(p => h('tr', null, h('td', { text: p.name || p.id }), h('td', { text: p.von || '' }), h('td', { text: p.auf || '' }),
+      h('td', null, wtChip(WT_PAKET, p.status), p.text ? h('div', { class: 'note', text: p.text }) : null)))))));
+  const meta = [];
+  if (res.dauerSek != null) meta.push('Dauer ' + fmtDur(res.dauerSek));
+  if (res.exitCode != null) meta.push('Exit-Code ' + res.exitCode);
+  if (meta.length) kids.push(h('p', { class: 'note', text: meta.join(' · ') }));
+  if (res.punkt && res.punkt.seq != null) kids.push(h('p', { class: 'note' }, 'Wiederherstellungspunkt ', h('code', { text: '#' + res.punkt.seq }), res.punkt.zeit ? ` (${fmtDate(res.punkt.zeit)})` : ''));
+  if (res.meldung) kids.push(h('p', { class: 'note wt-msg', text: res.meldung }));
+  if (res.status !== 'punkt-fehlt') kids.push(h('p', { class: 'note', text: 'Steht unter „Änderungen“ im Protokoll (kein Rückgängig).' }));
+  return kids;
+}
+function wtResultDlg(c) {
+  const job = c.job, err = c.err, res = job && job.ergebnis, cfg = c.cfg;
+  if (res && res.status === 'punkt-fehlt') { c.jv.finish(false); wtPunktFehlt(c, res); return; }
+  const ok = !err && !!res && !res.error && res.status === 'erledigt';
+  c.jv.finish(ok);
+  const body = [...c.jv.nodes];
+  if (err) body.push(h('p', { class: 'rem', text: err.message }));
+  else if (!res || res.error || !res.status) body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else body.push(...wtResultNodes(res, cfg));
+  // Prüfung G3/W11: Hat winget seinen Download-Ordner für andere Konten freigegeben?
+  const wo = res && res.wingetOrdner;
+  if (wo && wo.text) body.push(h('p', null, h('span', { class: 'chip ' + (wo.gehalten ? 'OK' : 'WARN'), text: wo.gehalten ? 'WinGet-Ordner geschützt' : 'WinGet-Ordner freigegeben' }), ' ', wo.text));
+  const btns = [];
+  if (res && res.bericht) btns.push({ label: 'Bericht öffnen', onClick: () => wtOpenReport(res.bericht) });
+  if (cfg.winget) btns.push({ label: 'Erneut suchen', onClick: () => { dlgClose(); updSuchen(); } });
+  btns.push({ label: 'Fertig', primary: true, onClick: dlgClose });
+  dlgOpen(cfg.title, body, btns);
+  Dlg.running = false;
+}
+function wtPunktFehlt(c, res) {
+  const cfg = c.cfg;
+  let wb = null;
+  const chk = h('input', { type: 'checkbox', onchange: () => { if (wb) wb.disabled = !chk.checked; } });
+  const ids = cfg.ids || S.wt.punktIds;
+  const post = cfg.post || (cfg.winget ? (ids && ids.length ? wtPostWinget(ids) : null) : wtPostStart(cfg.w, null));
+  dlgOpen(cfg.title, [
+    h('p', { class: 'rem', text: 'Es wurde nichts gestartet: Windows hat keinen Wiederherstellungspunkt angelegt.' }),
+    h('p', { class: 'wt-msg', text: res.meldung || '' }),
+    post ? h('label', { class: 'chk' }, chk, 'Ich habe verstanden: ohne Wiederherstellungspunkt gibt es kein Netz. Trotzdem starten.') : null],
+  [{ label: 'Schließen', primary: true, onClick: dlgClose }, post ? { label: 'Ohne Wiederherstellungspunkt starten', danger: true, disabled: true, onClick: () => wtRun(cfg, post, true) } : null].filter(Boolean));
+  wb = $('#dlg-buttons').lastElementChild;
+  if (!post || wb.textContent !== 'Ohne Wiederherstellungspunkt starten') wb = null;
+}
+
+// ---- Berichte (Energie, Akku, Schlafstudie)
+function wtReportSrc(name) {
+  if (typeof window.PCCHECK_REPORT_SRC === 'function') return Promise.resolve(window.PCCHECK_REPORT_SRC(name));
+  return api('/api/report-ticket', { method: 'POST', body: { name } }).then(r => `/report/${name}?k=${encodeURIComponent(r.ticket)}`);
+}
+function wtViewer(box, list) {
+  box.replaceChildren();
+  const name = S.wt.report;
+  if (!name) return;
+  const b = list.find(x => x.name === name), titel = b ? b.titel : name;
+  // sandbox ohne allow-same-origin und ohne allow-popups: der Bericht erreicht weder die API noch öffnet er Fenster
+  const frame = h('iframe', { class: 'wt-frame', sandbox: 'allow-scripts', title: 'Bericht: ' + titel });
+  box.append(h('div', { class: 'wt-report', id: 'wt-report' }, h('div', { class: 'toolbar' }, h('b', { text: titel }),
+    h('button', { type: 'button', text: 'Schließen', onclick: () => { S.wt.report = null; wtViewer(box, list); } })), frame));
+  wtReportSrc(name).then(src => { frame.src = src; }, e => { if (frame.isConnected) frame.replaceWith(h('p', { class: 'rem', text: e.message })); });
+}
+function wtOpenReport(name) {
+  S.wt.report = name; S.wt.scrollReport = true;
+  dlgClose();
+  if (S.view === 'werkzeuge') refreshView(); else location.hash = '#/werkzeuge';
+}
+
+// ---- Karte „Wartung & Reparatur“
+function wtRow(w, d, dis, tt) {
+  const laufw = Array.isArray(d.laufwerke) ? d.laufwerke : [];
+  const hp = S.help && (S.help.Wartung || S.help.wartung), help = hp && hp[w.id];
+  let sel = null, noLw = null;
+  if (w.parameter === 'laufwerk' || w.parameter === 'ssd') {
+    const opts = laufw.filter(l => w.parameter === 'laufwerk' || l.ssd === true);
+    if (opts.length) sel = h('select', { 'aria-label': 'Laufwerk für ' + w.titel }, opts.map(l => h('option', { value: l.laufwerk, text: l.bezeichnung ? `${l.laufwerk} ${l.bezeichnung}` : l.laufwerk })));
+    else noLw = w.parameter === 'ssd' ? 'Keine SSD gefunden. TRIM gibt es nur für SSDs.' : 'Keine festen Laufwerke gefunden.';
+  }
+  const off = dis || !!noLw;
+  const step = w.gruppe === 'Systemdateien' && w.schritt ? `${w.schritt}. ` : '';
+  let cb = cmdBlock(wtBefehl(w, sel ? sel.value : null), true, 'Eingabeaufforderung · Administrator');
+  if (sel) sel.addEventListener('change', () => { const n = cmdBlock(wtBefehl(w, sel.value), true, 'Eingabeaufforderung · Administrator'); cb.replaceWith(n); cb = n; });
+  const meta = [w.dauer ? 'Dauer: ' + w.dauer : null, w.internet ? 'braucht Internet' : null].filter(Boolean).join(' · ');
+  return h('div', { class: 'wt-row', 'data-id': w.id },
+    h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: step + w.titel }), klasseChip(w.klasse)),
+    w.erklaerung ? h('p', { class: 'wt-expl', text: w.erklaerung }) : null,
+    meta ? h('p', { class: 'wt-meta', text: meta }) : null,
+    w.hinweis ? h('p', { class: 'wt-meta', text: w.hinweis }) : null,
+    noLw ? h('p', { class: 'wt-meta', text: noLw }) : null,
+    (d.punktFehlt || []).includes(w.id) ? h('p', { class: 'wt-meta', text: 'Der letzte Start brach ab, weil kein Wiederherstellungspunkt entstand. Beim erneuten Start kannst du das bewusst übergehen.' }) : null,
+    (d.punktFehlt || []).includes(w.id) && !dis ? h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm', text: 'Ohne Wiederherstellungspunkt starten …',
+      onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(w.id), post: wtPostStart(w, sel ? sel.value : null) } }, { meldung: 'Beim letzten Start entstand kein Wiederherstellungspunkt.' }) })) : null,
+    help ? h('details', { class: 'cmd' }, h('summary', { text: 'ⓘ Mehr' }),
+      h('div', { class: 'wt-help' }, help.Was ? h('p', null, h('b', { text: 'Was passiert? ' }), help.Was) : null, help.Wann ? h('p', null, h('b', { text: 'Wann sinnvoll? ' }), help.Wann) : null, help.Hinweis ? h('p', null, h('b', { text: 'Hinweis: ' }), help.Hinweis) : null)) : null,
+    h('details', { class: 'cmd' }, h('summary', { text: 'Befehl zeigen' }), cb),
+    h('div', { class: 'wt-acts' }, sel, h('button', { type: 'button', class: 'sm' + (w.klasse === 'reparatur' ? '' : ' primary'), disabled: off, title: off ? (noLw && !dis ? noLw : tt) : null, text: 'Starten …', onclick: () => wtStartDlg(w, sel ? sel.value : null) })));
+}
+function wtRestore(d, dis, tt) {
+  const sf = d.safety || safety(), w = wtTool(WT_PUNKT_ID);
+  const off = dis || sf.schutzAn === false;
+  const state = h('div', { class: 'wt-state' },
+    h('span', null, 'Computerschutz ', sf.schutzAn === false ? h('span', { class: 'chip CRIT', text: 'aus' }) : (sf.schutzAn === true ? h('span', { class: 'chip OK', text: 'an' }) : h('span', { class: 'chip INFO', text: 'unbekannt' }))),
+    h('span', null, '24-Stunden-Sperre ', sf.sperre24h ? h('span', { class: 'chip WARN', text: 'aktiv' }) : h('span', { class: 'chip OK', text: 'nein' })),
+    sf.speicherKlein ? h('span', null, 'Speicher ', h('span', { class: 'chip WARN', text: 'zu klein' }), sf.speicherMax ? ` (erlaubt: ${sf.speicherMax})` : '') : null,
+    h('span', null, 'Letzter Punkt: ', h('b', { text: sf.letzterPunkt ? fmtDate(sf.letzterPunkt) : '–' })));
+  return h('div', { class: 'wt-group' }, h('h3', { text: 'Wiederherstellungspunkt' }),
+    h('p', { class: 'wt-expl', text: 'Vor jeder nicht umkehrbaren Reparatur legt Morpheus selbst einen Wiederherstellungspunkt an. Hier kannst du einen von Hand anlegen.' }),
+    state,
+    sf.schutzAn === false ? h('div', null, h('p', { class: 'wt-meta', text: 'Der Computerschutz ist aus. Schalte ihn ein (Administrator-PowerShell), danach die Seite neu laden:' }), sf.befehlSchutz ? cmdBlock(sf.befehlSchutz) : null) : null,
+    sf.sperre24h ? h('div', null, h('p', { class: 'wt-meta', text: 'Windows legt innerhalb von 24 Stunden keinen weiteren Wiederherstellungspunkt an. Den Mindestabstand hebst du einmalig mit diesem Befehl auf (Administrator-PowerShell):' }), sf.befehl ? cmdBlock(sf.befehl) : null,
+      h('p', { class: 'wt-meta', text: 'Mehr dazu: README, Abschnitt „24-Stunden-Sperre“.' })) : null,
+    h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', disabled: off, title: off ? (dis ? tt : 'Der Computerschutz ist aus: ohne ihn lässt sich kein Wiederherstellungspunkt anlegen.') : null, text: 'Wiederherstellungspunkt jetzt anlegen', onclick: () => wtStartDlg(w, null) })));
+}
+function wtBody(d, upd) {
+  S.wt.tools = Array.isArray(d.werkzeuge) ? d.werkzeuge : [];
+  const ro = readOnly(), run = d.laufend || null, suche = !!(upd && upd.suche);
+  const dis = ro || !!run || suche;
+  const cfgRun = run ? wtCfg(run.werkzeug, run.abbruch) : null;
+  const tt = ro ? lockTitle() : (run ? `Es läuft schon: ${cfgRun.title}. Warte, bis es fertig ist.` : (suche ? 'Es läuft gerade eine Update-Suche.' : null));
+  const kids = [h('p', { class: 'wt-expl', text: 'Windows-Bordmittel, die Morpheus für dich startet. Jedes Werkzeug zeigt vorher den genauen Befehl und fragt in Windows nach.' }),
+    h('div', { class: 'wt-legend', role: 'list', 'aria-label': 'Legende' },
+      h('span', { role: 'listitem' }, klasseChip('diagnose'), ' ändert nichts'), h('span', { role: 'listitem' }, klasseChip('wartung'), ' kleine, unkritische Änderung'), h('span', { role: 'listitem' }, klasseChip('reparatur'), ' kein Rückgängig unter „Änderungen“'))];
+  if (ro) kids.push(h('p', { class: 'wt-meta', text: lockTitle() }));
+  if (run) {
+    const c = wtCtl(run.jobId, cfgRun);
+    kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: `Läuft: ${cfgRun.title} …` }), h('button', { type: 'button', class: 'sm', text: 'Anzeigen', onclick: () => wtShow(c) })));
+  }
+  kids.push(wtRestore(d, dis, tt));
+  const groups = [];
+  S.wt.tools.filter(w => !WT_GRUPPEN_OHNE.includes(w.gruppe) && w.id !== WT_PUNKT_ID && w.id !== 'perfmon.rel').forEach(w => { let g = groups.find(x => x.name === w.gruppe); if (!g) groups.push(g = { name: w.gruppe, list: [] }); g.list.push(w); });
+  const berichte = Array.isArray(d.berichte) ? d.berichte : [];
+  const viewer = h('div'), repBtns = [];
+  groups.forEach(g => {
+    g.list.sort((a, b) => (a.schritt || 0) - (b.schritt || 0));
+    const gk = [h('h3', { text: g.name })];
+    if (g.name === 'Systemdateien') gk.push(h('p', { class: 'wt-expl', text: 'Reihenfolge 1 bis 4: Erst prüfen (1, 2), bei Befund den Komponentenspeicher reparieren (3), danach die Systemdateien (4). SFC repariert aus dem Komponentenspeicher, den DISM vorher in Ordnung bringt.' }));
+    if (g.name === 'Komponentenspeicher') gk.push(h('p', { class: 'wt-expl', text: 'Den Ordner WinSxS nie von Hand löschen. Morpheus verwendet kein /ResetBase, damit Updates deinstallierbar bleiben.' }));
+    gk.push(h('div', { class: 'wt-list' }, g.list.map(w => wtRow(w, d, dis, tt))));
+    if (g.name === 'Diagnose') gk.push(h('div', { class: 'wt-row' },
+      h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: 'Zuverlässigkeitsverlauf' }), klasseChip('diagnose')),
+      h('p', { class: 'wt-expl', text: 'Zeigt in Windows, wann Programme oder das System abgestürzt sind.' }),
+      h('p', { class: 'wt-meta', text: 'Öffnet sich ohne Adminrechte; klappt das nicht: Win + R, perfmon /rel' }),
+      h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: 'Zuverlässigkeitsverlauf öffnen', onclick: wtZuverlaessigkeit }))));
+    if (g.name === 'Energieberichte') {
+      gk.push(h('h3', { class: 'wt-sub', text: 'Erstellte Berichte' }));
+      gk.push(berichte.length ? h('div', { class: 'wt-reps' }, berichte.map(b => {
+        const btn = h('button', { type: 'button', class: 'sm', onclick: () => {
+          S.wt.report = S.wt.report === b.name ? null : b.name; S.wt.scrollReport = !!S.wt.report;
+          wtViewer(viewer, berichte); repBtns.forEach(x => x()); wtScrollReport();
+        } });
+        const upd = () => { btn.textContent = S.wt.report === b.name ? 'Schließen' : 'Öffnen'; };
+        upd(); repBtns.push(upd);
+        return h('div', { class: 'wt-rep' }, h('b', { text: b.titel || b.name }), h('span', { class: 'wt-meta', text: b.zeit ? fmtDate(b.zeit) : '' }), btn);
+      })) : h('p', { class: 'wt-meta', text: 'Noch keine Berichte erstellt.' }));
+      gk.push(viewer);
+    }
+    kids.push(h('div', { class: 'wt-group' }, gk));
+  });
+  if (!groups.length) kids.push(h('p', { class: 'muted', text: 'Der Server hat keine Werkzeuge gemeldet.' }));
+  wtViewer(viewer, berichte);
+  wtScrollReport();
+  return kids;
+}
+function wtScrollReport() {
+  if (!S.wt.scrollReport || !S.wt.report) return;
+  S.wt.scrollReport = false;
+  setTimeout(() => { const el = $('#wt-report'); if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, 80);
+}
+async function wtZuverlaessigkeit() {
+  try {
+    const r = await api('/api/wartung/zuverlaessigkeit', { method: 'POST' });
+    toast((r && r.meldung) || (r && r.ok === false ? 'Das hat nicht geklappt. Win + R, dann perfmon /rel' : 'Zuverlässigkeitsverlauf wird geöffnet'));
+  } catch (e) { toast(e.message + ' Alternativ: Win + R, perfmon /rel'); }
+}
+function wartungCard() {
+  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const token = S.rv;
+  Promise.all([api('/api/wartung'), api('/api/updates').catch(() => null)]).then(([d, upd]) => {
+    if (token !== S.rv) return;
+    body.replaceChildren(...wtBody(d || {}, upd).filter(Boolean));
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Wartung & Reparatur konnte nicht geladen werden: ' + e.message })); });
+  return h('div', { class: 'card', id: 'wartung-card' }, h('h2', { text: 'Wartung & Reparatur' }), body);
+}
+
+// ---- Karte „Programme aktualisieren (winget)“
+function updSuchen() {
+  api('/api/updates/suchen', { method: 'POST' }).then(r => updShowSearch(updFollowSearch(r.jobId, false)), e => toast(wtErr(e)));
+}
+function updFollowSearch(jobId, bg) {
+  let c = WT_SEARCH.get(jobId);
+  if (c) return c;
+  const title = 'Nach Programm-Updates suchen';
+  c = { jobId, bg, log: h('pre', { class: 'log', 'aria-live': 'polite', text: '' }) };
+  WT_SEARCH.set(jobId, c);
+  followJob(jobId, l => { c.log.append(document.createTextNode(l.join('\n') + '\n')); c.log.scrollTop = c.log.scrollHeight; })
+    .then(j => ({ j }), e => ({ e }))
+    .then(r => {
+      WT_SEARCH.delete(jobId);
+      const msg = r.e ? r.e.message : (r.j && r.j.status === 'failed' ? ((r.j.ergebnis && r.j.ergebnis.error) || 'Die Suche ist fehlgeschlagen.') : null);
+      if (c.bg) toast(msg || 'Update-Suche fertig');
+      else if (msg) dlgOpen(title, [c.log, h('p', { class: 'rem', text: msg })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+      else dlgClose();
+      if (S.view === 'werkzeuge') refreshView();
+    });
+  return c;
+}
+function updShowSearch(c) {
+  c.bg = false;
+  dlgOpen('Nach Programm-Updates suchen', [h('p', { class: 'note', text: 'winget fragt die Paketquellen ab. Das dauert meist ein bis zwei Minuten. Es wird nichts installiert.' }), c.log],
+    [{ label: 'Im Hintergrund weiterlaufen lassen', onClick: () => { c.bg = true; dlgClose(); if (S.view === 'werkzeuge') refreshView(); } }], { lock: true });
+}
+function updInstallDlg(items) {
+  const ids = items.map(x => x.id);
+  const cfg = { ...wtCfg(WT_WINGET_ID), ids };
+  const body = [
+    h('p', { text: items.length === 1 ? 'Dieses Programm wird mit winget aktualisiert:' : `Diese ${items.length} Programme werden mit winget aktualisiert:` }),
+    h('ul', { class: 'wt-pk' }, items.map(x => h('li', null, h('b', { text: x.name || x.id }), h('span', { class: 'muted', text: ` ${x.installiert || '?'} → ${x.verfuegbar || '?'}` })))),
+    h('p', null, h('span', { class: 'chip WARN', text: 'nicht umkehrbar' })),
+    h('p', { text: 'Programm-Updates lassen sich nicht über „Änderungen“ zurücknehmen. Vorher wird ein Wiederherstellungspunkt angelegt.' }),
+    h('p', { text: 'Bitte die Programme vorher schließen.' }),
+    h('p', { class: 'note', text: 'winget lädt aus den Herstellerquellen und nimmt die Lizenzbedingungen der Pakete an.' }),
+    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung.' })];
+  const post = wtPostWinget(ids);
+  dlgOpen('Programme aktualisieren', body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Aktualisieren', primary: true, onClick: () => wtRun(cfg, post) }]);
+}
+function updBody(d) {
+  const ro = readOnly(), run = d.laufend || null, search = d.suche || null;
+  const fremd = d.wartungLaeuft && d.wartungLaeuft !== WT_WINGET_ID;
+  const dis = ro || !!run || !!search || !!fremd;
+  const tt = ro ? lockTitle() : (fremd ? 'Es läuft gerade ein Wartungswerkzeug.' : (run ? 'Es läuft schon eine Wartung bzw. ein Programm-Update.' : (search ? 'Die Suche läuft noch.' : null)));
+  if (d.punktFehlt === false) S.wt.punktIds = null;
+  const pIds = d.punktFehlt === true && Array.isArray(S.wt.punktIds) && S.wt.punktIds.length ? S.wt.punktIds : null;
+  const liste = Array.isArray(d.liste) ? d.liste : [];
+  const prog = liste.filter(x => x.kategorie === 'Programm');
+  const sel = S.wt.sel;
+  [...sel].forEach(id => { if (!prog.some(x => x.id === id)) sel.delete(id); });
+  const kids = [h('p', { class: 'wt-expl', text: 'Aktualisiert Programme über winget, das Paketsystem von Windows. Spiele und Launcher sowie Programme, die sich selbst aktualisieren, fasst Morpheus nicht an.' })];
+  kids.push(h('p', { class: 'wt-meta', text: d.stand ? `Stand der Suche: ${fmtDate(d.stand)}` : 'Noch nicht gesucht.' }));
+  if (d.fehler) kids.push(h('p', { class: 'rem', text: String(d.fehler) }));
+  if (ro) kids.push(h('p', { class: 'wt-meta', text: lockTitle() }));
+  if (run) { const c = wtCtl(run, wtCfg(WT_WINGET_ID)); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: 'Läuft: Programme aktualisieren …' }), h('button', { type: 'button', class: 'sm', text: 'Anzeigen', onclick: () => wtShow(c) }))); }
+  if (search) { const c = updFollowSearch(search, true); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: 'Die Suche nach Updates läuft …' }), h('button', { type: 'button', class: 'sm', text: 'Anzeigen', onclick: () => updShowSearch(c) }))); }
+  const punktBtn = pIds ? h('button', { type: 'button', class: 'sm', text: 'Ohne Wiederherstellungspunkt starten …', disabled: dis, title: dis ? tt : null,
+    onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(WT_WINGET_ID), ids: pIds } }, { meldung: 'Beim letzten Start entstand kein Wiederherstellungspunkt.' }) }) : null;
+  if (d.punktFehlt === true) kids.push(h('div', { class: 'wt-meta' }, h('span', { class: 'chip WARN', text: 'Wiederherstellungspunkt fehlte' }),
+    ' Der letzte Start brach ab, weil kein Wiederherstellungspunkt entstand. ', pIds ? punktBtn : 'Wähle beim erneuten Start dieselben Programme; dann kannst du das bewusst übergehen.'));
+  const goBtn = h('button', { type: 'button', class: 'sm primary', disabled: true, text: 'Ausgewählte aktualisieren …', onclick: () => { if (sel.size > 30) { toast('Bitte höchstens 30 Programme auf einmal auswählen.'); return; } updInstallDlg(prog.filter(x => sel.has(x.id))); } });
+  const boxes = [];
+  const all = h('input', { type: 'checkbox', id: 'upd-all', disabled: dis || !prog.length, 'aria-label': 'Alle auswählen', onchange: e => { prog.forEach(x => { if (e.target.checked) sel.add(x.id); else sel.delete(x.id); }); boxes.forEach(b => { b.checked = e.target.checked; }); sync(); } });
+  function sync() {
+    goBtn.disabled = dis || !sel.size;
+    goBtn.title = dis ? tt : null;
+    goBtn.textContent = sel.size ? `Ausgewählte aktualisieren … (${sel.size})` : 'Ausgewählte aktualisieren …';
+    all.checked = prog.length > 0 && sel.size === prog.length;
+  }
+  kids.push(h('div', { class: 'toolbar' },
+    h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: d.stand ? 'Erneut suchen' : 'Nach Updates suchen', onclick: updSuchen }),
+    prog.length ? h('label', null, all, ' Alle auswählen') : null, prog.length ? goBtn : null));
+  if (liste.length) {
+    kids.push(h('div', { class: 'tbl-scroll wt-upd' }, h('table', null,
+      h('thead', null, h('tr', null, [h('th', { text: '' }), ...['Name', 'Installiert', 'Verfügbar', 'Kategorie'].map(x => h('th', { text: x }))])),
+      h('tbody', null, liste.map(x => {
+        const can = x.kategorie === 'Programm';
+        const gekuerzt = x.kategorie === 'Id gekürzt', hint = gekuerzt ? 'Die Id ist gekürzt; bitte über winget selbst aktualisieren.' : null;
+        const cb = h('input', { type: 'checkbox', checked: can && sel.has(x.id), disabled: !can || dis, title: can ? null : (hint || `Nicht auswählbar: ${x.kategorie || 'unbekannte Kategorie'}`), 'aria-label': `${x.name || x.id} auswählen`,
+          onchange: e => { if (e.target.checked) sel.add(x.id); else sel.delete(x.id); sync(); } });
+        if (can) boxes.push(cb);
+        return h('tr', { class: can ? null : 'dim' }, h('td', null, cb), h('td', null, x.name || x.id, h('div', { class: 'note', text: x.id })), h('td', { text: x.installiert || '' }), h('td', { text: x.verfuegbar || '' }), h('td', null, x.kategorie || '', hint ? h('div', { class: 'note', text: hint }) : null));
+      })))));
+    kids.push(h('p', { class: 'wt-meta', text: 'Graue Zeilen aktualisiert Morpheus nicht; als Grund steht die Kategorie dahinter.' }));
+  } else if (d.stand && !d.fehler) kids.push(h('p', { class: 'ok', text: 'Keine Programm-Updates gefunden.' }));
+  sync();
+  return kids;
+}
+function updCard() {
+  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const token = S.rv;
+  api('/api/updates').then(d => {
+    if (token !== S.rv) return;
+    body.replaceChildren(...updBody(d || {}).filter(Boolean));
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Die Update-Liste konnte nicht geladen werden: ' + e.message })); });
+  return h('div', { class: 'card', id: 'upd-card' }, h('h2', { text: 'Programme aktualisieren (winget)' }), body);
 }
 
 // ---------------------------------------------------------------- Rechte Statusleiste
@@ -1933,6 +2459,7 @@ function renderView(keepScroll) {
   const view = V[S.view] || V.uebersicht;
   let node;
   try { node = view(); } catch (e) { console.error(e); node = banner('err', 'warn', h('b', { text: 'Anzeigefehler: ' }), e.message); }
+  dOrdBannerEinsetzen(node);
   if (!keepScroll) node.classList.add('view-in');
   $('#view').replaceChildren(node);
   renderNav();

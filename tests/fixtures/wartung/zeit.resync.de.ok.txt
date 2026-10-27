@@ -1,0 +1,2 @@
+﻿Der Befehl zur erneuten Synchronisierung wird an den lokalen Computer gesendet.
+Der Befehl wurde erfolgreich ausgeführt.

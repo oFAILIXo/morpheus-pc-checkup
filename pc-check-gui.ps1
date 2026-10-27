@@ -85,6 +85,7 @@ if (-not $hasMutex) {
 }
 
 $edge = $null
+$repTemp = $null   # nur für die Reparatur angelegter Temp-Ordner, wird beim Beenden entfernt
 try {
     # 3. Module laden (Dot-Source im Script-Scope, damit alle Funktionen sichtbar sind)
     . (Join-Path $Root 'gui\lib\Install.ps1')
@@ -100,6 +101,13 @@ try {
     if (Test-Path -LiteralPath $sysPath -PathType Leaf) { . $sysPath }
     else { Write-Host 'Hinweis: gui\lib\Sysinternals.ps1 fehlt, die Sysinternals-Werkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
 
+    $wingetPath = Join-Path $Root 'gui\lib\Winget.ps1'
+    if (Test-Path -LiteralPath $wingetPath -PathType Leaf) { . $wingetPath }
+    else { Write-Host 'Hinweis: gui\lib\Winget.ps1 fehlt, der Update-Dialog ist noch nicht verfügbar.' -ForegroundColor Yellow }
+    $wartungPath = Join-Path $Root 'gui\lib\Wartung.ps1'
+    if (Test-Path -LiteralPath $wartungPath -PathType Leaf) { . $wartungPath }
+    else { Write-Host 'Hinweis: gui\lib\Wartung.ps1 fehlt, die Wartungswerkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
+
     $akzPath = Join-Path $Root 'gui\lib\Akzeptanz.ps1'
     if (Test-Path -LiteralPath $akzPath -PathType Leaf) { . $akzPath }
     else { Write-Host 'Hinweis: gui\lib\Akzeptanz.ps1 fehlt, die Akzeptanzliste ist noch nicht verfügbar.' -ForegroundColor Yellow }
@@ -112,6 +120,10 @@ try {
     $dataRoot = $Root           # Datenordner (Berichte, Journal, Checkliste, Akzeptanzliste)
     $roMode = $false            # Nur-Lesen-Modus
     $roReason = $null
+    $tempFehler = $null
+    $tempSicher = $false          # gesicherter Temp-Ordner für den Bestätigungsdialog der Reparatur gesetzt
+    $datenordnerZustand = $null   # nur bei reparierbarem Datenordner (18.10)
+    $datenordnerPfad = $null
     $installTarget = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Morpheus'
     if (-not $isAdmin) {
         $roMode = $true
@@ -130,7 +142,42 @@ try {
             }
             catch {
                 $roMode = $true
-                $roReason = 'Der Datenordner unter ProgramData lässt sich nicht sichern: ' + $_.Exception.Message
+                $dz = $null
+                if ($_.Exception.Data.Contains('datenordner') -and ([string]$_.Exception.Data['datenordner'] -ceq 'reparierbar')) { $dz = $_.Exception.Data['zustand'] }
+                if ($dz) {
+                    # Der Bestätigungsdialog der Reparatur kompiliert beim ersten Aufruf C# (Add-Type, DLL in %TEMP%).
+                    # Dafür ein frischer, gesicherter Temp-Ordner (nicht der Temp-Ordner des Benutzers). Scheitert das: keine Reparatur anbieten.
+                    $tempFehler = $null
+                    try {
+                        if (-not (Get-Command -Name New-MorpheusSecureDirectory -CommandType Function -ErrorAction SilentlyContinue)) { throw 'New-MorpheusSecureDirectory fehlt.' }
+                        if (-not (Get-Command -Name Set-MorpheusTempPfad -CommandType Function -ErrorAction SilentlyContinue)) { throw 'gui\lib\Systempfade.ps1 fehlt.' }
+                        $zufall = New-Object byte[] 8
+                        $rngT = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+                        try { $rngT.GetBytes($zufall) } finally { $rngT.Dispose() }
+                        $repTempNeu = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('Morpheus-Temp-' + (($zufall | ForEach-Object { $_.ToString('x2') }) -join ''))
+                        New-MorpheusSecureDirectory -Path $repTempNeu
+                        $repTemp = $repTempNeu   # ab hier wird er beim Beenden entfernt
+                        if (-not (Set-MorpheusTempPfad -DataRoot $repTemp)) { throw 'Der Temp-Ordner ließ sich nicht sichern.' }
+                        $tempSicher = $true
+                    }
+                    catch { $tempFehler = $_.Exception.Message }
+                    if ($tempFehler) {
+                        $dz = $null
+                        $roReason = 'Die Rechte des Datenordners unter ProgramData wurden geändert. Eine Reparatur in Morpheus ist nicht möglich, weil kein gesicherter Temp-Ordner angelegt werden konnte (' + $tempFehler + '). Bitte als Administrator reparieren oder neu installieren.'
+                    }
+                }
+                if ($dz) {
+                    # Datenordner mit zusätzlichen Rechten (meist „Fortsetzen“ im Explorer): Reparatur über die GUI möglich (18.10)
+                    $datenordnerZustand = $dz
+                    if (Get-Command -Name MorpheusDefaultDataDir -CommandType Function -ErrorAction SilentlyContinue) { $datenordnerPfad = [string](MorpheusDefaultDataDir) }
+                    else { $datenordnerPfad = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Morpheus' }
+                    $kn = @()
+                    foreach ($k in @($dz.konten)) { if ($k -and $k.name) { $kn += ([string]$k.name -replace '[\u0000-\u001F\u007F\u0085\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]', ' ') } }
+                    $roReason = 'Die Rechte des Datenordners unter ProgramData wurden geändert, auch Programme ohne Administratorrechte könnten dort schreiben'
+                    if ($kn.Count -gt 0) { $roReason += ' (Konten: ' + ($kn -join ', ') + ')' }
+                    $roReason += '. Du kannst sie in Morpheus reparieren.'
+                }
+                elseif (-not $tempFehler) { $roReason = 'Der Datenordner unter ProgramData lässt sich nicht sichern: ' + $_.Exception.Message }
                 Write-Host $roReason -ForegroundColor Yellow
             }
         }
@@ -191,7 +238,7 @@ try {
     $boot = New-GuiSecret
 
     # 5. Server starten
-    Initialize-GuiServer -Root $Root -Port $Port -Token $token -BootCode $boot -SafetyPath $safetyPath -DefenderPath $defenderPath -SysinternalsPath $sysPath -DataRoot $dataRoot -ReadOnly:$roMode -ReadOnlyReason $roReason
+    Initialize-GuiServer -Root $Root -Port $Port -Token $token -BootCode $boot -SafetyPath $safetyPath -DefenderPath $defenderPath -SysinternalsPath $sysPath -WartungPath $wartungPath -WingetPath $wingetPath -DataRoot $dataRoot -ReadOnly:$roMode -ReadOnlyReason $roReason -DatenordnerZustand $datenordnerZustand -DatenordnerPfad $datenordnerPfad -TempSicher:$tempSicher
     $url = "http://127.0.0.1:$Port/#b=$boot"
 
     # 6. Fenster: Edge als App-Fenster mit eigenem Profil, sonst Standardbrowser
@@ -210,7 +257,8 @@ try {
             $profile = Join-Path $env:LOCALAPPDATA 'pc-check\edge'
             [void](New-Item -ItemType Directory -Path $profile -Force)
             # --start-maximized: bildschirmfüllend (ein App-Fenster merkt sich sonst die letzte Größe)
-            Start-Process -FilePath $edgeExe -ArgumentList @("--app=$url", "--user-data-dir=`"$profile`"", '--start-maximized')
+            # Die drei --disable-*-Schalter verhindern, dass Edge das Fenster im Hintergrund drosselt (Heartbeat bliebe sonst aus)
+            Start-Process -FilePath $edgeExe -ArgumentList @("--app=$url", "--user-data-dir=`"$profile`"", '--start-maximized', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows')
             $edge = $profile
             Write-Host 'GUI läuft ... (Fenster schließen beendet)' -ForegroundColor Green
         }
@@ -234,6 +282,15 @@ catch {
     if (-not $NoBrowser) { Read-Host 'Enter zum Schließen' | Out-Null }
 }
 finally {
+    if ($repTemp) {
+        # Verknüpfungen werden nur selbst entfernt, nie betreten (MorpheusEntferneEintrag); Fehler nur protokollieren
+        try {
+            if (Test-Path -LiteralPath $repTemp) {
+                if (Get-Command -Name MorpheusEntferneEintrag -CommandType Function -ErrorAction SilentlyContinue) { MorpheusEntferneEintrag (Get-Item -LiteralPath $repTemp -Force) }
+            }
+        }
+        catch { try { Write-GuiLog ('Temp-Ordner der Reparatur nicht entfernt: ' + $_.Exception.Message) } catch { } }
+    }
     if ($hasMutex) { try { $mutex.ReleaseMutex() } catch { } }
     $mutex.Dispose()
 }

@@ -1,0 +1,5 @@
+﻿Name                 Id                                   Version  Verfügbar Quelle
+----------------------------------------------------------------------------------------
+Demo Editor          Microsoft.VisualStudio.2022.BuildT… 1.0      2.0       winget
+Build Tools          Demo.Editor                          1.0      1.1       winget
+2 Aktualisierungen verfügbar.

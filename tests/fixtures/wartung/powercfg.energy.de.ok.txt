@@ -1,0 +1,12 @@
+﻿Die Ablaufverfolgung wird für 60 Sekunden aktiviert ...
+Das Systemverhalten wird beobachtet ...
+Die Ablaufverfolgungsdaten werden analysiert ...
+Analyse abgeschlossen.
+
+Es wurden Probleme mit der Energieeffizienz gefunden.
+
+3 Fehler
+12 Warnungen
+41 Informationen
+
+Weitere Informationen finden Sie in C:\ProgramData\Morpheus\reports\morpheus-energy_2026-10-26_153012.html.

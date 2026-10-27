@@ -1,0 +1,2 @@
+﻿Sending resync command to local computer
+The computer did not resync because no time data was available.

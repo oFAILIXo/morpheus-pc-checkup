@@ -1,0 +1,2 @@
+﻿Der Vorgang kann nicht ausgeführt werden. Es ist ein Fehler aufgetreten: Es sind keine Akkus im System vorhanden.
+Der Akkubericht kann nicht erstellt werden.

@@ -35,6 +35,10 @@ $script:MorpheusParentMask = (0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0
 
 $script:MorpheusMaxReasons = 25
 
+# Testhilfe (Reparatur, 2.4): IstAdmin ersetzt die Adminprüfung von Initialize-MorpheusDataDir und Repair-MorpheusDatenordner;
+# ZusatzVertraut sind SIDs (z. B. der Testbenutzer), die zusätzlich als vertrauenswürdig gelten. Produktiv unverändert.
+$script:MorpheusInstallImpl = @{ IstAdmin = { MorpheusIsAdmin }; ZusatzVertraut = @(); VorAcl = $null; ElternAb = $null }
+
 #region Hilfsfunktionen (privat)
 
 function MorpheusIsAdmin {
@@ -92,13 +96,14 @@ function MorpheusTreeItems {
 
 # Prüft ein einzelnes Objekt (Besitzer und Schreibrechte). Hängt Gründe an $Reasons an.
 function MorpheusCheckAcl {
-    param([string]$Path, [int]$Mask, [bool]$CheckOwner, [System.Collections.Generic.List[string]]$Reasons, [string]$Context)
+    param([string]$Path, [int]$Mask, [bool]$CheckOwner, [System.Collections.Generic.List[string]]$Reasons, [string]$Context, [string[]]$Vertraut)
+    if (-not $Vertraut) { $Vertraut = $script:MorpheusTrustedSids }
     try { $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop }
     catch { $Reasons.Add("Rechte von $Path nicht lesbar: $($_.Exception.Message)"); return }
     if ($CheckOwner) {
         $owner = $null
         try { $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { }
-        if ((-not $owner) -or ($script:MorpheusTrustedSids -notcontains $owner)) {
+        if ((-not $owner) -or ($Vertraut -notcontains $owner)) {
             $Reasons.Add(("Besitzer von {0} ist {1} ({2}), nicht Administratoren, SYSTEM oder TrustedInstaller" -f $Path, (MorpheusSidName $owner), $owner))
         }
     }
@@ -108,7 +113,7 @@ function MorpheusCheckAcl {
         # Nur-Vererbungs-Einträge wirken nicht auf das Objekt selbst (gilt auch für ERSTELLER-BESITZER)
         if (([int]$r.PropagationFlags -band [int][Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
         $sid = $r.IdentityReference.Value
-        if ($script:MorpheusTrustedSids -contains $sid) { continue }
+        if ($Vertraut -contains $sid) { continue }
         if (([int]$r.FileSystemRights -band $Mask) -eq 0) { continue }
         $key = "$sid|$Path"
         if ($seen.ContainsKey($key)) { continue }
@@ -359,10 +364,10 @@ function Initialize-MorpheusDataDir {
     # angelegter (fremder) Ordner wird deshalb NIE repariert (rekursives icacls könnte dabei Verknüpfungen folgen, die der
     # Besitzer jederzeit neu anlegen kann), sondern unangetastet beiseitegelegt und durch einen neuen ersetzt.
     [CmdletBinding()]
-    param([string]$Path)
+    param([string]$Path, [switch]$Beiseite)
     if (-not $Path) { $Path = MorpheusDefaultDataDir }
     $Path = [IO.Path]::GetFullPath($Path).TrimEnd('\')
-    if (-not (MorpheusIsAdmin)) { throw 'Der Datenordner lässt sich nur mit Administratorrechten einrichten.' }
+    if (-not (& $script:MorpheusInstallImpl.IstAdmin)) { throw 'Der Datenordner lässt sich nur mit Administratorrechten einrichten.' }
 
     if (Test-Path -LiteralPath $Path) {
         $it = Get-Item -LiteralPath $Path -Force
@@ -381,6 +386,19 @@ function Initialize-MorpheusDataDir {
         $pruefung = $null
         if (($it -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $it))) { $pruefung = Test-MorpheusSecurePath -Path $Path -Recurse -Ausnahmen 'temp' }
         if ((-not $pruefung) -or (-not $pruefung.Sicher)) {
+            # 2.4 (#63): Nur zusätzliche Rechte (z. B. nach „Fortsetzen“ im Explorer) sind reparierbar: nicht beiseitelegen,
+            # sondern melden (Nur-Lesen-Modus mit Angebot zur Reparatur). -Beiseite erzwingt das Beiseitelegen trotzdem.
+            if ((-not $Beiseite) -and ($it -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $it))) {
+                $zst = Get-MorpheusDatenordnerZustand -Path $Path
+                if ($zst.zustand -eq 'reparierbar') {
+                    $kontenText = (@($zst.konten | ForEach-Object { '{0} ({1})' -f $_.name, $_.rechte }) -join ', ')
+                    $ex = New-Object System.Exception ('Die Rechte des Datenordners {0} wurden geändert ({1}). Morpheus startet im Nur-Lesen-Modus und bietet die Reparatur an.' -f $Path, $kontenText)
+                    $ex.Data['datenordner'] = 'reparierbar'
+                    # Ganzes Zustandsobjekt (Konten, Objekte): die GUI zeigt es im Banner an (18.10)
+                    $ex.Data['zustand'] = $zst
+                    throw $ex
+                }
+            }
             # Nur den obersten Eintrag umbenennen; Inhalt und Verknüpfungen darin werden nicht angefasst
             $aside = '{0}.unsicher-{1}' -f $Path, (Get-Date -Format 'yyyyMMdd-HHmmss')
             $gruende = 'Verknüpfung oder kein Ordner'
@@ -422,6 +440,330 @@ function Initialize-MorpheusDataDir {
     if (-not $final.Sicher) { throw ("Der Datenordner $Path ließ sich nicht sichern: " + ($final.Gruende -join ' | ')) }
     $Path
 }
+
+#region Datenordner-Rechte reparieren (2.4, #63, docs\gui-architektur.md Abschnitt 18.10)
+
+# Vertrauenswürdige SIDs: Administratoren, SYSTEM, TrustedInstaller (+ nur für Tests ZusatzVertraut)
+function MorpheusDatenordnerVertraut {
+    @($script:MorpheusTrustedSids) + @($script:MorpheusInstallImpl.ZusatzVertraut | Where-Object { $_ })
+}
+
+<#
+.SYNOPSIS
+    Beurteilt die Rechte des Datenordners, rein lesend (ändert nichts, betritt keine Verknüpfungen).
+.OUTPUTS
+    @{ zustand = 'ok'|'reparierbar'|'beiseite'|'fehlt'; konten = @(@{ sid; name; rechte = 'lesen'|'schreiben' }); objekte = <Anzahl>; gruende = @(...) }
+    beiseite:    der Ordner oder ein Objekt darin ist eine Verknüpfung bzw. kein Ordner, ein Besitzer ist nicht
+                 Administratoren/SYSTEM/TrustedInstaller, oder ein Objekt ist nicht lesbar.
+    reparierbar: sonst, wenn es Allow-Einträge für andere SIDs gibt (geerbt oder nicht, auch nur Lesen).
+    temp wird nur als Ordner geprüft, sein Inhalt nicht. Nur-Vererbungs-Einträge (auch ERSTELLER-BESITZER) wirken nicht
+    auf das Objekt selbst und zählen hier wie in MorpheusCheckAcl nicht.
+#>
+function Get-MorpheusDatenordnerZustand {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    $res = @{ zustand = 'fehlt'; konten = @(); objekte = 0; gruende = @() }
+    try { $full = [IO.Path]::GetFullPath($Path).TrimEnd('\') }
+    catch { $res.zustand = 'beiseite'; $res.gruende = @("Ungültiger Pfad: $Path"); return $res }
+    $top = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if (-not $top) { return $res }
+
+    $beiseite = New-Object System.Collections.Generic.List[string]
+    $fremd = New-Object System.Collections.Generic.List[string]
+    if ((MorpheusIsReparse $top) -or ($top -isnot [IO.DirectoryInfo])) {
+        $beiseite.Add("$full ist eine Verknüpfung (Junction/Symlink) oder kein Ordner")
+        $res.zustand = 'beiseite'
+        $res.gruende = @($beiseite)
+        return $res
+    }
+
+    $vertraut = @(MorpheusDatenordnerVertraut)
+    # Elternordner wie in Test-MorpheusSecurePath (ParentMask): sonst ließe sich der Datenordner umbenennen oder ersetzen.
+    # Das liegt außerhalb von Morpheus und ist nicht reparierbar -> beiseite.
+    $elternGruende = New-Object System.Collections.Generic.List[string]
+    $parent = Split-Path -Parent $full
+    # Testhilfe ElternAb: nur Elternordner unterhalb dieses Pfads prüfen (der Temp-Pfad des Testlaufs hat fremde Konten)
+    $ab = [string]$script:MorpheusInstallImpl.ElternAb
+    while ($parent) {
+        if ($ab -and (-not $parent.StartsWith(($ab.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase))) { break }
+        MorpheusCheckAcl -Path $parent -Mask $script:MorpheusParentMask -CheckOwner $false -Reasons $elternGruende -Context 'ändern, löschen oder ersetzen (damit auch den Ordner darunter)' -Vertraut $vertraut
+        $parent = Split-Path -Parent $parent
+    }
+    foreach ($x in $elternGruende) { $beiseite.Add("Elternordner unsicher: $x") }
+    $items = New-Object System.Collections.Generic.List[IO.FileSystemInfo]
+    $items.Add($top)
+    $errs = New-Object System.Collections.Generic.List[string]
+    $nicht = @([IO.Path]::GetFullPath((Join-Path $full 'temp')).TrimEnd('\'))
+    foreach ($e in (MorpheusTreeItems -Path $full -Errors $errs -NichtBetreten $nicht)) { $items.Add($e) }
+    foreach ($x in $errs) { $beiseite.Add($x) }
+
+    $konten = @{}      # sid -> 'lesen' | 'schreiben'
+    $objekte = 0
+    foreach ($it in $items) {
+        $p = $it.FullName
+        if (MorpheusIsReparse $it) { $beiseite.Add("$p ist eine Verknüpfung (Junction/Symlink)"); continue }
+        try { $acl = Get-Acl -LiteralPath $p -ErrorAction Stop }
+        catch { $beiseite.Add("Rechte von $p nicht lesbar: $($_.Exception.Message)"); continue }
+        $owner = $null
+        try { $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { }
+        if ((-not $owner) -or ($vertraut -notcontains $owner)) {
+            $beiseite.Add(("Besitzer von {0} ist {1} ({2}), nicht Administratoren, SYSTEM oder TrustedInstaller" -f $p, (MorpheusSidName $owner), $owner))
+        }
+        $hat = $false
+        foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($r.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) { continue }
+            if (([int]$r.PropagationFlags -band [int][Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+            $sid = $r.IdentityReference.Value
+            if ($vertraut -contains $sid) { continue }
+            $hat = $true
+            $stufe = 'lesen'
+            if (([int]$r.FileSystemRights -band $script:MorpheusWriteMask) -ne 0) { $stufe = 'schreiben' }
+            if ((-not $konten.ContainsKey($sid)) -or ($stufe -eq 'schreiben')) { $konten[$sid] = $stufe }
+            $fremd.Add(("{0} ({1}) hat Zugriff auf {2} ({3})" -f (MorpheusSidName $sid), $sid, $p, $stufe))
+        }
+        if ($hat) { $objekte++ }
+    }
+
+    $res.konten = @($konten.Keys | Sort-Object | ForEach-Object { @{ sid = $_; name = (MorpheusSidName $_); rechte = $konten[$_] } })
+    $res.objekte = $objekte
+    if ($beiseite.Count -gt 0) { $res.zustand = 'beiseite'; $liste = @($beiseite) + @($fremd) }
+    elseif ($konten.Count -gt 0) { $res.zustand = 'reparierbar'; $liste = @($fremd) }
+    else { $res.zustand = 'ok'; $liste = @() }
+    if ($liste.Count -gt $script:MorpheusMaxReasons) {
+        $rest = $liste.Count - $script:MorpheusMaxReasons
+        $liste = @($liste | Select-Object -First $script:MorpheusMaxReasons) + @("... und $rest weitere Gründe")
+    }
+    $res.gruende = @($liste)
+    $res
+}
+
+function MorpheusDateiNeuSchreiben {
+    # Kopiert die Datei in eine neue Datei im selben Ordner und ersetzt die alte damit ([IO.File]::Replace): Ein Programm, das
+    # die alte Datei noch zum Schreiben offen hält, schreibt danach ins Leere. Fehlende Dateien werden übersprungen.
+    param([string]$Datei)
+    if (-not [IO.File]::Exists($Datei)) { return $false }
+    $item = Get-Item -LiteralPath $Datei -Force
+    if (MorpheusIsReparse $item) { [IO.File]::Delete($Datei); return $false }
+    $neu = '{0}.neu-{1}' -f $Datei, [guid]::NewGuid().ToString('N')
+    try {
+        [IO.File]::Copy($Datei, $neu, $false)
+        [IO.File]::Replace($neu, $Datei, [NullString]::Value)
+    }
+    finally { if ([IO.File]::Exists($neu)) { try { [IO.File]::Delete($neu) } catch { } } }
+    $true
+}
+
+function MorpheusPruefeOberster {
+    # Der oberste Ordner muss ein echter Ordner (keine Verknüpfung) mit unveränderter Erstellzeit sein; sonst wurde er
+    # zwischenzeitlich ausgetauscht (der Benutzer hat darauf Löschrecht, solange die geschützte ACL noch nicht gesetzt ist).
+    param([string]$Path, [long]$Erstellt, [string]$Phase)
+    $it = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ((-not $it) -or ($it -isnot [IO.DirectoryInfo]) -or (MorpheusIsReparse $it)) {
+        throw ("Reparatur abgebrochen ({0}): {1} ist kein normaler Ordner mehr (Verknüpfung oder ausgetauscht). Es wurde nichts gelöscht." -f $Phase, $Path)
+    }
+    if ($it.CreationTimeUtc.Ticks -ne $Erstellt) {
+        throw ("Reparatur abgebrochen ({0}): {1} wurde während der Reparatur ausgetauscht. Es wurde nichts gelöscht." -f $Phase, $Path)
+    }
+}
+
+function MorpheusLiesJournalIds {
+    # Ids ALLER Journal-Einträge zum Zeitpunkt der Reparatur. Fehlendes/leeres Journal: leere Liste; unlesbar: eintraege = $null
+    param([string]$Path)
+    $res = @{ eintraege = @(); unlesbar = $false }
+    $jp = Join-Path $Path 'changes\journal.json'
+    try {
+        $ji = Get-Item -LiteralPath $jp -Force -ErrorAction SilentlyContinue
+        if (-not $ji) { return $res }
+        if ((MorpheusIsReparse $ji) -or ($ji -isnot [IO.FileInfo])) { throw 'Das Journal ist eine Verknüpfung oder keine Datei.' }
+        # Mit FileShare ReadWrite/Delete öffnen: ein Programm, das das Journal noch zum Schreiben offen hält, darf das Lesen nicht verhindern
+        $fs = New-Object IO.FileStream($jp, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]'ReadWrite, Delete')
+        try { $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8); $text = $sr.ReadToEnd() }
+        finally { $fs.Dispose() }
+        if ([string]::IsNullOrWhiteSpace($text)) { return $res }
+        $obj = ConvertFrom-Json -InputObject $text
+        $ids = New-Object System.Collections.Generic.List[string]
+        foreach ($e in @($obj)) {
+            if (($null -ne $e) -and ($null -ne $e.PSObject.Properties['id']) -and ($null -ne $e.id)) { $ids.Add([string]$e.id) }
+        }
+        $res.eintraege = @($ids)
+    }
+    catch { $res.eintraege = $null; $res.unlesbar = $true }
+    $res
+}
+
+function MorpheusSchreibeSperrdatei {
+    # state\datenordner-reparatur.json atomar schreiben (tmp, dann Replace bzw. Move). Format (Version 2):
+    # { version = 2; zeit; konten = [{sid, name}]; eintraege = [Journal-Ids] | null; journalUnlesbar = bool }
+    param([string]$Path, $Konten)
+    $stateDir = Join-Path $Path 'state'
+    $sd = Get-Item -LiteralPath $stateDir -Force -ErrorAction SilentlyContinue
+    if ($sd -and ((MorpheusIsReparse $sd) -or ($sd -isnot [IO.DirectoryInfo]))) { MorpheusEntferneEintrag $sd; $sd = $null }   # Verknüpfung nur entfernen
+    if (-not $sd) { [void][IO.Directory]::CreateDirectory($stateDir) }
+    $jr = MorpheusLiesJournalIds -Path $Path
+    $konten = @($Konten | ForEach-Object { @{ sid = $_.sid; name = $_.name } })
+    $doc = [ordered]@{ version = 2; zeit = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'); konten = $konten; eintraege = $jr.eintraege; journalUnlesbar = [bool]$jr.unlesbar }
+    $json = ConvertTo-Json -InputObject $doc -Depth 4
+    $ziel = Join-Path $stateDir 'datenordner-reparatur.json'
+    $zi = Get-Item -LiteralPath $ziel -Force -ErrorAction SilentlyContinue
+    if ($zi -and ((MorpheusIsReparse $zi) -or ($zi -isnot [IO.FileInfo]))) { MorpheusEntferneEintrag $zi }
+    $tmp = '{0}.neu-{1}' -f $ziel, [guid]::NewGuid().ToString('N')
+    try {
+        [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+        if ([IO.File]::Exists($ziel)) { [IO.File]::Replace($tmp, $ziel, [NullString]::Value) } else { [IO.File]::Move($tmp, $ziel) }
+    }
+    finally { if ([IO.File]::Exists($tmp)) { try { [IO.File]::Delete($tmp) } catch { } } }
+}
+
+<#
+.SYNOPSIS
+    Entfernt fremde Rechte aus dem Datenordner und stellt ihn wieder auf "nur Administratoren und SYSTEM" (18.10).
+.DESCRIPTION
+    Nur mit Adminrechten und nur im Zustand 'reparierbar' (oder 'ok', wenn state\datenordner-reparatur.json fehlt: dann wird
+    die Sperrdatei nachgeholt, die Reparatur ist erneut aufrufbar). Reihenfolge:
+      a) Zustand prüfen. b) Oberster Ordner: Reparse-/Erstellzeit-Prüfung, geschützte ACL (Vererbung aus, Administratoren und
+      SYSTEM Vollzugriff, fremde Einträge weg), erneut prüfen, Besitzer Administratoren. c) SOFORT danach state sicherstellen und
+      die Sperrdatei atomar schreiben (Konten + Ids aller Journal-Einträge). d) Erst dann: temp und tools löschen (temp neu),
+      state außer checklist.json leeren, übrige Unterobjekte je einzeln (kein icacls /T, keine Verknüpfungen): nicht geerbte
+      Allow-Einträge fremder SIDs entfernen, abgeschaltete Vererbung wieder einschalten; journal.json, accepted.psd1 und
+      state\checklist.json neu schreiben. Zum Schluss muss der Zustand 'ok' sein.
+    Fehler beim Löschen und beim Neuschreiben einzelner Dateien brechen nicht ab, sondern kommen als Warnungen zurück; Fehler bei
+    den ACL-Schritten, beim Schreiben der Sperrdatei oder eine Abschlussprüfung ungleich 'ok' werfen.
+    Testhilfe: $script:MorpheusInstallImpl.IstAdmin (Scriptblock) ersetzt die Adminprüfung, ZusatzVertraut (SIDs) nimmt
+    zusätzliche SIDs wie den Testbenutzer als vertrauenswürdig auf (sie behalten Vollzugriff am obersten Ordner; ohne Adminrechte
+    lässt sich der Besitzer nicht setzen, das wird dann nur mit ZusatzVertraut toleriert), VorAcl (Scriptblock) läuft direkt vor
+    der Prüfung vor dem ersten SetAccessControl (simuliert einen Austausch des Ordners). Produktiv sind alle leer/Standard.
+.OUTPUTS
+    @{ zustand; entfernt = <Anzahl entfernter Einträge>; meldung; warnungen = [string[]] }
+#>
+function Repair-MorpheusDatenordner {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    $Path = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if (-not (& $script:MorpheusInstallImpl.IstAdmin)) { throw 'Die Reparatur des Datenordners braucht Administratorrechte.' }
+
+    # a) Zustand prüfen. Erstellzeit vorher und nachher festhalten: sie muss bis zur ACL gleich bleiben.
+    $top0 = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    $erstellt = 0
+    if ($top0) { $erstellt = $top0.CreationTimeUtc.Ticks }
+    $vor = Get-MorpheusDatenordnerZustand -Path $Path
+    $sperrdatei = Join-Path $Path 'state\datenordner-reparatur.json'
+    $nurSperrdatei = $false
+    if ($vor.zustand -eq 'ok') {
+        # Halber Zustand eines früheren Laufs: Rechte schon sauber, aber die Undo-Sperre fehlt -> nachholen
+        $sz = Get-Item -LiteralPath $sperrdatei -Force -ErrorAction SilentlyContinue
+        if (-not $sz) { $nurSperrdatei = $true }
+    }
+    if (($vor.zustand -ne 'reparierbar') -and (-not $nurSperrdatei)) {
+        throw ("Der Datenordner {0} hat den Zustand '{1}' und lässt sich nicht reparieren. {2}" -f $Path, $vor.zustand, (@($vor.gruende | Select-Object -First 3) -join ' | '))
+    }
+    $vertraut = @(MorpheusDatenordnerVertraut)
+    $zusatz = @($script:MorpheusInstallImpl.ZusatzVertraut | Where-Object { $_ })
+    $abschnittA = [Security.AccessControl.AccessControlSections]::Access
+    $abschnittO = [Security.AccessControl.AccessControlSections]::Owner
+    $sidT = [Security.Principal.SecurityIdentifier]
+    $allow = [Security.AccessControl.AccessControlType]::Allow
+    $entfernt = 0
+    $warn = New-Object System.Collections.Generic.List[string]
+
+    # b) Oberster Ordner. Verbleibendes, sehr kleines Zeitfenster: zwischen der Prüfung direkt unten und dem ersten
+    # SetAccessControl könnte der Benutzer (er hat auf diesen Ordner noch Löschrecht) ihn gegen eine Verknüpfung tauschen.
+    # Danach hat er kein Recht mehr, ihn umzubenennen; die zweite Prüfung fängt einen Tausch im Fenster ab, bevor etwas
+    # gelöscht oder an Unterobjekten geändert wird.
+    if ($script:MorpheusInstallImpl.VorAcl) { & $script:MorpheusInstallImpl.VorAcl }
+    MorpheusPruefeOberster -Path $Path -Erstellt $erstellt -Phase 'vor den Rechten'
+    Write-Information 'Datenordner: entferne fremde Rechte am obersten Ordner'
+    $sec = [IO.Directory]::GetAccessControl($Path, $abschnittA)
+    foreach ($r in @($sec.GetAccessRules($true, $true, $sidT))) {
+        if (($r.AccessControlType -eq $allow) -and ($vertraut -notcontains $r.IdentityReference.Value)) { $entfernt++ }
+    }
+    foreach ($r in @($sec.GetAccessRules($true, $false, $sidT))) {
+        if (($r.AccessControlType -eq $allow) -and ($vertraut -notcontains $r.IdentityReference.Value)) { [void]$sec.RemoveAccessRuleSpecific($r) }
+    }
+    $sec.SetAccessRuleProtection($true, $false)
+    $inh = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $none = [Security.AccessControl.PropagationFlags]::None
+    foreach ($s in (@($script:MorpheusSidAdmins, $script:MorpheusSidSystem) + $zusatz)) {
+        $sid = New-Object Security.Principal.SecurityIdentifier($s)
+        $sec.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inh, $none, $allow)))
+    }
+    [IO.Directory]::SetAccessControl($Path, $sec)
+    MorpheusPruefeOberster -Path $Path -Erstellt $erstellt -Phase 'nach den Rechten'
+    try {
+        $os = [IO.Directory]::GetAccessControl($Path, $abschnittO)
+        $os.SetOwner((New-Object Security.Principal.SecurityIdentifier($script:MorpheusSidAdmins)))
+        [IO.Directory]::SetAccessControl($Path, $os)
+    }
+    catch { if ($zusatz.Count -eq 0) { throw ("Der Besitzer von {0} ließ sich nicht auf Administratoren setzen: {1}" -f $Path, $_.Exception.Message) } }
+
+    # c) SOFORT die Undo-Sperre schreiben, bevor irgendetwas gelöscht wird: scheitert ein späterer Schritt, bleibt sie bestehen
+    Write-Information 'Datenordner: schreibe die Sperrdatei'
+    MorpheusSchreibeSperrdatei -Path $Path -Konten $vor.konten
+
+    # d) Übrige Schritte; Fehler beim Löschen und Neuschreiben werden gesammelt
+    # temp und tools zuerst leeren (Verknüpfungen werden nur entfernt, nie betreten): Offene Frage (nicht geklärt), ob die
+    # automatische Weitergabe der Vererbung von NTFS beim Setzen der ACL am obersten Ordner Junctions im Inhalt von temp
+    # folgt. Der Inhalt von temp stammt zum Teil vom Benutzer (winget); er wird deshalb vor allen anderen Unterobjekten entfernt.
+    Write-Information 'Datenordner: lösche temp und tools, lege temp neu an'
+    foreach ($n in 'temp', 'tools') {
+        $ti = Get-Item -LiteralPath (Join-Path $Path $n) -Force -ErrorAction SilentlyContinue
+        if ($ti) {
+            try { MorpheusEntferneEintrag $ti }   # prüft selbst auf Reparse Points: Verknüpfungen werden nur selbst entfernt
+            catch { $warn.Add(("{0} ließ sich nicht (vollständig) löschen: {1}" -f $n, $_.Exception.Message)) }
+        }
+    }
+    try { [void][IO.Directory]::CreateDirectory((Join-Path $Path 'temp')) }
+    catch { $warn.Add("temp ließ sich nicht anlegen: $($_.Exception.Message)") }
+
+    Write-Information 'Datenordner: räume state auf'
+    $stateDir = Join-Path $Path 'state'
+    $sd = Get-Item -LiteralPath $stateDir -Force -ErrorAction SilentlyContinue
+    if ($sd -and ($sd -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $sd))) {
+        foreach ($e in @($sd.GetFileSystemInfos())) {
+            if ($e.Name -ieq 'checklist.json') { continue }
+            if ($e.Name -ieq 'datenordner-reparatur.json') { continue }   # die Sperrdatei bleibt
+            try { MorpheusEntferneEintrag $e }
+            catch { $warn.Add(("state\{0} ließ sich nicht löschen: {1}" -f $e.Name, $_.Exception.Message)) }
+        }
+    }
+
+    Write-Information 'Datenordner: entferne fremde Rechte an den Unterobjekten'
+    # temp und tools bleiben ungeöffnet (Inhalt nicht prüfen); existieren sie noch, wird ihre eigene ACL trotzdem bereinigt
+    $nicht = @('temp', 'tools' | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $Path $_)).TrimEnd('\') })
+    $errs = New-Object System.Collections.Generic.List[string]
+    foreach ($e in (MorpheusTreeItems -Path $Path -Errors $errs -NichtBetreten $nicht)) {
+        if (MorpheusIsReparse $e) { throw "Reparatur abgebrochen: $($e.FullName) ist eine Verknüpfung (Junction/Symlink)." }
+        $istDir = $e -is [IO.DirectoryInfo]
+        if ($istDir) { $s2 = [IO.Directory]::GetAccessControl($e.FullName, $abschnittA) } else { $s2 = [IO.File]::GetAccessControl($e.FullName, $abschnittA) }
+        $n = 0
+        foreach ($r in @($s2.GetAccessRules($true, $false, $sidT))) {
+            if (($r.AccessControlType -eq $allow) -and ($vertraut -notcontains $r.IdentityReference.Value)) { [void]$s2.RemoveAccessRuleSpecific($r); $n++ }
+        }
+        # Abgeschaltete Vererbung wieder einschalten, damit Administratoren und SYSTEM den Zugriff geerbt bekommen
+        $warGeschuetzt = $s2.AreAccessRulesProtected
+        if ($warGeschuetzt) { $s2.SetAccessRuleProtection($false, $false) }
+        if (($n -gt 0) -or $warGeschuetzt) {
+            if ($istDir) { [IO.Directory]::SetAccessControl($e.FullName, $s2) } else { [IO.File]::SetAccessControl($e.FullName, $s2) }
+            $entfernt += $n
+        }
+    }
+    if ($errs.Count -gt 0) { throw ('Reparatur abgebrochen: ' + (@($errs) -join ' | ')) }
+
+    Write-Information 'Datenordner: schreibe Journal, Akzeptanzliste und Checkliste neu'
+    foreach ($rel in 'changes\journal.json', 'accepted.psd1', 'state\checklist.json') {
+        try { [void](MorpheusDateiNeuSchreiben -Datei (Join-Path $Path $rel)) }
+        catch { $warn.Add(("{0} ließ sich nicht neu schreiben: {1}" -f $rel, $_.Exception.Message)) }
+    }
+
+    $nach = Get-MorpheusDatenordnerZustand -Path $Path
+    if ($nach.zustand -ne 'ok') {
+        throw ("Der Datenordner {0} ist nach der Reparatur nicht in Ordnung (Zustand '{1}'): {2}" -f $Path, $nach.zustand, (@($nach.gruende) -join ' | '))
+    }
+    $meldung = "Die Rechte des Datenordners wurden repariert ($entfernt Einträge entfernt)."
+    if ($warn.Count -gt 0) { $meldung += ' Hinweise: ' + (@($warn) -join ' | ') }
+    @{ zustand = 'ok'; entfernt = $entfernt; meldung = $meldung; warnungen = [string[]]@($warn) }
+}
+
+#endregion
 
 # PNG -> ICO (ein PNG-Bild 256x256 im ICO-Container, ab Windows Vista gültig). Gibt $true bei Erfolg zurück.
 function New-MorpheusIcon {
@@ -524,24 +866,36 @@ function Install-Morpheus {
 
     # Datenordner und einmalige Übernahme von Berichten und Akzeptanzliste (nur was noch fehlt).
     # Das Änderungsjournal wird bewusst NICHT übernommen: Der Quellordner gilt als nicht vertrauenswürdig.
-    $dataRoot = Initialize-MorpheusDataDir -Path $DataDir
-    $rep = Join-Path $dataRoot 'reports'
-    $srcRep = Join-Path $Source 'reports'
-    if (Test-Path -LiteralPath $srcRep -PathType Container) {
-        foreach ($f in @(Get-ChildItem -LiteralPath $srcRep -Filter 'pc-check_*.*' -File -ErrorAction SilentlyContinue)) {
-            if ($f.Name -notmatch '^pc-check_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}\.(json|html|md)$') { continue }
-            if (MorpheusIsReparse $f) { continue }
-            $d = Join-Path $rep $f.Name
-            if (-not (Test-Path -LiteralPath $d)) { [IO.File]::Copy($f.FullName, $d, $false) }
+    # 2.4 (#63): Ist der Datenordner nur 'reparierbar' (zusätzliche Rechte), wirft Initialize-MorpheusDataDir mit
+    # Data['datenordner'] = 'reparierbar'. Das darf die Installation nicht abbrechen: Datenübernahme überspringen, die
+    # Verknüpfung trotzdem anlegen; die installierte GUI bietet die Reparatur an. Andere Fehler wie bisher.
+    $dataRoot = $null
+    try { $dataRoot = Initialize-MorpheusDataDir -Path $DataDir }
+    catch {
+        if ($_.Exception.Data['datenordner'] -ceq 'reparierbar') {
+            Write-Warning "Der Datenordner $DataDir hat zusätzliche Rechte. Die Datenübernahme wird übersprungen; Morpheus bietet nach dem Start die Reparatur an."
         }
+        else { throw }
     }
-    $srcAcc = Join-Path $Source 'accepted.psd1'
-    $dstAcc = Join-Path $dataRoot 'accepted.psd1'
-    if ((Test-Path -LiteralPath $srcAcc -PathType Leaf) -and (-not (Test-Path -LiteralPath $dstAcc)) -and (-not (MorpheusIsReparse (Get-Item -LiteralPath $srcAcc -Force)))) {
-        [IO.File]::Copy($srcAcc, $dstAcc, $false)
+    if ($dataRoot) {
+        $rep = Join-Path $dataRoot 'reports'
+        $srcRep = Join-Path $Source 'reports'
+        if (Test-Path -LiteralPath $srcRep -PathType Container) {
+            foreach ($f in @(Get-ChildItem -LiteralPath $srcRep -Filter 'pc-check_*.*' -File -ErrorAction SilentlyContinue)) {
+                if ($f.Name -notmatch '^pc-check_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}\.(json|html|md)$') { continue }
+                if (MorpheusIsReparse $f) { continue }
+                $d = Join-Path $rep $f.Name
+                if (-not (Test-Path -LiteralPath $d)) { [IO.File]::Copy($f.FullName, $d, $false) }
+            }
+        }
+        $srcAcc = Join-Path $Source 'accepted.psd1'
+        $dstAcc = Join-Path $dataRoot 'accepted.psd1'
+        if ((Test-Path -LiteralPath $srcAcc -PathType Leaf) -and (-not (Test-Path -LiteralPath $dstAcc)) -and (-not (MorpheusIsReparse (Get-Item -LiteralPath $srcAcc -Force)))) {
+            [IO.File]::Copy($srcAcc, $dstAcc, $false)
+        }
+        $fin = Test-MorpheusSecurePath -Path $dataRoot -Recurse -Ausnahmen 'temp'
+        if (-not $fin.Sicher) { throw ("Der Datenordner $dataRoot ist nach der Übernahme nicht sicher: " + ($fin.Gruende -join ' | ')) }
     }
-    $fin = Test-MorpheusSecurePath -Path $dataRoot -Recurse -Ausnahmen 'temp'
-    if (-not $fin.Sicher) { throw ("Der Datenordner $dataRoot ist nach der Übernahme nicht sicher: " + ($fin.Gruende -join ' | ')) }
 
     # Startmenü-Verknüpfung für alle Benutzer
     try {

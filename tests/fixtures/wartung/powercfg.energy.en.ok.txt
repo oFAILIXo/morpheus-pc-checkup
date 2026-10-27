@@ -1,0 +1,12 @@
+﻿Enabling tracing for 60 seconds...
+Observing system behavior...
+Analyzing trace data...
+Analysis complete.
+
+Energy efficiency problems were found.
+
+3 Errors
+12 Warnings
+41 Informational
+
+See C:\ProgramData\Morpheus\reports\morpheus-energy_2026-10-26_153012.html for more details.

@@ -1,0 +1,6 @@
+﻿Name                 Id                      Version  Available Source
+-----------------------------------------------------------------------
+Demo Editor          Demo.Editor             1.2.0    1.3.0     winget
+Sample Player        Sample.Player           4.0      4.1       winget
+2 upgrades available.
+The following packages have an upgrade available, but require explicit targeting.

@@ -1,0 +1,2 @@
+﻿Unable to perform operation. An error occurred: There are no batteries on the system.
+Battery report cannot be created.

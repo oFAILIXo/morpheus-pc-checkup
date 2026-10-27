@@ -1,0 +1,10 @@
+﻿
+Tool zur Imageverwaltung für die Bereitstellung
+Version: 10.0.26100.1
+
+Abbildversion: 10.0.26100.2314
+
+[                           0.1%                           ]
+[==========================100.0%==========================]
+Der Komponentenspeicher kann repariert werden.
+Der Vorgang wurde erfolgreich beendet.

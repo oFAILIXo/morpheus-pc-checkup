@@ -1,0 +1,13 @@
+﻿The type of the file system is NTFS.
+
+Stage 1: Examining basic file system structure ...
+  421312 file records processed.
+File verification completed.
+ Phase duration (File record verification): 2.31 seconds.
+Stage 2: Examining file name linkage ...
+  Index entry Demo.tmp in directory 0x1b2 is not valid.
+Stage 3: Examining security descriptors ...
+
+Errors found.  CHKDSK cannot continue in read-only mode.
+Windows has scanned the file system and found problems.
+Please run chkdsk /scan or /spotfix, or run chkdsk /f offline.

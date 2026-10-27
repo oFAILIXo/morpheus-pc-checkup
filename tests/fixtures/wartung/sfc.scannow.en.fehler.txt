@@ -1,0 +1,4 @@
+﻿
+Beginning system scan.  This process will take some time.
+
+Windows Resource Protection could not perform the requested operation.

@@ -160,7 +160,9 @@
   };
   const reps = Array.from({ length: 12 }, (_, i) => mkReport(i));
   const cnt = js => { const c = { CRIT: 0, WARN: 0, TIPP: 0, ACK: 0, INFO: 0, OK: 0, SKIP: 0 }; js.Findings.forEach(f => { c[f.Status]++; }); return c; };
-  const reportList = () => reps.map(r => ({ name: r.name, created: r.json.Meta.Erstellt, version: '2.3.1', admin: true, profil: 'Gaming', counts: cnt(r.json) }));
+  // ?berichte=0: wie im Nur-Lesen-Modus mit reparierbarem Datenordner (Daten liegen nicht im Codeordner, also kein Bericht)
+  const ohneBerichte = new URLSearchParams(location.search).get('berichte') === '0';
+  const reportList = () => ohneBerichte ? [] : reps.map(r => ({ name: r.name, created: r.json.Meta.Erstellt, version: '2.3.1', admin: true, profil: 'Gaming', counts: cnt(r.json) }));
 
   const A = (id, kategorie, pruefung, titel, erkl, n, a, r, extra = {}) => ({ id, kategorie, pruefung, titel, erklaerung: erkl, nutzen: n, aufwand: a, risiko: r, neustart: false, varianten: null,
     befehle: { ausfuehren: extra.cmd || '', rueckgaengig: extra.undo || '', erklaerung: extra.expl || [] }, zustand: { aktiv: false, wert: 'aus', stand: iso(new Date()) }, ...extra.o });
@@ -176,14 +178,44 @@
     A('gaming.maus', 'Gaming', 'Mausbeschleunigung', 'Mausbeschleunigung ausschalten', 'Gleichmäßigeres Zielen.', 'mittel', 'gering', 'gering', { cmd: 'Set-ItemProperty -Path "HKCU:\\Control Panel\\Mouse" -Name MouseSpeed -Value 0', o: { zustand: { aktiv: false, wert: 'an', stand: iso(new Date()) } } }),
   ];
   const journal = [
+    // v2.4: Demo-Einträge der neuen Arten (17.6); neueste zuerst
+    { id: '20261025-191502-01', zeit: '2026-10-25T19:15:02', art: 'update', aktion: 'Demo.Editor', titel: 'Update: Demo Editor 3.1.0 → 3.2.1', variante: 'Demo.Editor', vorher: null, nachher: null, wiederherstellungspunkt: { seq: 58, zeit: '2026-10-25T19:14:40' }, status: 'erledigt', bezug: null, meldung: 'Erfolgreich installiert.', benutzer: 'demo', befehl: 'winget upgrade --id Demo.Editor --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity', dauerSek: 41, exitCode: 0, umkehrbar: false, ohnePunkt: false },
+    { id: '20261025-183011-01', zeit: '2026-10-25T18:30:11', art: 'wartung', aktion: 'dism.checkhealth', titel: 'Komponentenspeicher schnell prüfen', variante: null, vorher: null, nachher: null, wiederherstellungspunkt: null, status: 'erledigt', bezug: null, meldung: 'Keine Beschädigung im Komponentenspeicher gefunden.', benutzer: 'demo', befehl: 'C:\\WINDOWS\\system32\\Dism.exe /Online /Cleanup-Image /CheckHealth', dauerSek: 74, exitCode: 0, umkehrbar: false, ohnePunkt: false },
     { id: '20261024-190211-01', zeit: '2026-10-24T19:02:11', art: 'ausfuehren', aktion: 'netz.eee', titel: 'Energiesparfunktionen Netzwerkkarte aus', variante: null, vorher: 'an', nachher: 'aus', wiederherstellungspunkt: { seq: 56, zeit: '2026-10-24T19:02:00' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
     { id: '20261024-110000-01', zeit: '2026-10-24T11:00:00', art: 'ausfuehren', aktion: 'gaming.gamedvr', titel: 'Game DVR aus (Zustand wurde danach geändert)', variante: null, vorher: 1, nachher: 0, wiederherstellungspunkt: { seq: 55, zeit: '2026-10-24T10:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
   ];
-  const session = { version: '2.3.1', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
+  const session = { datenordner: null, version: '2.3.1', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
     safety: { schutzAn: true, laufwerk: 'C:', sperre24h: true, letzterPunkt: '2026-10-25T12:02:11', befehl: "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" } };
+  // v2.4 (#63): Demo-Schalter ?datenordner=1 (reparierbar, Nur-Lesen) bzw. ?datenordner=repariert (normal, Reparatur heute)
+  const dMode = new URLSearchParams(location.search).get('datenordner');
+  if (dMode === '1') {
+    session.readOnly = true;
+    session.readOnlyReason = 'Die Rechte des Datenordners wurden geändert.';
+    session.datenordner = { zustand: 'reparierbar', konten: [{ sid: 'S-1-5-21-1-2-3-1001', name: 'DEMO-PC\\demo', rechte: 'schreiben' }], objekte: 42, pfad: 'C:\\ProgramData\\Morpheus', repariert: false };
+    session.reparaturZeit = null;
+  } else if (dMode === 'repariert') {
+    // wie der Server: im normalen Modus kein datenordner-Objekt, reparaturZeit auf oberster Ebene
+    session.datenordner = null;
+    session.reparaturZeit = iso(new Date());
+    journal.push({ id: '20260901-100000-01', zeit: '2026-09-01T10:00:00', art: 'ausfuehren', aktion: 'gaming.maus', titel: 'Mausbeschleunigung aus (vor der Reparatur)', variante: null, vorher: 'an', nachher: 'aus', wiederherstellungspunkt: { seq: 40, zeit: '2026-09-01T09:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' });
+  }
+  function datenordnerReparieren(body) {
+    const d = session.datenordner;
+    if (!d || d.zustand !== 'reparierbar' || d.repariert[0]) return [409, { error: 'Der Datenordner lässt sich nicht reparieren (nicht reparierbar oder schon repariert).' }];
+    if (body.art !== 'reparieren' && body.art !== 'neu') return [400, { error: 'Unbekannte Art.' }];
+    d.repariert = [true];
+    return [200, { ok: true, zustand: 'ok', meldung: body.art === 'neu' ? 'Der alte Ordner wurde beiseitegelegt und leer neu angelegt.' : 'Die Rechte wurden entfernt (42 Einträge).' }];
+  }
   const help = { Status: { CRIT: 'Kritisch: echtes Risiko. Zuerst beheben.', WARN: 'Warnung: sollte behoben werden.', ACK: 'Akzeptiert: bewusst als gewollt eingetragen.', TIPP: 'Tipp: lohnende Verbesserung.', INFO: 'Hinweis: reine Information.', OK: 'OK: alles in Ordnung.', SKIP: 'Nicht geprüft.' },
     Kategorien: { Virenschutz: 'Microsoft Defender reicht für Privat-PCs, solange alle Schutzfunktionen an sind.', 'Gaming & Grafik': 'Einstellungen, die Bildraten und Frametimes beeinflussen.' },
-    Pruefungen: { 'Defender: Einstellungen': { Was: 'Ob die Schutzfunktionen von Defender eingeschaltet sind.', Warum: 'Abgeschaltete Funktionen lassen Lücken.', Harmlos: 'Wenn ein anderes Virenprogramm aktiv ist.' } } };
+    Pruefungen: { 'Defender: Einstellungen': { Was: 'Ob die Schutzfunktionen von Defender eingeschaltet sind.', Warum: 'Abgeschaltete Funktionen lassen Lücken.', Harmlos: 'Wenn ein anderes Virenprogramm aktiv ist.' } },
+    // v2.4: Hilfetexte Wartung (17.8)
+    Wartung: {
+      'dism.checkhealth': { Was: 'Prüft den Komponentenspeicher schnell auf bekannte Beschädigungen. Ändert nichts.', Wann: 'Wenn Windows Fehler meldet, Updates scheitern oder Programme seltsam abbrechen.', Hinweis: 'Eine Momentaufnahme. Für eine gründliche Prüfung ist ScanHealth da.' },
+      'dism.restorehealth': { Was: 'Repariert beschädigte Teile des Komponentenspeichers mit Dateien aus Windows Update.', Wann: 'Wenn die Prüfung Beschädigungen meldet, die SFC allein nicht beheben kann.', Hinweis: 'Braucht Internet. Nicht abbrechen. Vorher legt Morpheus einen Wiederherstellungspunkt an.' },
+      'sfc.scannow': { Was: 'Prüft geschützte Systemdateien und repariert sie.', Wann: 'Nach einer DISM-Reparatur, wenn Windows-Dateien fehlen oder beschädigt sind.', Hinweis: 'Bei Problemen steht das Protokoll in %WinDir%\\Logs\\CBS\\CBS.log.' },
+      trim: { Was: 'Gibt auf SSDs nicht mehr benötigten Speicher frei (ReTrim).', Wann: 'Ab und zu, etwa einmal im Monat; Windows erledigt das oft schon selbst.', Hinweis: 'Nur für SSDs. HDDs werden nicht angeboten.' },
+    } };
   let checklist = { 'Offene Ports': { state: 'later', date: '24.10.2026', report: '2026-10-24T13:21:00' }, 'Software-Updates': { state: 'done', date: '25.10.2026', report: reps[0].json.Meta.Erstellt } };
 
   // ---- v2.2: Defender-Stand, Speicher-Cache, Offline-Zustand (Countdown)
@@ -242,10 +274,12 @@
     }));
     return [200, { jobId: id }];
   }
-  function undo(entryId, force) {
+  function undo(entryId, force, vorRep) {
     const e = journal.find(x => x.id === entryId);
     if (!e) return [404, { error: 'Eintrag unbekannt' }];
+    if (e.art !== 'ausfuehren') return [400, { error: 'Für diesen Eintrag gibt es kein Rückgängig.' }];
     if (e.status !== 'erledigt') return [400, { error: 'Nicht rückgängig zu machen' }];
+    if (session.reparaturZeit && e.zeit < session.reparaturZeit && !vorRep) return [409, { error: 'Der Eintrag liegt vor der Reparatur des Datenordners. Bestätigung nötig (vorReparatur).' }];
     if (e.titel.includes('geändert') && !force) return [409, { error: 'Der Zustand hat sich seit der Änderung geändert (aktuell ≠ gespeicherter Nachher-Zustand).' }];
     const id = newJob('aendern', ['Lese aktuellen Zustand …', 'Lege Wiederherstellungspunkt an …', 'Prüfe Wiederherstellungspunkt: vorhanden (#58)', 'Schreibe Journal-Eintrag …', 'Führe aus: Rückgängig', 'Prüfe Ergebnis …'], () => {
       e.status = 'zurueckgenommen';
@@ -372,6 +406,229 @@
     return [200, sysStand()];
   }
 
+  // ---- v2.4: Wartung & Reparatur (Vertrag 17.3, 17.5, 17.6) und Update-Dialog (17.5). Zustand nur im Speicher; echte Werkzeuge laufen nie.
+  const wartungEintrag = o => ({ parameter: null, internet: false, hinweis: null, ...o, punkt: o.klasse === 'reparatur', bericht: o.id.startsWith('powercfg.') });
+  const wartungWerkzeuge = [
+    wartungEintrag({ id: 'wiederherstellung.punkt', gruppe: 'Wiederherstellung', schritt: 1, klasse: 'wartung', titel: 'Wiederherstellungspunkt jetzt anlegen', erklaerung: 'Legt von Hand einen Wiederherstellungspunkt an, ohne etwas zu reparieren.', befehl: "Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS", dauer: 'etwa 1 Minute', abbruch: 'nein', hinweis: 'Windows legt höchstens alle 24 Stunden einen Punkt an. Ist die Sperre aktiv, passiert nichts.' }),
+    wartungEintrag({ id: 'dism.checkhealth', gruppe: 'Systemdateien', schritt: 1, klasse: 'diagnose', titel: 'Komponentenspeicher schnell prüfen', erklaerung: 'Prüft, ob DISM eine Beschädigung vermerkt hat. Liest nur und ändert nichts.', befehl: 'DISM.exe /Online /Cleanup-Image /CheckHealth', dauer: '1–5 Minuten', abbruch: 'sofort' }),
+    wartungEintrag({ id: 'dism.scanhealth', gruppe: 'Systemdateien', schritt: 2, klasse: 'diagnose', titel: 'Komponentenspeicher gründlich prüfen', erklaerung: 'Durchsucht den Komponentenspeicher vollständig. Dauert länger, ändert aber nichts.', befehl: 'DISM.exe /Online /Cleanup-Image /ScanHealth', dauer: '5–20 Minuten', abbruch: 'sofort' }),
+    wartungEintrag({ id: 'dism.restorehealth', gruppe: 'Systemdateien', schritt: 3, klasse: 'reparatur', titel: 'Komponentenspeicher reparieren', erklaerung: 'Repariert beschädigte Teile des Komponentenspeichers mit Dateien aus Windows Update.', befehl: 'DISM.exe /Online /Cleanup-Image /RestoreHealth', dauer: '5–30 Minuten', abbruch: 'nein', internet: true, hinweis: 'Nicht abbrechen: Microsoft rät davon ab, die Reparatur zu unterbrechen.' }),
+    wartungEintrag({ id: 'sfc.scannow', gruppe: 'Systemdateien', schritt: 4, klasse: 'reparatur', titel: 'Systemdateien prüfen und reparieren (SFC)', erklaerung: 'Prüft geschützte Systemdateien und repariert sie aus dem Komponentenspeicher.', befehl: 'sfc.exe /scannow', dauer: '10–20 Minuten', abbruch: 'nein', hinweis: 'Am besten nach DISM RestoreHealth ausführen.' }),
+    wartungEintrag({ id: 'dism.analyze', gruppe: 'Komponentenspeicher', schritt: 1, klasse: 'diagnose', titel: 'Größe des Komponentenspeichers ansehen', erklaerung: 'Zeigt, wie groß WinSxS ist und ob eine Bereinigung sinnvoll wäre. Ändert nichts.', befehl: 'DISM.exe /Online /Cleanup-Image /AnalyzeComponentStore', dauer: '2–10 Minuten', abbruch: 'sofort' }),
+    wartungEintrag({ id: 'dism.cleanup', gruppe: 'Komponentenspeicher', schritt: 2, klasse: 'reparatur', titel: 'Komponentenspeicher aufräumen', erklaerung: 'Entfernt überholte Komponentenversionen. Morpheus verwendet kein /ResetBase.', befehl: 'DISM.exe /Online /Cleanup-Image /StartComponentCleanup', dauer: '5–30 Minuten', abbruch: 'nein', hinweis: 'WinSxS nie von Hand löschen.' }),
+    wartungEintrag({ id: 'chkdsk.scan', gruppe: 'Diagnose', schritt: 1, klasse: 'diagnose', titel: 'Laufwerk auf Fehler prüfen (nur lesen)', erklaerung: 'Prüft das gewählte Laufwerk, ohne etwas zu reparieren.', befehl: 'chkdsk.exe <LW> /scan', dauer: '5–60 Minuten', abbruch: 'sofort', parameter: 'laufwerk' }),
+    wartungEintrag({ id: 'perfmon.rel', gruppe: 'Diagnose', schritt: 2, klasse: 'diagnose', titel: 'Zuverlässigkeitsverlauf öffnen', erklaerung: 'Zeigt Abstürze, Fehler und Updates der letzten Wochen als Verlauf.', befehl: 'perfmon /rel', dauer: 'sofort', abbruch: 'nein', hinweis: 'Öffnet sich ohne Adminrechte. Klappt das nicht: Win + R, perfmon /rel.' }),
+    wartungEintrag({ id: 'dns.flush', gruppe: 'Wartung', schritt: 1, klasse: 'wartung', titel: 'DNS-Cache leeren', erklaerung: 'Leert den lokalen Namens-Cache. Hilft bei Verbindungsproblemen zu Webseiten.', befehl: 'ipconfig.exe /flushdns', dauer: 'wenige Sekunden', abbruch: 'nein' }),
+    wartungEintrag({ id: 'trim', gruppe: 'Wartung', schritt: 2, klasse: 'wartung', titel: 'SSD optimieren (ReTrim)', erklaerung: 'Gibt auf SSDs nicht mehr benötigte Blöcke frei. Angeboten werden nur SSDs.', befehl: 'defrag.exe <LW> /L', dauer: '1–10 Minuten', abbruch: 'sofort', parameter: 'ssd' }),
+    wartungEintrag({ id: 'zeit.resync', gruppe: 'Wartung', schritt: 3, klasse: 'wartung', titel: 'Systemzeit abgleichen', erklaerung: 'Gleicht die Uhr mit dem Zeitserver ab, damit Anmeldungen und Zertifikate stimmen.', befehl: 'w32tm.exe /resync', dauer: 'etwa 1 Minute', abbruch: 'nein' }),
+    wartungEintrag({ id: 'powercfg.energy', gruppe: 'Energieberichte', schritt: 1, klasse: 'diagnose', titel: 'Energiebericht erstellen', erklaerung: 'Misst 60 Sekunden lang den Energieverbrauch und sucht nach Problemen. Der Bericht landet in der Berichtsliste.', befehl: 'powercfg.exe /energy /output <Bericht> /duration 60', dauer: '1–4 Minuten', abbruch: 'sofort' }),
+    wartungEintrag({ id: 'powercfg.akku', gruppe: 'Energieberichte', schritt: 2, klasse: 'diagnose', titel: 'Akkubericht erstellen', erklaerung: 'Zeigt Kapazität und Alterung des Akkus. Nur auf Notebooks.', befehl: 'powercfg.exe /batteryreport /output <Bericht>', dauer: 'etwa 2 Minuten', abbruch: 'nein' }),
+    wartungEintrag({ id: 'powercfg.schlaf', gruppe: 'Energieberichte', schritt: 3, klasse: 'diagnose', titel: 'Schlafstudie erstellen', erklaerung: 'Zeigt, wie der PC geschlafen hat. Gibt es nur mit Modern Standby.', befehl: 'powercfg.exe /sleepstudy /output <Bericht>', dauer: 'etwa 2 Minuten', abbruch: 'nein' }),
+    wartungEintrag({ id: 'winget.upgrade', gruppe: 'Programme', schritt: 1, klasse: 'reparatur', titel: 'Programme aktualisieren (winget)', erklaerung: 'Aktualisiert ausgewählte Programme über winget. Startet über den Dialog „Programme aktualisieren“.', befehl: 'winget upgrade --id <Paket-Id> --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity', dauer: '1–10 Minuten je Programm', abbruch: 'nach-paket', parameter: 'ids', internet: true, hinweis: 'Programme vorher schließen.' }),
+  ];
+  const WART_LAUFWERKE = [{ laufwerk: 'C:', bezeichnung: 'System', ssd: true }, { laufwerk: 'F:', bezeichnung: 'Spiele', ssd: true }, { laufwerk: 'D:', bezeichnung: 'Daten', ssd: false }];
+  const WART_PFAD = 'C:\\WINDOWS\\system32\\';
+  const WART_DISM = WART_PFAD + 'Dism.exe /Online /Cleanup-Image';
+  const WART_BERICHT_ART = { 'powercfg.energy': 'energy', 'powercfg.akku': 'akku', 'powercfg.schlaf': 'schlaf' };
+  const WART_BERICHT = { energy: 'Energiebericht', akku: 'Akkubericht', schlaf: 'Schlafstudie' };
+  const DISM_KOPF = ['Bereitstellungs-Image-Wartungs- und -Verwaltungstool', 'Version: 10.0.26100.1', '', 'Abbildversion: 10.0.26100.1', ''];
+  const DISM_FORTSCHRITT = ['[==========                 20.0%                          ]', '[===================        60.0%                          ]', '[==========================100.0%==========================]'];
+  const WINGET_BEFEHL = id => `C:\\Program Files\\WindowsApps\\Microsoft.DesktopAppInstaller_Demo\\winget.exe upgrade --id ${id} --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity`;
+  const wartungBerichte = [{ name: 'morpheus-energy_2026-10-25_201500.html', art: 'energy', titel: 'Energiebericht', zeit: '2026-10-25T20:15:00' }];
+  const punktFehlt = new Set();
+  let punktDemo = true;   // der erste dism.restorehealth-Start ohne ohnePunkt endet mit „punkt-fehlt“
+  let updates = { stand: null, liste: [], fehler: null };
+
+  // Demo-Ausgabe je Werkzeug (nach „Starte: …“): Zeilen, Ergebnis (17.6 zusammenfassung), Exit-Code, ob ein Bericht entsteht
+  function wartungLauf(id, lw, pfad) {
+    const z = (ergebnis, text, empfehlung = null, details = []) => ({ ergebnis, text, empfehlung, details });
+    const dism = (flag, zeilen, ergebnis) => ({ start: `${WART_DISM} ${flag}`, zeilen: [...DISM_KOPF, ...DISM_FORTSCHRITT, ...zeilen, 'Der Vorgang wurde erfolgreich beendet.'], z: ergebnis, exit: 0, berichtOk: false });
+    const kurz = (start, zeilen, ergebnis, exit = 0, berichtOk = false) => ({ start, zeilen, z: ergebnis, exit, berichtOk });
+    switch (id) {
+      case 'wiederherstellung.punkt': return kurz("Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS", ['Windows legt den Wiederherstellungspunkt an …', 'Wiederherstellungspunkt #59 angelegt.'], z('ok', 'Wiederherstellungspunkt #59 angelegt.'));
+      case 'dism.checkhealth': return dism('/CheckHealth', ['Es wurde keine Komponentenspeicherbeschädigung erkannt.'], z('ok', 'Keine Beschädigung im Komponentenspeicher gefunden.'));
+      case 'dism.scanhealth': return dism('/ScanHealth', ['Der Komponentenspeicher kann repariert werden.'], z('reparierbar', 'Der Komponentenspeicher ist beschädigt, kann aber repariert werden.', 'DISM RestoreHealth, danach SFC'));
+      case 'dism.restorehealth': return dism('/RestoreHealth', ['Die Wiederherstellung wurde abgeschlossen.'], z('repariert', 'Beschädigungen im Komponentenspeicher wurden repariert.', 'SFC ausführen, um die Systemdateien zu prüfen', ['Quelldateien aus Windows Update geladen']));
+      case 'dism.analyze': return dism('/AnalyzeComponentStore', ['Größe des Komponentenspeichers: 7,42 GB', 'Anzahl der Pakete: 3412', 'Ersetzte Komponenten: 128', 'Freigebbarer Speicherplatz: 1,12 GB', 'Bereinigung empfohlen: Ja'], z('reparierbar', 'Bereinigung empfohlen: etwa 1,12 GB sind freigebbar.', 'StartComponentCleanup ausführen', ['Größe: 7,42 GB', 'Pakete: 3412', 'Bereinigung empfohlen: Ja']));
+      case 'dism.cleanup': return dism('/StartComponentCleanup', ['Überholte Komponenten werden entfernt.'], z('ok', 'Überholte Komponenten wurden entfernt.'));
+      case 'sfc.scannow': return kurz(WART_PFAD + 'sfc.exe /scannow', ['Die Überprüfung wird gestartet.', 'Überprüfung 45 % abgeschlossen.', 'Überprüfung 100 % abgeschlossen.', 'Windows-Ressourcenschutz hat beschädigte Dateien gefunden und erfolgreich repariert.'], z('repariert', 'Beschädigte Systemdateien wurden repariert.', null, ['Protokoll: %WinDir%\\Logs\\CBS\\CBS.log']));
+      case 'chkdsk.scan': return kurz(WART_PFAD + 'chkdsk.exe ' + lw + ' /scan', ['Stufe 1: Dateisystem wird geprüft, 30 Prozent', 'Stufe 2: Indizes werden geprüft, 100 Prozent', 'Windows hat den Scan abgeschlossen. Es wurden keine Probleme gefunden.'], z('ok', 'Keine Probleme gefunden.'));
+      case 'dns.flush': return kurz(WART_PFAD + 'ipconfig.exe /flushdns', ['Der DNS-Auflösungscache wurde erfolgreich geleert.'], z('ok', 'DNS-Cache geleert.'));
+      case 'trim': return kurz(WART_PFAD + 'defrag.exe ' + lw + ' /L', [`Retrim auf ${lw}: 30 % abgeschlossen`, `Retrim auf ${lw}: 100 % abgeschlossen`], z('ok', `Retrim auf ${lw} abgeschlossen.`));
+      case 'zeit.resync': return kurz(WART_PFAD + 'w32tm.exe /resync', ['Sende Anforderung an den Zeitserver …', 'Die Uhr wurde erfolgreich mit dem Zeitserver synchronisiert.'], z('ok', 'Systemzeit synchronisiert.'));
+      case 'powercfg.energy': return kurz(`${WART_PFAD}powercfg.exe /energy /output "${pfad}" /duration 60`, ['Energieverfolgung läuft 60 Sekunden …', 'Energie-Ereignisse werden analysiert …', 'Bericht gespeichert.'], z('ok', 'Energiebericht erstellt: 0 Fehler, 2 Warnungen.', null, ['Fehler: 0', 'Warnungen: 2']), 0, true);
+      case 'powercfg.akku': return kurz(`${WART_PFAD}powercfg.exe /batteryreport /output "${pfad}"`, ['Akkubericht wird erstellt …', 'Bericht gespeichert.'], z('ok', 'Akku: 48.200 von 52.000 mWh volle Kapazität (93 %).'), 0, true);
+      case 'powercfg.schlaf': return kurz(`${WART_PFAD}powercfg.exe /sleepstudy /output "${pfad}"`, ['Schlafstudie wird erstellt …', 'Dieser PC unterstützt keinen Modern Standby.', 'Die Schlafstudie wurde nicht erstellt.'], z('problem', 'Dieser PC unterstützt keinen Modern Standby, daher gibt es keine Schlafstudie.', 'Das ist kein Fehler dieses Werkzeugs; der Bericht gibt es nur mit Modern Standby.'), 1, false);
+      default: return null;
+    }
+  }
+
+  // Journal-Eintrag vorne (17.6)
+  function wartungJournal(o) {
+    const e = { id: 'w' + Date.now() + o.aktion, zeit: o.zeit, art: o.art, aktion: o.aktion, titel: o.titel, variante: o.variante ?? null, vorher: null, nachher: null, wiederherstellungspunkt: o.punkt ?? null, status: o.status, bezug: null, meldung: String(o.meldung || '').slice(0, 500), benutzer: 'demo', befehl: o.befehl ?? null, dauerSek: o.dauer ?? null, exitCode: o.exit ?? null, umkehrbar: false, ohnePunkt: !!o.ohne };
+    journal.unshift(e);
+    return e.id;
+  }
+  // winget-Paket: ein Journal-Eintrag je Paket (17.6)
+  function updateJournal(p, punkt, ohne) {
+    const status = { aktualisiert: 'erledigt', abgebrochen: 'abgebrochen' }[p.status] || 'fehlgeschlagen';
+    return wartungJournal({ art: 'update', aktion: p.id, titel: `Update: ${p.name} ${p.von} → ${p.auf}`, zeit: iso(new Date()), status, meldung: p.text, variante: p.id, punkt, ohne, befehl: WINGET_BEFEHL(p.id), dauer: p.dauerSek, exit: p.exitCode });
+  }
+
+  // Start ohne Wiederherstellungspunkt: der Punkt fehlt (24-h-Sperre). Nichts startet; das Werkzeug wird gemerkt.
+  function wartungPunktFehlt(w) {
+    punktFehlt.add(w.id);
+    const jid = newJob('wartung', [`Lege Wiederherstellungspunkt an: Morpheus: vor ${w.titel}`, 'Windows hat keinen neuen Punkt angelegt. Nichts gestartet.'], () => ({
+      werkzeug: w.id, titel: w.titel, klasse: w.klasse, status: 'punkt-fehlt', befehl: null, laufwerk: null, exitCode: null, dauerSek: 0, zusammenfassung: null, punkt: null, ohnePunkt: false, bericht: null, journal: null,
+      meldung: `Kein neuer Wiederherstellungspunkt möglich: Windows legt nur alle 24 Stunden einen an (24-Stunden-Sperre). Ohne Punkt startet Morpheus nichts. Sperre aufheben (PowerShell als Administrator): ${session.safety.befehl}` }));
+    Object.assign(jobs[jid], { werkzeug: w.id, abbruch: 'nein' });
+    return [200, { jobId: jid }];
+  }
+
+  function wartungStart(body) {
+    const w = wartungWerkzeuge.find(x => x.id === body.werkzeug);
+    if (!w) return [400, { error: 'Unbekanntes Werkzeug.' }];
+    if (w.id === 'winget.upgrade') return [400, { error: 'Programme werden über „Programme aktualisieren“ gestartet.' }];
+    if (w.id === 'perfmon.rel') return [400, { error: 'Der Zuverlässigkeitsverlauf öffnet sich über seinen eigenen Knopf.' }];
+    let lw = null;
+    if (w.parameter) {
+      const l = WART_LAUFWERKE.find(x => x.laufwerk === body.laufwerk);
+      if (!l) return [400, { error: 'Bitte ein Laufwerk aus der Liste wählen.' }];
+      if (w.parameter === 'ssd' && !l.ssd) return [400, { error: 'Dieses Werkzeug läuft nur auf SSDs.' }];
+      lw = l.laufwerk;
+    } else if (body.laufwerk) return [400, { error: 'Für dieses Werkzeug ist kein Laufwerk erlaubt.' }];
+    if (laufend('wartung')) return [409, { error: 'Es läuft schon eine Wartung. Bitte warten, bis sie fertig ist.' }];
+    const ohne = body.ohnePunkt === true;
+    if (ohne && !(w.punkt && punktFehlt.has(w.id))) return [400, { error: 'Ohne Wiederherstellungspunkt ist das nur nach einem Start mit „punkt-fehlt“ erlaubt.' }];
+    if (w.id === 'dism.restorehealth' && punktDemo && !ohne) { punktDemo = false; return wartungPunktFehlt(w); }
+    if (ohne) punktFehlt.delete(w.id);
+
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const hms = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const art = WART_BERICHT_ART[w.id];
+    const name = art ? `morpheus-${art}_${iso(d).slice(0, 10)}_${hms.replace(/:/g, '')}.html` : null;
+    const lauf = wartungLauf(w.id, lw, name && 'C:\\ProgramData\\Morpheus\\reports\\' + name);
+    const punkt = w.punkt && !ohne;
+    const punktObj = w.id === 'wiederherstellung.punkt' ? { seq: 59, zeit: iso(d) } : punkt ? { seq: 58, zeit: iso(d) } : null;
+    const bericht = name && lauf.berichtOk ? name : null;
+    const zeilen = [];
+    if (punkt) zeilen.push(`Lege Wiederherstellungspunkt an: Morpheus: vor ${w.titel}`, `Wiederherstellungspunkt #58 geprüft (${hms}).`);
+    else if (ohne) zeilen.push('Ohne Wiederherstellungspunkt: bewusst bestätigt.');
+    zeilen.push(`Starte: ${lauf.start}`, ...lauf.zeilen, `Ergebnis: ${lauf.z.text}`);
+    const dauerSek = Math.max(1, Math.round(zeilen.length * 0.7));
+    const jid = newJob('wartung', zeilen, () => {
+      if (bericht) wartungBerichte.unshift({ name: bericht, art, titel: WART_BERICHT[art], zeit: iso(new Date()) });
+      const status = lauf.z.ergebnis === 'fehler' ? 'fehlgeschlagen' : 'erledigt';
+      const ergebnis = { werkzeug: w.id, titel: w.titel, klasse: w.klasse, status, befehl: lauf.start, laufwerk: lw, exitCode: lauf.exit, dauerSek, zusammenfassung: lauf.z, punkt: punktObj, ohnePunkt: ohne, meldung: lauf.z.text, bericht, journal: null };
+      ergebnis.journal = wartungJournal({ art: 'wartung', aktion: w.id, titel: w.titel, zeit: iso(new Date()), status, meldung: lauf.z.text, variante: lw, punkt: punktObj, ohne, befehl: lauf.start, dauer: dauerSek, exit: lauf.exit });
+      return ergebnis;
+    });
+    Object.assign(jobs[jid], { werkzeug: w.id, abbruch: w.abbruch, laufwerk: lw, punkt: punktObj, ohne });
+    return [200, { jobId: jid }];
+  }
+
+  // Abbruch: „sofort“ stoppt beim aktuellen Stand, „nach-paket“ nach dem laufenden winget-Paket. „nein“ wird abgelehnt.
+  function wartungAbbrechen(jobId) {
+    const j = jobs[jobId];
+    if (!j || laufend('wartung') !== jobId) return [409, { error: 'Kein laufender Wartungslauf mit dieser Id.' }];
+    if (!j.abbruch || j.abbruch === 'nein') return [409, { error: 'Dieser Lauf lässt sich nicht abbrechen.' }];
+    const n = Math.min(j.lines.length, Math.floor((Date.now() - j.t0) / j.step));
+    const plan = j.paketPlan || [];
+    const m = j.abbruch === 'nach-paket' ? (plan.map(x => x.ende).find(e => e >= n) ?? j.lines.length) : n;
+    j.lines = j.lines.slice(0, m);
+    j.finish = () => {
+      const dauerSek = Math.round((Date.now() - j.t0) / 1000);
+      if (!plan.length) {
+        const w = wartungWerkzeuge.find(x => x.id === j.werkzeug);
+        const jid = wartungJournal({ art: 'wartung', aktion: w.id, titel: w.titel, zeit: iso(new Date()), status: 'abgebrochen', meldung: 'Vom Benutzer abgebrochen.', variante: j.laufwerk, punkt: j.punkt, ohne: j.ohne, dauer: dauerSek });
+        return { werkzeug: w.id, titel: w.titel, klasse: w.klasse, status: 'abgebrochen', befehl: null, laufwerk: j.laufwerk ?? null, exitCode: null, dauerSek, zusammenfassung: { ergebnis: 'unbekannt', text: 'Abgebrochen. Der Zustand ist unklar; Details stehen im Protokoll.', empfehlung: null, details: [] }, punkt: j.punkt, ohnePunkt: j.ohne, meldung: 'Vom Benutzer abgebrochen.', bericht: null, journal: jid };
+      }
+      const pakete = plan.map(x => x.ende <= m ? x.paket : { ...x.paket, status: 'abgebrochen', exitCode: null, dauerSek: 0, text: 'Nicht mehr gestartet.' });
+      plan.filter(x => x.ende <= m).forEach(x => updateJournal(x.paket, j.punkt, j.ohne));
+      updates.liste = updates.liste.filter(u => !pakete.some(p => p.id === u.id && p.status === 'aktualisiert'));
+      return { werkzeug: 'winget.upgrade', titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', status: 'abgebrochen', befehl: null, laufwerk: null, exitCode: null, dauerSek, zusammenfassung: { ergebnis: 'unbekannt', text: 'Nach dem aktuellen Programm abgebrochen.', empfehlung: 'Nicht fertige Programme erneut auswählen.', details: [] }, punkt: j.punkt, ohnePunkt: j.ohne, meldung: 'Vom Benutzer abgebrochen.', bericht: null, journal: null, pakete };
+    };
+    return [200, { ok: true, meldung: 'Abbruch angefordert.' }];
+  }
+
+  const wartungLaeuftId = () => { const id = laufend('wartung'); return id ? jobs[id].werkzeug : null; };
+  const wingetLaeuft = () => { const id = laufend('wartung'); return id && jobs[id].werkzeug === 'winget.upgrade' ? id : null; };
+  let punktIdsWinget = null;   // Id-Menge des Laufs, der mit punkt-fehlt endete (ohnePunkt verlangt genau dieselbe)
+  let punktDemoWinget = true;
+  const wartungLaufendInfo =() => { const id = laufend('wartung'); return id ? { jobId: id, werkzeug: jobs[id].werkzeug, abbruch: jobs[id].abbruch } : null; };
+
+  // Update-Dialog: Suche und Installation (Demo)
+  function updatesSuchen() {
+    const alt = laufend('updatesuche');
+    if (alt) return [200, { jobId: alt }];
+    const jid = newJob('updatesuche', ['winget sucht nach Updates …', '5 Updates gefunden'], () => {
+      updates = { stand: iso(new Date()), fehler: null, liste: [
+        { id: 'Demo.Editor', name: 'Demo Editor', installiert: '3.1.0', verfuegbar: '3.2.1', kategorie: 'Programm' },
+        { id: 'Demo.Player', name: 'Demo Player', installiert: '1.0.4', verfuegbar: '1.1.0', kategorie: 'Programm' },
+        { id: 'Valve.Steam', name: 'Steam', installiert: '2.10', verfuegbar: '2.11', kategorie: 'Spiel/Launcher' },
+        { id: 'Contoso.LangerName.Install…', name: 'Contoso Langer Name', installiert: '4.0', verfuegbar: '4.1', kategorie: 'Id gekürzt' },
+        { id: 'Microsoft.Edge', name: 'Microsoft Edge', installiert: '130.0', verfuegbar: '131.0', kategorie: 'aktualisiert sich selbst' }] };
+      return { ...updates };
+    });
+    return [200, { jobId: jid }];
+  }
+  // Demo: die erste Installation von „Demo.Player“ allein endet mit punkt-fehlt (nichts gestartet)
+  function wingetPunktFehlt(ids) {
+    punktDemoWinget = false; punktIdsWinget = [...ids]; punktFehlt.add('winget.upgrade');
+    const jid = newJob('wartung', ['Lege Wiederherstellungspunkt an: Morpheus: vor Programm-Updates', 'Windows hat keinen neuen Punkt angelegt. Nichts gestartet.'], () => ({
+      werkzeug: 'winget.upgrade', titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', status: 'punkt-fehlt', befehl: null, laufwerk: null, exitCode: null, dauerSek: 0, zusammenfassung: null, punkt: null, ohnePunkt: false, bericht: null, journal: null,
+      meldung: `Kein neuer Wiederherstellungspunkt möglich: Windows legt nur alle 24 Stunden einen an (24-Stunden-Sperre). Ohne Punkt startet Morpheus nichts. Sperre aufheben (PowerShell als Administrator): ${session.safety.befehl}`, pakete: ids.map(id => ({ id })) }));
+    Object.assign(jobs[jid], { werkzeug: 'winget.upgrade', abbruch: 'nach-paket' });
+    return [200, { jobId: jid }];
+  }
+  function updatesInstallieren(body) {
+    const ids = body.ids;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 30) return [400, { error: 'Bitte 1 bis 30 Programme wählen.' }];
+    if (new Set(ids).size !== ids.length) return [400, { error: 'Jedes Programm nur einmal wählen.' }];
+    const gewaehlt = [];
+    for (const id of ids) {
+      const u = updates.liste.find(x => x.id === id);
+      if (!u) return [400, { error: 'Dieses Programm steht nicht in der letzten Suche.' }];
+      if (u.kategorie !== 'Programm') return [400, { error: `${u.name}: Kategorie „${u.kategorie}“ wird hier nicht aktualisiert.` }];
+      gewaehlt.push(u);
+    }
+    if (laufend('wartung')) return [409, { error: 'Es läuft schon eine Wartung. Bitte warten, bis sie fertig ist.' }];
+    const ohne = body.ohnePunkt === true;
+    if (ohne && punktFehlt.has('winget.upgrade') && punktIdsWinget && (punktIdsWinget.length !== ids.length || !ids.every(i => punktIdsWinget.includes(i)))) return [400, { error: 'Ohne Wiederherstellungspunkt nur mit genau denselben Programmen wie beim gescheiterten Start.' }];
+    if (!ohne && punktDemoWinget && ids.length === 1 && ids[0] === 'Demo.Player') return wingetPunktFehlt(ids);
+    if (ohne && !punktFehlt.has('winget.upgrade')) return [400, { error: 'Ohne Wiederherstellungspunkt ist das nur nach einem Start mit „punkt-fehlt“ erlaubt.' }];
+    if (ohne) { punktFehlt.delete('winget.upgrade'); punktIdsWinget = null; }
+
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const hms = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const punkt = ohne ? null : { seq: 58, zeit: iso(d) };
+    const zeilen = ohne ? ['Ohne Wiederherstellungspunkt: bewusst bestätigt.'] : ['Lege Wiederherstellungspunkt an: Morpheus: vor Programm-Updates', `Wiederherstellungspunkt #58 geprüft (${hms}).`];
+    const plan = [];
+    gewaehlt.forEach((u, i) => {
+      const paket = { id: u.id, name: u.name, von: u.installiert, auf: u.verfuegbar };
+      zeilen.push(`Paket ${i + 1}/${gewaehlt.length}: ${u.name} (${u.installiert} → ${u.verfuegbar})`, `Starte: ${WINGET_BEFEHL(u.id)}`);
+      if (u.id === 'Demo.Player') Object.assign(paket, { status: 'laeuft-noch', exitCode: 1, dauerSek: 6, text: 'Das Programm läuft noch. Bitte schließen und erneut versuchen.' });
+      else Object.assign(paket, { status: 'aktualisiert', exitCode: 0, dauerSek: 41, text: 'Erfolgreich installiert.' });
+      zeilen.push(paket.status === 'aktualisiert' ? 'Erfolgreich installiert' : paket.text, `Ergebnis: ${u.name}: ${paket.status === 'aktualisiert' ? 'aktualisiert' : paket.text}`);
+      plan.push({ paket, ende: zeilen.length });
+    });
+    const alleOk = plan.every(x => x.paket.status === 'aktualisiert');
+    const anzOk = plan.filter(x => x.paket.status === 'aktualisiert').length;
+    zeilen.push(`Ergebnis: ${anzOk} von ${plan.length} Programmen erledigt, ${plan.length - anzOk} nicht`);
+    const dauerSek = Math.max(1, Math.round(zeilen.length * 0.7));
+    const jid = newJob('wartung', zeilen, () => {
+      const pakete = plan.map(x => x.paket);
+      plan.forEach(x => updateJournal(x.paket, punkt, ohne));
+      updates.liste = updates.liste.filter(u => !pakete.some(p => p.id === u.id && p.status === 'aktualisiert'));
+      return { werkzeug: 'winget.upgrade', titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', status: 'erledigt', befehl: null, laufwerk: null, exitCode: null, dauerSek,
+        zusammenfassung: { ergebnis: alleOk ? 'ok' : 'problem', text: alleOk ? 'Alle Programme aktualisiert.' : 'Ein Programm läuft noch.', empfehlung: alleOk ? null : 'Programme schließen und erneut versuchen.', details: [] },
+        punkt, ohnePunkt: ohne, meldung: alleOk ? 'Alle Programme aktualisiert.' : 'Ein Programm läuft noch.', bericht: null, journal: null, pakete,
+        wingetOrdner: { gehalten: true, konten: [], text: 'WinGet-Ordner: Rechte gehalten (nur Administratoren und SYSTEM).' } };
+    });
+    Object.assign(jobs[jid], { werkzeug: 'winget.upgrade', abbruch: 'nach-paket', punkt, ohne, paketPlan: plan });
+    return [200, { jobId: jid }];
+  }
+
   // ---- v2.2: Offline-Scan-Countdown. Jeder GET /api/defender/offline gilt als Lebenszeichen.
   const offZustand = () => {
     if (offline.status === 'countdown') {
@@ -418,8 +675,10 @@
     else if (path === '/api/actions/refresh') res = [200, { jobId: newJob('lesen', ['Lese Zustände …'], () => ({})) }];
     else if (path === '/api/actions/run') res = runActions(body.ids || [], body.variante);
     else if (path === '/api/journal') res = [200, journal];
-    else if ((m = path.match(/^\/api\/journal\/([^/]+)\/undo$/))) res = undo(decodeURIComponent(m[1]), !!body.force);
+    else if ((m = path.match(/^\/api\/journal\/([^/]+)\/undo$/))) res = undo(decodeURIComponent(m[1]), !!body.force, !!body.vorReparatur);
     else if (path === '/api/restorepoints') res = [200, [{ seq: 57, zeit: '2026-10-25T12:02:11', beschreibung: 'pc-check: Demo-Änderung', typ: 'MODIFY_SETTINGS' }, { seq: 56, zeit: '2026-10-24T19:02:00', beschreibung: 'pc-check: Energiesparfunktionen Netzwerkkarte aus', typ: 'MODIFY_SETTINGS' }, { seq: 55, zeit: '2026-10-24T11:40:00', beschreibung: 'Windows Update', typ: 'APPLICATION_INSTALL' }]];
+    else if (path === '/api/datenordner/reparieren') res = method === 'POST' ? datenordnerReparieren(body) : [405, { error: 'Nur POST' }];
+    else if (path === '/api/shutdown') res = [200, { ok: true }];
     else if (path === '/api/scan') res = scan(body);
     else if ((m = path.match(/^\/api\/jobs\/([^/]+)$/))) res = jobState(m[1], parseInt(q.get('from') || '0', 10));
     else if (path === '/api/checklist') { if (method === 'POST') checklist = body; res = [200, checklist]; }
@@ -476,6 +735,14 @@
         ? [200, { name: n, text: sysGeladen ? 'Demo: Hier steht im echten Betrieb der Lizenztext aus dem Download (Eula.txt).' : null }]
         : [400, { error: 'Unbekanntes Werkzeug' }];
     }
+    // v2.4: Wartung & Reparatur und Update-Dialog (Vertrag 17.5)
+    else if (path === '/api/wartung') res = [200, { werkzeuge: wartungWerkzeuge, laufwerke: WART_LAUFWERKE, berichte: wartungBerichte, laufend: wartungLaufendInfo(), punktFehlt: [...punktFehlt], safety: session.safety }];
+    else if (path === '/api/wartung/start') res = method === 'POST' ? wartungStart(body) : [405, { error: 'Nur POST' }];
+    else if (path === '/api/wartung/abbrechen') res = method === 'POST' ? wartungAbbrechen(body.jobId) : [405, { error: 'Nur POST' }];
+    else if (path === '/api/wartung/zuverlaessigkeit') res = [200, { ok: true, meldung: 'Der Zuverlässigkeitsverlauf öffnet sich (Demo).' }];
+    else if (path === '/api/updates') res = [200, { ...updates, suche: laufend('updatesuche'), laufend: wingetLaeuft(), wartungLaeuft: wartungLaeuftId(), punktFehlt: punktFehlt.has('winget.upgrade') }];
+    else if (path === '/api/updates/suchen') res = updatesSuchen();
+    else if (path === '/api/updates/installieren') res = method === 'POST' ? updatesInstallieren(body) : [405, { error: 'Nur POST' }];
     else if (path === '/api/heartbeat' || path === '/api/shutdown') res = [200, {}];
     return new Response(JSON.stringify(res[1]), { status: res[0], headers: { 'Content-Type': 'application/json' } });
   };

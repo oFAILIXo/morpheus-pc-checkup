@@ -1,0 +1,14 @@
+﻿
+Systemscan wird gestartet. Dieser Vorgang kann einige Zeit dauern.
+
+Die Überprüfungsphase des Systemscans wird gestartet.
+Überprüfung 12 % abgeschlossen.
+Überprüfung 57 % abgeschlossen.
+Überprüfung 100 % abgeschlossen.
+
+Der Windows-Ressourcenschutz hat beschädigte Dateien gefunden, konnte einige
+dieser Dateien jedoch nicht reparieren.
+Bei Onlinereparaturen sind Details in der CBS-Protokolldatei enthalten, die
+sich unter "windir\Logs\CBS\CBS.log" befindet, z. B. "C:\Windows\Logs\CBS\CBS.log". Bei
+Offlinereparaturen sind Details in der Protokolldatei enthalten, die durch das
+Flag /OFFLOGFILE angegeben wird.
