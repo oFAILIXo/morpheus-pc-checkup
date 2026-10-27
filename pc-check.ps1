@@ -76,13 +76,27 @@ param(
     [switch]$NoOpen,
     [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto'
 )
+# Sicherheit (2.3.3): Module nur aus System32 und Program Files laden, nie aus Benutzerordnern (gui\lib\Systempfade.ps1).
+# Als erste Anweisung, damit vorher nichts automatisch geladen wird; Kindprozesse und Jobs erben den Wert.
+$env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
+# Für Anzeige und Prüfungen: PATH und Temp-Ordner des Benutzers, bevor sie unten bzw. in Set-MorpheusTempPfad ersetzt werden.
+# Nur Rückfall: Läuft der Scan als Job der GUI, sind beide schon gehärtet geerbt; die echten Werte kommen unten aus der
+# Registry (Get-MorpheusBenutzerTemp, Get-MorpheusBenutzerPath).
+$script:BenutzerPath = $env:PATH
+$script:BenutzerTemp = $env:TEMP
+# Kindprozesse (Jobs, Scan, winget, Windows-Programme): PATH nur Systemordner, keine .NET-Profiler-Variablen aus der
+# Benutzerumgebung (HKCU\Environment), über die sich eine DLL in jeden .NET-Prozess laden ließe (2.3.3, N6)
+$env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
+foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 
-$ScriptVersion = '2.3.2'
+$ScriptVersion = '2.3.3'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+# Windows-Programme nur mit vollem Pfad aus System32 (über die Windows-API, nicht über PATH oder %SystemRoot%)
+$script:Sys32 = [Environment]::SystemDirectory
 if (-not $OutputDir) { $OutputDir = Join-Path $PSScriptRoot 'reports' }
 if (-not $AcceptedFile) { $AcceptedFile = Join-Path $PSScriptRoot 'accepted.psd1' }
 if (-not $SpielOrdnerFile) { $SpielOrdnerFile = Join-Path (Split-Path -Parent $OutputDir) 'state\spielordner.json' }
@@ -161,6 +175,8 @@ function Get-RegValue {
 # Native Programme: stderr verwerfen, ohne dass $ErrorActionPreference = 'Stop' zuschlägt.
 function Invoke-Native {
     param([string]$File, [string[]]$Arguments)
+    # Nie über PATH auflösen (2.3.3): ein Programm gleichen Namens in einem Benutzerordner liefe sonst mit Adminrechten
+    if ($File -notmatch '^[A-Za-z]:\\') { throw "Programm ohne vollen Pfad: $File" }
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { , @(& $File @Arguments 2>$null | ForEach-Object { "$_" }) }
@@ -215,7 +231,7 @@ function Get-ExePath {
     param([string]$CommandLine)
     if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $null }
     try {
-        $c = [Environment]::ExpandEnvironmentVariables($CommandLine.Trim())
+        $c = Expand-MorpheusUmgebung $CommandLine.Trim()
         if ($c.StartsWith('"')) {
             $end = $c.IndexOf('"', 1)
             $p = if ($end -gt 1) { $c.Substring(1, $end - 1) } else { $c.Trim('"') }
@@ -264,7 +280,7 @@ function Test-UserWritablePath {
 function Get-PowerSetting {
     param([string]$Sub, [string]$Setting, [switch]$Hidden)
     $mode = if ($Hidden) { '/qh' } else { '/q' }
-    $out = (Invoke-Native powercfg.exe @($mode, 'SCHEME_CURRENT', $Sub, $Setting)) -join "`n"
+    $out = (Invoke-Native "$script:Sys32\powercfg.exe" @($mode, 'SCHEME_CURRENT', $Sub, $Setting)) -join "`n"
     $hex = @([regex]::Matches($out, '0x([0-9a-fA-F]{8})') | ForEach-Object { [Convert]::ToInt64($_.Groups[1].Value, 16) })
     if ($hex.Count -ge 2) { [pscustomobject]@{ AC = $hex[-2]; DC = $hex[-1] } }
 }
@@ -320,7 +336,7 @@ function Get-UpdateCategory {
 # Bewertet eine einzelne Defender-Ausnahme: 'CRIT', 'WARN' oder $null (unauffällig).
 function Get-ExclusionRisk {
     param([ValidateSet('Pfad', 'Prozess', 'Endung')][string]$Type, [string]$Value)
-    $v = [Environment]::ExpandEnvironmentVariables($Value).Trim().TrimEnd('\')
+    $v = (Expand-MorpheusUmgebung $Value).Trim().TrimEnd('\')
     switch ($Type) {
         'Pfad' {
             # Ganze Laufwerke, System- und Benutzerwurzeln sowie typische Ablageorte für Schadcode
@@ -413,6 +429,30 @@ try {
     }
 }
 catch { $script:SysDataRoot = Split-Path -Parent $OutputDir }
+# Sichere Pfade (2.3.3): winget-Auflösung und TEMP im gesicherten Datenordner. Add-Type kompiliert in %TEMP% und lädt die DLL
+# danach, secedit schreibt die Richtlinie dorthin; im Temp-Ordner des Benutzers könnte ein Benutzerprogramm beides austauschen.
+$script:PfadLib = $false
+$pfadLibPfad = Join-Path $PSScriptRoot 'gui\lib\Systempfade.ps1'
+if (Test-Path -LiteralPath $pfadLibPfad) {
+    try {
+        . $pfadLibPfad
+        $script:PfadLib = $true
+        if ($script:IsAdmin) {
+            $tempNeu = $null
+            if ($script:SysDataRoot) { $tempNeu = Set-MorpheusTempPfad -DataRoot $script:SysDataRoot }
+            if (-not $tempNeu) { Write-Warning 'Der Datenordner ist nicht gesichert: Temporäre Dateien (secedit, Add-Type) bleiben im Temp-Ordner des Benutzers. Sicherer ist der Start über die installierte Fassung.' }
+        }
+    }
+    catch { $script:PfadLib = $false }
+}
+if ($script:PfadLib) {
+    try { $script:BenutzerTemp = Get-MorpheusBenutzerTemp } catch { }
+    try { $script:BenutzerPath = Get-MorpheusBenutzerPath } catch { }
+}
+else {
+    # Ohne Bibliothek wie vor 2.3.3 (dann gilt ohnehin noch der Temp-Ordner des Benutzers)
+    function Expand-MorpheusUmgebung { param([AllowNull()][string]$Text) if (-not $Text) { return $Text }; [Environment]::ExpandEnvironmentVariables($Text) }
+}
 $script:SysAufgaben = $null       # Aufgabenpfad (klein) -> läuft mit erhöhten Rechten
 $script:Autoruns = $null          # Ergebnis des einen Autoruns-Laufs (auch im Fehlerfall)
 $script:AutorunsEintraege = $null
@@ -1084,6 +1124,8 @@ Invoke-Check 'Offene Netzwerkports' {
 
 Invoke-Check 'Router-Portweiterleitungen (UPnP)' {
     $job = Start-Job -ScriptBlock {
+        # Modulpfad auch im Kindprozess begrenzen (2.3.3)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         $nat = New-Object -ComObject HNetCfg.NATUPnP
         $col = $nat.StaticPortMappingCollection
         if ($null -eq $col) { return 'NODATA' }
@@ -1159,7 +1201,7 @@ Invoke-Check 'Proxy und Hosts-Datei' {
     if ((Get-RegValue $is 'ProxyEnable') -eq 1) { $proxy += "Benutzer-Proxy $(Get-RegValue $is 'ProxyServer')" }
     $pac = Get-RegValue $is 'AutoConfigURL'
     if ($pac) { $proxy += "Proxy-Skript $pac" }
-    $winhttp = (Invoke-Native netsh.exe @('winhttp', 'show', 'proxy')) -join ' '
+    $winhttp = (Invoke-Native "$script:Sys32\netsh.exe" @('winhttp', 'show', 'proxy')) -join ' '
     if ($winhttp -and $winhttp -notmatch 'Direkt|Direct') { $proxy += 'WinHTTP-Proxy: ' + ($winhttp -replace '\s+', ' ').Trim() }
 
     $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
@@ -1222,7 +1264,7 @@ Invoke-Check 'Administratorgruppe' {
         $members = @(([ADSI]"WinNT://$env:COMPUTERNAME/$group,group").Invoke('Members') | ForEach-Object { $_.GetType().InvokeMember('Name', 'GetProperty', $null, $_, $null) })
     }
     Add-Table 'Administratoren' @($members | ForEach-Object { [pscustomobject]@{ Mitglied = $_ } })
-    $tokenGroups = (Invoke-Native whoami.exe @('/groups', '/fo', 'csv', '/nh')) -join "`n"
+    $tokenGroups = (Invoke-Native "$script:Sys32\whoami.exe" @('/groups', '/fo', 'csv', '/nh')) -join "`n"
     $meIsAdmin = $tokenGroups -match '"S-1-5-32-544"'
     $value = "$($members.Count) Mitglieder: $($members -join ', ')"
     if ($members.Count -gt 2) { Add-Finding WARN $value 'Nicht mehr benötigte Administratorkonten entfernen.' }
@@ -1234,7 +1276,7 @@ Invoke-Check 'Kennwort- und Sperrrichtlinie' -NeedsAdmin {
     $tmp = Join-Path $env:TEMP ('pc-check-secpol-{0}.inf' -f [guid]::NewGuid())
     $cfg = @{}
     try {
-        Invoke-Native secedit.exe @('/export', '/cfg', $tmp, '/areas', 'SECURITYPOLICY', '/quiet') | Out-Null
+        Invoke-Native "$script:Sys32\secedit.exe" @('/export', '/cfg', $tmp, '/areas', 'SECURITYPOLICY', '/quiet') | Out-Null
         Get-Content -LiteralPath $tmp | ForEach-Object { if ($_ -match '^\s*([^=;\[]+?)\s*=\s*(.*)$') { $cfg[$Matches[1]] = $Matches[2].Trim() } }
     }
     finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
@@ -1503,7 +1545,7 @@ Invoke-Check 'BIOS/UEFI-Version' {
 }
 
 Invoke-Check 'Wiederherstellung' -NeedsAdmin {
-    $re = (Invoke-Native reagentc.exe @('/info')) -join "`n"
+    $re = (Invoke-Native "$script:Sys32\reagentc.exe" @('/info')) -join "`n"
     $reOn = $re -cmatch '\b(Enabled|Aktiviert)\b'
     $rp = @(Get-ComputerRestorePoint -ErrorAction SilentlyContinue)
     $last = $rp | Sort-Object SequenceNumber | Select-Object -Last 1
@@ -1816,7 +1858,7 @@ Invoke-Check 'Geplante Aufgaben' {
     foreach ($t in $tasks) {
         $isMs = $t.TaskPath -like '\Microsoft\*'
         foreach ($a in @($t.Actions)) {
-            $exeRaw = [Environment]::ExpandEnvironmentVariables([string]$a.Execute).Trim().Trim('"')
+            $exeRaw = (Expand-MorpheusUmgebung ([string]$a.Execute)).Trim().Trim('"')
             $arg = [string]$a.Arguments
             if (-not $exeRaw) {
                 if (-not $isMs) { $rows.Add([pscustomobject][ordered]@{ Aufgabe = "$($t.TaskPath)$($t.TaskName)"; Status = [string]$t.State; Konto = $t.Principal.UserId; Admin = ([string]$t.Principal.RunLevel -eq 'Highest'); Signierer = ''; Auffaellig = ''; Befehl = "COM-Handler $($a.ClassId)" }) }
@@ -1990,8 +2032,11 @@ if ($SkipWinget) {
 }
 else {
     Invoke-Check 'Software-Updates (winget)' {
-        $wg = Get-Command winget.exe -ErrorAction SilentlyContinue
-        if (-not $wg) { Add-Finding SKIP 'winget nicht gefunden'; return }
+        # winget nur aus dem signierten App-Installationsprogramm unter Program Files\WindowsApps, nie über PATH (2.3.3)
+        if (-not $script:PfadLib) { Add-Finding SKIP 'winget nicht geprüft: gui\lib\Systempfade.ps1 fehlt'; return }
+        $wgInfo = Get-MorpheusWinget
+        if (-not $wgInfo.Pfad) { Add-Finding SKIP ('winget nicht gefunden: ' + $wgInfo.Grund) 'Morpheus startet winget nur aus dem signierten App-Installationsprogramm unter C:\Program Files\WindowsApps, nie über PATH. Abhilfe: App-Installer im Microsoft Store aktualisieren.'; return }
+        $wg = [pscustomobject]@{ Source = $wgInfo.Pfad }
         $text = ''; $errText = ''; $exit = $null
         # Beim ersten Aufruf aktualisiert winget seine Quelle und liefert dabei gelegentlich nichts: einmal wiederholen.
         for ($attempt = 1; $attempt -le 2 -and -not $text.Trim(); $attempt++) {
@@ -2400,7 +2445,7 @@ else {
 }
 
 Invoke-Check 'TRIM und Laufwerksoptimierung' {
-    $out = (Invoke-Native fsutil.exe @('behavior', 'query', 'DisableDeleteNotify')) -join ' '
+    $out = (Invoke-Native "$script:Sys32\fsutil.exe" @('behavior', 'query', 'DisableDeleteNotify')) -join ' '
     $trim = if ($out -match 'NTFS DisableDeleteNotify\s*=\s*(\d)') { [int]$Matches[1] } else { $null }
     $task = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' -TaskName 'ScheduledDefrag' -ErrorAction SilentlyContinue
     $last = if ($task) { (Get-ScheduledTaskInfo -InputObject $task -ErrorAction SilentlyContinue).LastRunTime } else { $null }
@@ -2431,7 +2476,7 @@ Invoke-Check 'Schnellstart und Ruhezustand' {
 
 Invoke-Check 'Temporäre Dateien und Caches' {
     $targets = [ordered]@{
-        'Benutzer-Temp'              = $env:TEMP
+        'Benutzer-Temp'              = $script:BenutzerTemp
         'Windows-Temp'               = "$env:SystemRoot\Temp"
         'Update-Downloads'           = "$env:SystemRoot\SoftwareDistribution\Download"
         'Absturzabbilder (Programme)' = "$env:LOCALAPPDATA\CrashDumps"
@@ -2457,12 +2502,18 @@ Invoke-Check 'Temporäre Dateien und Caches' {
 Invoke-Check 'Dev Drive (Entwicklung)' {
     $refs = @(Get-Volume | Where-Object { $_.DriveLetter -and $_.FileSystem -eq 'ReFS' })
     if ($refs) {
-        $detail = foreach ($v in $refs) { "$($v.DriveLetter): " + (((Invoke-Native fsutil.exe @('devdrv', 'query', "$($v.DriveLetter):")) | Where-Object { $_.Trim() } | Select-Object -First 1)) }
+        $detail = foreach ($v in $refs) { "$($v.DriveLetter): " + (((Invoke-Native "$script:Sys32\fsutil.exe" @('devdrv', 'query', "$($v.DriveLetter):")) | Where-Object { $_.Trim() } | Select-Object -First 1)) }
         Add-Finding OK ('ReFS-Volumes: ' + ($detail -join '; '))
     }
     else {
         # Nur relevant, wenn auf dem PC entwickelt wird
-        $dev = @('git.exe', 'node.exe', 'python.exe', 'dotnet.exe', 'cargo.exe', 'go.exe', 'java.exe' | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | ForEach-Object { $_ -replace '\.exe$' })
+        # Nur nachsehen, ob die Programme im PATH des Benutzers liegen; gestartet wird nichts (PATH des Prozesses ist begrenzt)
+        $devOrdner = @(([string]$script:BenutzerPath) -split ';' | Where-Object { $_.Trim() })
+        $dev = @('git.exe', 'node.exe', 'python.exe', 'dotnet.exe', 'cargo.exe', 'go.exe', 'java.exe' | Where-Object {
+                $n = $_
+                foreach ($d in $devOrdner) { try { if ([IO.File]::Exists([IO.Path]::Combine($d.Trim(), $n))) { return $true } } catch { } }
+                $false
+            } | ForEach-Object { $_ -replace '\.exe$' })
         if ($dev) { Add-Finding INFO "Kein Dev Drive vorhanden (Entwicklungswerkzeuge gefunden: $($dev -join ', '))" 'Für Repos, node_modules und Build-Ordner ein Dev Drive anlegen (Einstellungen > System > Speicher > Datenträger und Volumes). ReFS plus Defender-Leistungsmodus beschleunigt git, npm und Builds spürbar, ohne den Virenschutz abzuschalten.' }
         else { Add-Finding OK 'Kein Dev Drive, keine Entwicklungswerkzeuge gefunden (nicht nötig)' }
     }
@@ -2475,10 +2526,10 @@ Invoke-Check 'Dev Drive (Entwicklung)' {
 Start-Section 'Performance' 'Energie'
 
 Invoke-Check 'Energieplan' {
-    $act = (Invoke-Native powercfg.exe @('/getactivescheme')) -join ' '
+    $act = (Invoke-Native "$script:Sys32\powercfg.exe" @('/getactivescheme')) -join ' '
     $guid = if ($act -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { $Matches[1].ToLower() }
     $name = if ($act -match '\(([^)]+)\)\s*\*?\s*$') { $Matches[1] } else { $guid }
-    $plans = @((Invoke-Native powercfg.exe @('/list')) | Where-Object { $_ -match '[0-9a-fA-F]{8}-' } | ForEach-Object { [pscustomobject]@{ Plan = $_.Trim() } })
+    $plans = @((Invoke-Native "$script:Sys32\powercfg.exe" @('/list')) | Where-Object { $_ -match '[0-9a-fA-F]{8}-' } | ForEach-Object { [pscustomobject]@{ Plan = $_.Trim() } })
     Add-Table 'Energiepläne' $plans
     $highPerf = $guid -in '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', 'e9a42b02-d5df-448d-aa00-03f14749eb61' -or $name -match 'Ultimat|High performance|Höchstleistung'
     if ($script:Profile -eq 'Laptop') {
@@ -2593,7 +2644,11 @@ Invoke-Check 'Virtualisierung und Spieleleistung' {
 }
 
 Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
-    $smi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    # nvidia-smi nur aus System32 bzw. Program Files, nie über PATH (2.3.3)
+    $smi = $null
+    foreach ($cand in @((Join-Path $script:Sys32 'nvidia-smi.exe'), (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NVIDIA Corporation\NVSMI\nvidia-smi.exe'))) {
+        if (Test-Path -LiteralPath $cand -PathType Leaf) { $smi = [pscustomobject]@{ Source = $cand }; break }
+    }
     if (-not $smi) {
         if (Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA') { Add-Finding SKIP 'nvidia-smi nicht gefunden (wird mit dem NVIDIA-Treiber installiert)' }
         else { Add-Finding SKIP 'Nur bei NVIDIA-Grafikkarten auslesbar (AMD: Adrenalin > Leistung > Tuning > Smart Access Memory)' }
@@ -3843,7 +3898,7 @@ try {
     Write-HtmlReport -Path $htmlPath
     Write-Host "HTML:    $htmlPath" -ForegroundColor Green
     # Über den Explorer öffnen: so startet der Browser ohne Adminrechte, auch wenn pc-check als Admin läuft
-    if (-not $NoOpen -and $interactive) { Start-Process explorer.exe -ArgumentList "`"$htmlPath`"" }
+    if (-not $NoOpen -and $interactive) { Start-Process -FilePath (Join-Path ([Environment]::GetFolderPath('Windows')) 'explorer.exe') -ArgumentList "`"$htmlPath`"" }
 }
 catch { Write-Warning "HTML-Bericht konnte nicht erstellt werden: $($_.Exception.Message)" }
 
@@ -3877,7 +3932,14 @@ if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
 
     $results = @()
     if ($selected) {
-        $wg = (Get-Command winget.exe -ErrorAction SilentlyContinue).Source
+        # Pfad neu prüfen (zwischen Scan und Auswahl kann Zeit vergehen), nie über PATH (2.3.3)
+        $wg = $null
+        if ($script:PfadLib) { $wg = (Get-MorpheusWinget).Pfad }
+        if (-not $wg) {
+            Write-Host '  winget wurde nicht im signierten App-Installationsprogramm gefunden; es wird nichts aktualisiert.' -ForegroundColor Yellow
+            foreach ($u in $selected) { $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = 'nicht aktualisiert (winget nicht gefunden)' } }
+            $selected = @()
+        }
         foreach ($u in $selected) {
             while ($true) {
                 Write-Host "`n=== Aktualisiere $($u.Name) ($($u.Installiert) -> $($u.Verfuegbar))" -ForegroundColor Cyan

@@ -265,7 +265,7 @@ function Get-MorpheusSystemabbild {
         }
         if ($IsAdmin) {
             # Fester Pfad statt PATH-Suche: läuft mit Adminrechten, ein Benutzerordner im PATH darf nichts unterschieben
-            $wb = Join-Path $env:SystemRoot 'System32\wbadmin.exe'
+            $wb = Join-Path ([Environment]::SystemDirectory) 'wbadmin.exe'
             if (Test-Path -LiteralPath $wb -PathType Leaf) {
                 $zeilen = PcCheckSicherungNative -Exe $wb -Argumente @('get', 'versions')
                 $zeiten = @(PcCheckSicherungWbadminZeiten -Zeilen ([string[]]$zeilen))

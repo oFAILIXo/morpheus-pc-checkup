@@ -458,7 +458,7 @@
             if ($dis -eq 1) { return 'Der Computerschutz ist per Gruppenrichtlinie abgeschaltet (DisableSR = 1).' }
         }
         Lesen = {
-            $laufwerk = $env:SystemDrive
+            $laufwerk = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
             if (-not $laufwerk) { $laufwerk = 'C:' }
             $intervall = $null; $dis = $null
             try { $intervall = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name 'RPSessionInterval' -ErrorAction Stop).RPSessionInterval } catch { }
@@ -469,7 +469,7 @@
         }
         Ausfuehren = {
             param($Variante)
-            $laufwerk = $env:SystemDrive
+            $laufwerk = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
             if (-not $laufwerk) { $laufwerk = 'C:' }
             Enable-ComputerRestore -Drive ($laufwerk + '\') -ErrorAction Stop | Out-Null
         }
@@ -479,7 +479,7 @@
             # War der Schutz schon vorher an, gab es nichts zurückzunehmen; ausgeschaltet wird nur, was diese Aktion eingeschaltet hat
             if ($Vorher.Eingeschaltet -eq $true) { return }
             $laufwerk = [string]$Vorher.Laufwerk
-            if (-not $laufwerk) { $laufwerk = $env:SystemDrive + '\' }
+            if (-not $laufwerk) { $laufwerk = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\')) + '\' }
             Disable-ComputerRestore -Drive $laufwerk -ErrorAction Stop | Out-Null
         }
     },
@@ -514,7 +514,7 @@
             if (($iv -ne 1) -or ($dis -eq 1)) { return 'Der Computerschutz ist aus; zuerst „Computerschutz einschalten“ ausführen.' }
         }
         Lesen = {
-            $lw = $env:SystemDrive
+            $lw = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
             if (-not $lw) { $lw = 'C:' }
             try {
                 $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$lw'" -ErrorAction Stop
@@ -533,9 +533,9 @@
         }
         Ausfuehren = {
             param($Variante)
-            $lw = $env:SystemDrive
+            $lw = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
             if (-not $lw) { $lw = 'C:' }
-            $out = & vssadmin.exe resize shadowstorage "/for=$lw" "/on=$lw" '/maxsize=10%' 2>&1
+            $out = & (Join-Path ([Environment]::SystemDirectory) 'vssadmin.exe') resize shadowstorage "/for=$lw" "/on=$lw" '/maxsize=10%' 2>&1
             if ($LASTEXITCODE -ne 0) { throw ("vssadmin endete mit Code $($LASTEXITCODE): " + (($out | Out-String).Trim())) }
         }
         Rueckgaengig = {
@@ -549,7 +549,7 @@
                 if ($max -notmatch '^(\d{1,12})MB$') { throw "Ungültige Speichergrenze '$max' im Vorher-Zustand." }
                 if ([int64]$Matches[1] -lt 320) { $max = '320MB' }   # vssadmin verlangt mindestens 320 MB
             }
-            $out = & vssadmin.exe resize shadowstorage "/for=$lw" "/on=$lw" "/maxsize=$max" 2>&1
+            $out = & (Join-Path ([Environment]::SystemDirectory) 'vssadmin.exe') resize shadowstorage "/for=$lw" "/on=$lw" "/maxsize=$max" 2>&1
             if ($LASTEXITCODE -ne 0) { throw ("vssadmin endete mit Code $($LASTEXITCODE): " + (($out | Out-String).Trim())) }
         }
     },
@@ -780,21 +780,21 @@
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
             if (-not $admin) { return 'Administratorrechte fehlen.' }
-            $akt = (& powercfg.exe /getactivescheme) -join ' '
+            $akt = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /getactivescheme) -join ' '
             if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { return 'Der aktive Energieplan ließ sich nicht ermitteln.' }
-            $out = (& powercfg.exe /qh $Matches[1] '501a4d13-42af-4429-9fd1-a8218c268e20' 'ee12f906-d277-404b-b6da-e5fa1a576df5') -join "`n"
+            $out = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /qh $Matches[1] '501a4d13-42af-4429-9fd1-a8218c268e20' 'ee12f906-d277-404b-b6da-e5fa1a576df5') -join "`n"
             if (@([regex]::Matches($out, '0x([0-9a-fA-F]{8})')).Count -lt 2) { return 'Der aktive Energieplan enthält die PCIe-Einstellung nicht.' }
         }
         Lesen = {
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
-            $akt = (& powercfg.exe /getactivescheme) -join ' '
+            $akt = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /getactivescheme) -join ' '
             if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
                 return [pscustomobject]@{ Aktiv = $false; Wert = 'Aktiver Energieplan nicht lesbar'; Zustand = $null }
             }
             $plan = $Matches[1].ToLower()
             $planName = $plan
             if ($akt -match '\((.+)\)\s*\*?\s*$') { $planName = $Matches[1] }
-            $out = (& powercfg.exe /qh $plan $teil $einst) -join "`n"
+            $out = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /qh $plan $teil $einst) -join "`n"
             $hex = @([regex]::Matches($out, '0x([0-9a-fA-F]{8})') | ForEach-Object { [Convert]::ToInt64($_.Groups[1].Value, 16) })
             if ($hex.Count -lt 2) {
                 return [pscustomobject]@{ Aktiv = $false; Wert = "Plan '$planName' enthält die PCIe-Einstellung nicht"; Zustand = $null }
@@ -807,14 +807,14 @@
         Ausfuehren = {
             param($Variante)
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
-            $akt = (& powercfg.exe /getactivescheme) -join ' '
+            $akt = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /getactivescheme) -join ' '
             if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { throw 'Der aktive Energieplan ließ sich nicht ermitteln.' }
             $plan = $Matches[1].ToLower()
-            & powercfg.exe /setacvalueindex $plan $teil $einst 0 | Out-Null
+            & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setacvalueindex $plan $teil $einst 0 | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "powercfg /setacvalueindex endete mit Code $LASTEXITCODE." }
-            & powercfg.exe /setdcvalueindex $plan $teil $einst 0 | Out-Null
+            & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setdcvalueindex $plan $teil $einst 0 | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "powercfg /setdcvalueindex endete mit Code $LASTEXITCODE." }
-            & powercfg.exe /setactive SCHEME_CURRENT | Out-Null
+            & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setactive SCHEME_CURRENT | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "powercfg /setactive endete mit Code $LASTEXITCODE." }
         }
         Rueckgaengig = {
@@ -823,11 +823,11 @@
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
             $plan = ([string]$Vorher.Plan).ToLower()
             if ($plan -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw "Ungültiger Energieplan '$plan' im Vorher-Zustand." }
-            & powercfg.exe /setacvalueindex $plan $teil $einst ([int]$Vorher.AC) | Out-Null
+            & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setacvalueindex $plan $teil $einst ([int]$Vorher.AC) | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "powercfg /setacvalueindex endete mit Code $LASTEXITCODE." }
-            & powercfg.exe /setdcvalueindex $plan $teil $einst ([int]$Vorher.DC) | Out-Null
+            & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setdcvalueindex $plan $teil $einst ([int]$Vorher.DC) | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "powercfg /setdcvalueindex endete mit Code $LASTEXITCODE." }
-            & powercfg.exe /setactive SCHEME_CURRENT | Out-Null
+            & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setactive SCHEME_CURRENT | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "powercfg /setactive endete mit Code $LASTEXITCODE." }
         }
     },

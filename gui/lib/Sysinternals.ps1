@@ -137,7 +137,9 @@ function MorpheusSysIstVerknuepfung {
 # Argumente eines Auftrags: @{ Name = 'autorunsc'|'sigcheck'; Argumente = string[] }. Unbekannter Auftrag: throw.
 function MorpheusSysArgumente {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Auftrag)
-    $sys = if ($env:SystemRoot) { $env:SystemRoot } else { 'C:\Windows' }
+    # Windows-Ordner über die Windows-API, nicht aus %SystemRoot% (vom Benutzer über HKCU\Environment beeinflussbar, 2.3.3)
+    $sys = [Environment]::GetFolderPath('Windows')
+    if (-not $sys) { $sys = 'C:\Windows' }
     if ($Auftrag -ceq 'autostarts') {
         return [ordered]@{ Name = 'autorunsc'; Argumente = [string[]]@('-accepteula', '-nobanner', '-a', '*', '-c', '-s', '*') }
     }
@@ -296,7 +298,7 @@ function MorpheusSysStart {
         } else {
             $res.zeitueberschreitung = $true
             $res.fehler = "Zeitüberschreitung nach $TimeoutSek Sekunden; der Prozess wurde beendet."
-            try { & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $p.Id /T /F 2>&1 | Out-Null } catch { }
+            try { & (Join-Path ([Environment]::SystemDirectory) 'taskkill.exe') /PID $p.Id /T /F 2>&1 | Out-Null } catch { }
             try { $p.Kill() } catch { }
             [void]$p.WaitForExit(5000)
         }

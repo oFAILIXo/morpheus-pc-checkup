@@ -184,9 +184,14 @@ Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
 - Die Oberfläche kann nur feste Aktionen aus dem Katalog auslösen, keine beliebigen Befehle.
 - Original-Berichte laufen im abgeschotteten Rahmen mit einmaliger Lesemarke.
 - Der Code liegt unter `C:\Program Files\Morpheus`, die Daten unter `C:\ProgramData\Morpheus`. Beides können nur Administratoren ändern.
+- Auch was Morpheus nachlädt, kommt nur aus Ordnern, die nur Administratoren ändern können (ab 2.3.3): PowerShell-Module nur aus `C:\Windows\System32` und `C:\Program Files`, Windows-Programme mit vollem Pfad, winget nur aus dem signierten App-Installationsprogramm, temporäre Dateien unter `C:\ProgramData\Morpheus\temp`.
 - Vor jeder Änderung wird ein Wiederherstellungspunkt geprüft. Jede Änderung lässt sich einzeln zurücknehmen.
 - **Jede Änderung und jedes Rückgängig bestätigt zusätzlich ein Windows-Dialog** („Morpheus – Änderung bestätigen“). Er gehört zum Prozess mit Adminrechten; Windows verhindert, dass Programme ohne Adminrechte darin klicken oder tippen. So kann auch ein Schadprogramm, das das Morpheus-Fenster fernsteuert, nichts ändern. „Nein“ ist vorbelegt.
 - Die Daten unter `C:\ProgramData\Morpheus` können nur Administratoren lesen und ändern. Berichte enthalten Programme, Konten und Netzwerkdetails; auch andere Benutzerkonten des PCs sehen sie nicht. Ansehen kannst du sie in Morpheus unter „Berichte“.
+- **Den Ordner `C:\ProgramData\Morpheus` nicht im Explorer über „Fortsetzen“ öffnen.** Der Explorer trägt dabei dauerhaft Vollzugriff für dein Konto ein. Dann könnte jedes Programm, das unter deinem Konto läuft, Journal, Akzeptanzliste und Zwischendateien ändern. Morpheus erkennt das beim nächsten Start und benutzt den Ordner nicht mehr. Zum Ansehen eine PowerShell als Administrator öffnen, z. B. `Get-ChildItem C:\ProgramData\Morpheus\reports`. Ist es schon passiert: zusätzliche Rechte in einer Admin-PowerShell entfernen.
+  ```powershell
+  icacls C:\ProgramData\Morpheus /remove:g "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)" /T /C
+  ```
 - Änderungen sind nur per POST mit JSON möglich.
 - Der Server endet mit dem Fenster.
 
@@ -315,6 +320,7 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 
 ## Versionen
 
+- **2.3.3:** Sicherheits-Hotfix gegen Rechteausweitung. Morpheus fand winget und PowerShell-Module bisher auch in Ordnern, die Programme ohne Adminrechte beschreiben können, und hätte dort abgelegte Fälschungen mit Adminrechten gestartet. Jetzt gilt: winget nur aus dem signierten App-Installationsprogramm (sonst wird die Prüfung übersprungen), Module nur aus System32 und Program Files, alle Windows-Programme mit vollem Pfad, temporäre Dateien im gesicherten Datenordner, kein Standardbrowser mit Adminrechten. Ein neuer Test hält das für künftige Erweiterungen fest.
 - **2.3.2:** Prüfung „Wiederherstellung“ unterscheidet „Computerschutz aus“ und „Speicher zu klein“ (zeigt die Grenze und von Windows gelöschte Punkte); neue Anpassung „Speicher für Wiederherstellungspunkte vergrößern“; Warnung, wenn der Speicher zu klein ist; Zustände aller Anpassungen werden beim Start gelesen, „Ausführen“ erscheint nur noch bei offenen Punkten.
 - **2.3.1:** Befunde und unsignierte Systemdateien (je SHA256) in der GUI akzeptieren und zurücknehmen, nur nach Windows-Bestätigung; Prüfhilfe für unsignierte Systemdateien mit „Mit Defender prüfen“ je Datei, VirusTotal-Link und Hash kopieren; breites Layout für WQHD und größer; „Scan starten“ orange umrandet; Tabellen mit deckender Fläche, Zebra-Zeilen, festem Kopf und besserem Kontrast.
 - **2.3.0:** Sysinternals-Werkzeuge Autoruns und Sigcheck: Bezug nur auf Klick in „Werkzeuge“ mit Lizenz-Zustimmung und Windows-Bestätigung, Ablage nur für Administratoren, Signatur- und Hash-Prüfung vor jedem Start; drei neue Prüfungen (Autostart-Signaturen, beschreibbare Autostart-Pfade, unsignierte Systemdateien) mit Tabellen; Schalter `-SkipSysinternals`; neues Design.

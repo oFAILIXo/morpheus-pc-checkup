@@ -366,7 +366,7 @@ function Get-MorpheusSteamSpiele {
 
 function Get-MorpheusEpicSpiele {
     param([string]$ManifestOrdner)
-    if (-not $ManifestOrdner) { $ManifestOrdner = Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests' }
+    if (-not $ManifestOrdner) { $ManifestOrdner = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Epic\EpicGamesLauncher\Data\Manifests' }
     if (-not (Test-Path -LiteralPath $ManifestOrdner -PathType Container)) { return @() }
     $spiele = @()
     foreach ($f in @(Get-ChildItem -LiteralPath $ManifestOrdner -Filter '*.item' -File -ErrorAction SilentlyContinue)) {

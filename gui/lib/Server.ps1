@@ -188,7 +188,7 @@ function Resolve-GuiSigcheckDatei {
     if (($Pfad -isnot [string]) -or ($Pfad.Length -lt 4) -or ($Pfad.Length -gt 260) -or ($Pfad -match '[\x00-\x1f\x7f]')) { Stop-GuiRequest 400 'pfad ist ungültig.' }
     if (($Pfad -split '[\\/]') -contains '..') { Stop-GuiRequest 400 'pfad ist ungültig.' }
     $wurzel = $script:GuiSystem32Root
-    if (-not $wurzel) { $wurzel = Join-Path $env:SystemRoot 'System32' }
+    if (-not $wurzel) { $wurzel = [Environment]::SystemDirectory }
     try {
         $wurzel = [IO.Path]::GetFullPath($wurzel).TrimEnd('\') + '\'
         $full = [IO.Path]::GetFullPath($Pfad)
@@ -379,6 +379,8 @@ function Read-GuiSpielordner {
 $script:GuiJobScripts = @{
     refresh = {
         param($Root, $Safety)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $Safety
         Write-Information -MessageData "[$(Get-Date -Format HH:mm:ss)] Zustände der Anpassungen lesen" -InformationAction Continue
         $cat = @(Get-PcCheckCatalog -Root $Root)
@@ -387,24 +389,30 @@ $script:GuiJobScripts = @{
     # Code kommt aus $Root, Daten (Journal) aus $DataRoot
     run     = {
         param($Root, $Safety, $Ids, $Variante, $DataRoot)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $Safety
         if ($Variante) { Invoke-PcCheckChange -Root $Root -DataRoot $DataRoot -Ids $Ids -Variante $Variante }
         else { Invoke-PcCheckChange -Root $Root -DataRoot $DataRoot -Ids $Ids }
     }
     undo    = {
         param($Root, $Safety, $EntryId, $Force, $DataRoot)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $Safety
         if ($Force) { Undo-PcCheckChange -Root $Root -DataRoot $DataRoot -EntryId $EntryId -Force }
         else { Undo-PcCheckChange -Root $Root -DataRoot $DataRoot -EntryId $EntryId }
     }
     scan    = {
         param($Root, $ScanArgs, $DataRoot)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         $t0 = Get-Date
         $ps1 = Join-Path $Root 'pc-check.ps1'
         if (-not (Test-Path -LiteralPath $ps1)) { throw 'pc-check.ps1 wurde nicht gefunden.' }
         Write-Information -MessageData "[$(Get-Date -Format HH:mm:ss)] Scan gestartet" -InformationAction Continue
         $al = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ps1) + @($ScanArgs)
-        & powershell.exe @al 2>&1 | ForEach-Object {
+        & ([Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\powershell.exe') @al 2>&1 | ForEach-Object {
             $s = ("$_").TrimEnd()
             if ($s.Trim()) { Write-Information -MessageData "[$(Get-Date -Format HH:mm:ss)] $s" -InformationAction Continue }
         }
@@ -418,6 +426,8 @@ $script:GuiJobScripts = @{
     # Speicherverbraucher und Spiele zählen; Cache atomar nach state\speicher.json (Save-GuiTextAtomic gibt es im Job nicht)
     speicher = {
         param($Root, $DataRoot)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         $lib = Join-Path $Root 'gui\lib\Speicher.ps1'
         if (-not (Test-Path -LiteralPath $lib -PathType Leaf)) { throw 'gui\lib\Speicher.ps1 wurde nicht gefunden.' }
         . $lib
@@ -435,12 +445,16 @@ $script:GuiJobScripts = @{
     }
     defender = {
         param($Root, $DefenderPath, $Art, $Pfad)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $DefenderPath
         if ($Art -ceq 'datei') { Invoke-MorpheusDefenderAktion -Art $Art -Pfad $Pfad }
         else { Invoke-MorpheusDefenderAktion -Art $Art }
     }
     sysinternals = {
         param($Root, $SysPath, $DataRoot)
+        # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
+        $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $SysPath
         # Die Zustimmung wird erst hier gespeichert, also nach der Windows-Bestätigung
         $null = Set-MorpheusSysZustimmung -DataRoot $DataRoot -Akzeptiert $true
@@ -677,12 +691,9 @@ $script:GuiLiveScript = {
         try {
             if (-not $smiChecked) {
                 $smiChecked = $true
-                $c = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
-                if ($c) { $smiPath = $c.Source }
-                else {
-                    foreach ($cand in @((Join-Path $env:SystemRoot 'System32\nvidia-smi.exe'), (Join-Path $env:ProgramFiles 'NVIDIA Corporation\NVSMI\nvidia-smi.exe'))) {
-                        if (Test-Path -LiteralPath $cand -PathType Leaf) { $smiPath = $cand; break }
-                    }
+                # Nur aus System32 bzw. Program Files, nie über PATH (2.3.3)
+                foreach ($cand in @((Join-Path ([Environment]::SystemDirectory) 'nvidia-smi.exe'), (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NVIDIA Corporation\NVSMI\nvidia-smi.exe'))) {
+                    if (Test-Path -LiteralPath $cand -PathType Leaf) { $smiPath = $cand; break }
                 }
             }
             if ($smiPath) {
