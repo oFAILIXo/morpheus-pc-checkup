@@ -1,6 +1,6 @@
 # pc-check GUI (v2.0): Architektur
 
-Stand: 26.10.2026 (Version 2.3.1)
+Stand: 27.10.2026 (Version 2.3.3)
 
 Dieses Dokument ist der Vertrag für alle Teilaufgaben. Wer an einem Teil arbeitet, hält sich an Dateinamen, API und Schema. Abweichungen erst hier eintragen, dann umsetzen.
 
@@ -47,7 +47,7 @@ Alle `.ps1` als UTF-8 **mit** BOM (PowerShell 5.1), `.html/.css/.js/.md` ohne BO
    - Das eigene Profil sorgt für einen eigenen Edge-Prozess, auf dessen Ende man warten kann.
    - Das Token steht im Fragment (`#`) und wird deshalb nie an den Server geschickt oder protokolliert.
    - `app.js` liest das Token, legt es in `sessionStorage` ab und entfernt es per `history.replaceState` aus der Adresse.
-6. **Edge fehlt:** Dann wird der Standardbrowser geöffnet. Das Ende erkennt dann nur der Heartbeat.
+6. **Edge fehlt:** Die Konsole zeigt die Adresse (mit Einmal-Code) zum Öffnen von Hand. Seit 2.3.3 startet der Admin-Prozess keinen Standardbrowser mehr (Abschnitt 17). Das Ende erkennt dann nur der Heartbeat.
 7. **Ende:** Der Server beendet sich, wenn
    - der Edge-Prozess endet, oder
    - 45 s kein Heartbeat kommt (die Oberfläche sendet alle 10 s `POST /api/heartbeat`), oder
@@ -628,3 +628,41 @@ Datei bleibt `<DataRoot>\accepted.psd1` (Format wie `accepted.example.psd1`). Ne
 - **Breite:** Bis 1920 px Fensterbreite bleibt alles wie heute. Darüber wächst die Mittelspalte bis ca. 1800 px; die rechte Leiste ist `clamp(280px, 16vw, 400px)`; Kartenraster (Tipps, Übersicht, Werkzeuge) bekommen ab ca. 2200 px eine Spalte mehr. Tabellen nutzen die volle Breite der Mittelspalte.
 - **Neuer Scan:** „Scan starten“ ist `.btn.brand` (oranger Rahmen und Glow wie „Neuer Scan“ oben). Die Häkchen bleiben türkis. Die Ansicht trägt die Klasse `noaccent`, damit die Linie unter dem Seitentitel dort entfällt (höchstens 3 Akzent-Stellen).
 - **Tabellen** (Rohdaten und „Daten ansehen“): `app.js` packt jede Datentabelle in `div.tbl-scroll` (eigener Scrollbereich) und gibt Zellen von Spalten, deren Name auf `Pfad|Path|Befehl|Ort|Datei|Sha256|Launch` passt, die Klasse `mono`. `app.css`: deckende dunkle Fläche (kein Backdrop durchscheinend), Zebra-Zeilen, Schrift mit Kontrast ≥ 4.5:1 zur Fläche, Kopf `position: sticky`, Hover-Zeile, `.mono` in Monospace mit Umbruch an beliebiger Stelle. Kein Orange in Tabellen.
+
+## 17. Ergänzungen v2.3.3: sichere Pfade (Hotfix #60, verbindlich für alle Erweiterungen)
+
+Admin-Code darf nichts über Suchpfade nachladen, die ein Benutzerprogramm beschreiben kann. Befunde und Nachweise: `docs/sicherheitspruefung-2.3.3.md`.
+
+### 17.1 Regeln
+
+1. **Modulpfad als erste Anweisung** in jedem Einstiegspunkt (`pc-check.ps1`, `pc-check-gui.ps1`, `pc-check-start.ps1`; bei `param()` direkt danach) und in jedem Scriptblock für `Start-Job` (alle Einträge in `$script:GuiJobScripts`, UPnP-Job im Scan):
+   ```powershell
+   $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
+   ```
+   Nur .NET, kein Cmdlet davor, damit vorher nichts automatisch geladen wird. Ein neuer Job bekommt dieselbe Zeile. Direkt danach setzen die Einstiegspunkte `PATH` auf Systemordner und leeren `COR_*`, `CORECLR_*`, `COMPlus_*`, `DOTNET_*` (Kindprozesse erben das). `pc-check.ps1` merkt sich vorher `$script:BenutzerPath` und `$script:BenutzerTemp` für Anzeige und Prüfungen.
+2. **Programme nur mit vollem Pfad** aus `[Environment]::SystemDirectory` bzw. `[Environment]::GetFolderPath('Windows'|'ProgramFiles'|'ProgramFilesX86'|'CommonApplicationData')`, nie aus `$env:SystemRoot`, `$env:ProgramFiles` usw. und nie über `PATH`/`Get-Command`. Systemlaufwerk: `[IO.Path]::GetPathRoot([Environment]::SystemDirectory)`. Reine Anzeige- und Größenpfade im Scan dürfen Umgebungsvariablen nutzen (verfälschen höchstens das Ergebnis). `Invoke-Native` im Scan wirft bei Namen ohne Pfad. Katalog-Aktionen schreiben `& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') …`, weil sie in sich geschlossen sein müssen.
+3. **winget** nur über `Get-MorpheusWinget`, sonst SKIP. Kein Rückgriff auf PATH.
+4. **TEMP** des Admin-Prozesses liegt im gesicherten Datenordner (`Set-MorpheusTempPfad`, je Prozess `temp\<PID>`). Gelingt das in der GUI nicht, startet sie im Nur-Lesen-Modus. Neue Funktionen, die temporäre Dateien schreiben und danach lesen oder ausführen, nutzen `[IO.Path]::GetTempPath()` bzw. `$env:TEMP` und erben das. **Messen** (Prüfungen, Anzeige, Auflösen fremder Pfade) nie über `$env:TEMP`, `$env:TMP`, `$env:PATH` oder `$env:PSModulePath`: Die sind gehärtet und werden an Jobs vererbt. Stattdessen `Get-MorpheusBenutzerTemp`, `Get-MorpheusBenutzerPath` und `Expand-MorpheusUmgebung` statt `[Environment]::ExpandEnvironmentVariables`.
+5. **Kein Standardbrowser und keine Dateizuordnung** aus dem Admin-Prozess (`Start-Process <url|datei>`). Dateien für den Benutzer öffnet der Explorer mit vollem Pfad (startet ohne Adminrechte).
+6. Jeder Start von `powershell.exe` mit vollem Pfad und `-NoProfile`.
+
+### 17.2 `gui\lib\Systempfade.ps1` (neu)
+
+Beim Dot-Sourcen wird nichts ausgeführt. Austauschbare Teile für Tests in `$script:MorpheusPfadImpl` (`Pakete`, `Signatur`, `Wurzel`, `Datei`, `ProgrammeOrdner`).
+
+| Funktion | Zweck |
+|---|---|
+| `Get-MorpheusModulPfad` | der gesicherte Modulpfad (System32 zuerst, dann Program Files) |
+| `Get-MorpheusSystemProgramm <Name>` | voller Pfad eines Programms in System32 (auch mit Unterordner, z. B. `WindowsPowerShell\v1.0\powershell.exe`); kein `..`, nur `.exe`/`.com`; fehlt es, Ausnahme statt PATH |
+| `Test-MorpheusMicrosoftSignatur -Pfad` | `$null`, wenn gültig von Microsoft signiert und die Kette an Root CA 2010/2011 endet, sonst Grund |
+| `Get-MorpheusWinget` | `{ Pfad, Version, Grund }`: winget.exe aus `Microsoft.DesktopAppInstaller` (PublisherId `8wekyb3d8bbwe`) direkt unter `<Program Files>\WindowsApps`, keine Verknüpfung, Microsoft-Signatur; höchste Version gewinnt; sonst `Pfad = $null` mit Grund |
+| `Set-MorpheusTempPfad -DataRoot` | `TEMP`/`TMP` nach `<DataRoot>\temp\<PID>`, nur wenn `DataRoot`, `temp` und der Unterordner laut `Test-MorpheusSecurePath` gesichert sind; gibt den Pfad oder `$null` zurück |
+| `Get-MorpheusBenutzerTemp` | echter Temp-Ordner des Benutzers aus `HKCU\Environment` (ohne Expansion gelesen, `%USERPROFILE%` ersetzt), Rückfall `<LocalAppData>\Temp`; nur zum Messen |
+| `Get-MorpheusBenutzerPath` | `Path` aus HKLM- und HKCU-Umgebung, expandiert; nur zum Nachsehen, nie zum Starten |
+| `Expand-MorpheusUmgebung <Text>` | wie `ExpandEnvironmentVariables`, aber `%TEMP%`/`%TMP%` = Benutzer-Temp |
+
+Aufrufer: `pc-check-gui.ps1` (lädt die Datei, setzt TEMP nach `Initialize-MorpheusDataDir`), `pc-check.ps1` (winget-Prüfung, Update-Dialog, TEMP). Der **Inhalt** von `temp\` zählt nicht zur Rechteprüfung des Datenordners (`Test-MorpheusSecurePath -Recurse -Ausnahmen 'temp'` in `Initialize-MorpheusDataDir` und `Install-Morpheus`): winget gibt seinen Ordner `TEMP\WinGet` dem Benutzer frei. Morpheus vertraut in `temp\` nichts über einen Lauf hinaus. `Initialize-MorpheusDataDir` entfernt bei jedem Start vor der rekursiven Rechteprüfung alles in `temp\` außer den Ordnern laufender Prozesse (`MorpheusLeereTemp`; nur im gesicherten Ordner, Verknüpfungen werden einzeln entfernt, nie betreten).
+
+### 17.3 Test
+
+`tests\Systempfade.Tests.ps1` prüft die Regeln aus 17.1 statisch über den Syntaxbaum aller Admin-Dateien und die Funktionen aus 17.2 mit Attrappen. Ein neuer Aufruf eines externen Programms ohne vollen Pfad oder ein neuer Job ohne Modulpfad lässt den Test scheitern.

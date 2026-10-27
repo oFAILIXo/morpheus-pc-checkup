@@ -43,12 +43,13 @@ function MorpheusIsAdmin {
 }
 
 function MorpheusProgramData {
-    $p = $env:ProgramData
+    # Über die Windows-API statt $env:ProgramData: Die erhöhte Sitzung erbt Benutzervariablen aus HKCU\Environment (2.3.3)
+    $p = [Environment]::GetFolderPath('CommonApplicationData')
     if (-not $p) { $p = 'C:\ProgramData' }
     $p
 }
 
-function MorpheusDefaultTarget { Join-Path $(if ($env:ProgramFiles) { $env:ProgramFiles } else { 'C:\Program Files' }) 'Morpheus' }
+function MorpheusDefaultTarget { $pf = [Environment]::GetFolderPath('ProgramFiles'); Join-Path $(if ($pf) { $pf } else { 'C:\Program Files' }) 'Morpheus' }
 function MorpheusDefaultDataDir { Join-Path (MorpheusProgramData) 'Morpheus' }
 
 # Anzeigename einer SID (deutsch für bekannte SIDs, sonst Kontoname, sonst die SID selbst)
@@ -71,7 +72,8 @@ function MorpheusIsReparse {
 
 # Alle Einträge unterhalb von $Path, ohne Verknüpfungen (Junctions/Symlinks) zu betreten. Liefert FileSystemInfo.
 function MorpheusTreeItems {
-    param([string]$Path, [System.Collections.Generic.List[string]]$Errors)
+    # NichtBetreten: volle Pfade von Ordnern, die selbst geliefert, deren Inhalt aber nicht durchsucht wird
+    param([string]$Path, [System.Collections.Generic.List[string]]$Errors, [string[]]$NichtBetreten = @())
     $result = New-Object System.Collections.Generic.List[IO.FileSystemInfo]
     $stack = New-Object System.Collections.Generic.Stack[string]
     $stack.Push($Path)
@@ -80,7 +82,7 @@ function MorpheusTreeItems {
         try {
             foreach ($e in (New-Object IO.DirectoryInfo $d).GetFileSystemInfos()) {
                 $result.Add($e)
-                if (($e -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $e))) { $stack.Push($e.FullName) }
+                if (($e -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $e)) -and ($NichtBetreten -notcontains $e.FullName.TrimEnd('\'))) { $stack.Push($e.FullName) }
             }
         }
         catch { if ($Errors) { $Errors.Add("Ordner $d nicht lesbar: $($_.Exception.Message)") } }
@@ -132,7 +134,10 @@ function Test-MorpheusSecurePath {
     param(
         [Parameter(Mandatory)][string]$Path,
         [switch]$Recurse,
-        [switch]$NoParents   # nur das Objekt selbst prüfen, nicht die Elternordner (intern: für Unterordner der Codedatei-Prüfung)
+        [switch]$NoParents,  # nur das Objekt selbst prüfen, nicht die Elternordner (intern: für Unterordner der Codedatei-Prüfung)
+        # Mit -Recurse: Unterordner (relativ zu Path), die selbst geprüft werden, deren Inhalt aber nicht. Für temp\ des
+        # Datenordners: winget legt dort Ordner an, die es dem Benutzer ausdrücklich freigibt (2.3.3, Nutzertest).
+        [string[]]$Ausnahmen = @()
     )
     $reasons = New-Object System.Collections.Generic.List[string]
     $total = 0
@@ -156,7 +161,8 @@ function Test-MorpheusSecurePath {
     # Inhalt
     if ($isDir -and $Recurse) {
         $errs = New-Object System.Collections.Generic.List[string]
-        foreach ($e in (MorpheusTreeItems -Path $full -Errors $errs)) {
+        $nicht = @($Ausnahmen | Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $full $_)).TrimEnd('\') })
+        foreach ($e in (MorpheusTreeItems -Path $full -Errors $errs -NichtBetreten $nicht)) {
             if (MorpheusIsReparse $e) { $reasons.Add("$($e.FullName) ist eine Verknüpfung (Junction/Symlink)") }
             MorpheusCheckAcl -Path $e.FullName -Mask $script:MorpheusWriteMask -CheckOwner $true -Reasons $reasons -Context 'ändern'
         }
@@ -278,7 +284,7 @@ function Test-MorpheusInstallCurrent {
 function MorpheusIcacls {
     # icacls.exe ausführen; ein Fehlercode ist ein Fehler
     param([string[]]$IcaclsArgs)
-    $exe = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    $exe = Join-Path ([Environment]::SystemDirectory) 'icacls.exe'
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { $out = @(& $exe @IcaclsArgs 2>&1 | ForEach-Object { "$_" }) } finally { $ErrorActionPreference = $old }
@@ -314,6 +320,40 @@ function New-MorpheusSecureDirectory {
     if (-not $chk.Sicher) { throw "Der Ordner $Path ließ sich nicht sicher anlegen: " + ($chk.Gruende -join ' | ') }
 }
 
+function MorpheusEntferneEintrag {
+    # Löscht eine Datei oder einen Ordner. Verknüpfungen (Junctions, Symlinks) werden nur selbst entfernt, nie betreten;
+    # auch solche tiefer im Ordner zuerst einzeln, denn Directory.Delete scheitert sonst an ihnen.
+    param([IO.FileSystemInfo]$Eintrag)
+    if (MorpheusIsReparse $Eintrag) {
+        if ($Eintrag -is [IO.DirectoryInfo]) { [IO.Directory]::Delete($Eintrag.FullName, $false) } else { [IO.File]::Delete($Eintrag.FullName) }
+        return
+    }
+    if ($Eintrag -is [IO.DirectoryInfo]) {
+        foreach ($x in @(MorpheusTreeItems -Path $Eintrag.FullName | Where-Object { MorpheusIsReparse $_ })) {
+            if ($x -is [IO.DirectoryInfo]) { [IO.Directory]::Delete($x.FullName, $false) } else { [IO.File]::Delete($x.FullName) }
+        }
+        [IO.Directory]::Delete($Eintrag.FullName, $true)
+    }
+    else { [IO.File]::Delete($Eintrag.FullName) }
+}
+
+function MorpheusLeereTemp {
+    # temp\<Prozess-ID> laufender Prozesse bleibt (ein Scan oder winget kann gerade darin arbeiten), alles andere wird entfernt
+    param([string]$Pfad)
+    $ti = Get-Item -LiteralPath $Pfad -Force
+    if ((MorpheusIsReparse $ti) -or ($ti -isnot [IO.DirectoryInfo])) {
+        try { MorpheusEntferneEintrag $ti } catch { Write-Warning "$Pfad ließ sich nicht entfernen: $($_.Exception.Message)" }
+        return
+    }
+    $laufend = @{}
+    foreach ($p in [Diagnostics.Process]::GetProcesses()) { $laufend[[string]$p.Id] = $true; $p.Dispose() }
+    foreach ($e in @($ti.GetFileSystemInfos())) {
+        if (($e -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $e)) -and $laufend.ContainsKey($e.Name)) { continue }
+        try { MorpheusEntferneEintrag $e }
+        catch { Write-Warning "Im Temp-Ordner ließ sich $($e.FullName) nicht entfernen: $($_.Exception.Message)" }
+    }
+}
+
 function Initialize-MorpheusDataDir {
     # Richtet C:\ProgramData\Morpheus ein. ProgramData erlaubt normalen Benutzern das Anlegen von Ordnern; ein vorab
     # angelegter (fremder) Ordner wird deshalb NIE repariert (rekursives icacls könnte dabei Verknüpfungen folgen, die der
@@ -326,21 +366,43 @@ function Initialize-MorpheusDataDir {
 
     if (Test-Path -LiteralPath $Path) {
         $it = Get-Item -LiteralPath $Path -Force
-        $ok = $false
-        if (($it -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $it))) { $ok = (Test-MorpheusSecurePath -Path $Path -Recurse).Sicher }
-        if (-not $ok) {
+        # temp\ (2.3.3) enthält nur Zwischendateien (Add-Type, secedit, winget), denen Morpheus über einen Lauf hinaus nie
+        # vertraut. Sein INHALT zählt deshalb nicht zur Rechteprüfung: winget legt dort Ordner an, die es dem Benutzer
+        # ausdrücklich freigibt, und hätte sonst den ganzen Datenordner unsicher gemacht. Der Ordner temp selbst muss gesichert
+        # sein; sonst (oder als Verknüpfung) wird er entfernt und unten neu angelegt. Danach Reste beendeter Prozesse entfernen.
+        $tmpDir = Join-Path $Path 'temp'
+        if (($it -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $it)) -and (Test-Path -LiteralPath $tmpDir) -and (Test-MorpheusSecurePath -Path $Path).Sicher) {
+            $ti = Get-Item -LiteralPath $tmpDir -Force
+            if ((MorpheusIsReparse $ti) -or ($ti -isnot [IO.DirectoryInfo]) -or (-not (Test-MorpheusSecurePath -Path $tmpDir -NoParents).Sicher)) {
+                try { MorpheusEntferneEintrag $ti } catch { Write-Warning "Der ungesicherte Temp-Ordner $tmpDir ließ sich nicht entfernen: $($_.Exception.Message)" }
+            }
+            else { MorpheusLeereTemp -Pfad $tmpDir }
+        }
+        $pruefung = $null
+        if (($it -is [IO.DirectoryInfo]) -and (-not (MorpheusIsReparse $it))) { $pruefung = Test-MorpheusSecurePath -Path $Path -Recurse -Ausnahmen 'temp' }
+        if ((-not $pruefung) -or (-not $pruefung.Sicher)) {
             # Nur den obersten Eintrag umbenennen; Inhalt und Verknüpfungen darin werden nicht angefasst
             $aside = '{0}.unsicher-{1}' -f $Path, (Get-Date -Format 'yyyyMMdd-HHmmss')
-            Write-Warning "Der vorhandene Ordner $Path war nicht gesichert und wurde nach $aside verschoben (nicht verwendet)."
-            if (MorpheusIsReparse $it) {
-                if ($it -is [IO.DirectoryInfo]) { [IO.Directory]::Delete($Path, $false) } else { [IO.File]::Delete($Path) }
+            $gruende = 'Verknüpfung oder kein Ordner'
+            if ($pruefung) { $gruende = (@($pruefung.Gruende) | Select-Object -First 3) -join ' | ' }
+            Write-Warning "Der vorhandene Ordner $Path ist nicht gesichert ($gruende). Er wird nach $aside verschoben (nicht verwendet)."
+            try {
+                if (MorpheusIsReparse $it) {
+                    if ($it -is [IO.DirectoryInfo]) { [IO.Directory]::Delete($Path, $false) } else { [IO.File]::Delete($Path) }
+                }
+                else {
+                    # Umbenennen braucht Löschrecht am Ordner: Besitz nur am obersten Ordner übernehmen (ohne /T)
+                    MorpheusIcacls @($Path, '/setowner', ('*' + $script:MorpheusSidAdmins), '/C')
+                    MorpheusIcacls @($Path, '/grant', ('*{0}:(D)' -f $script:MorpheusSidAdmins), '/C')
+                    if ($it -is [IO.DirectoryInfo]) { [IO.Directory]::Move($Path, $aside) } else { [IO.File]::Move($Path, $aside) }
+                }
             }
-            else {
-                # Umbenennen braucht Löschrecht am Ordner: Besitz nur am obersten Ordner übernehmen (ohne /T)
-                MorpheusIcacls @($Path, '/setowner', ('*' + $script:MorpheusSidAdmins), '/C')
-                MorpheusIcacls @($Path, '/grant', ('*{0}:(D)' -f $script:MorpheusSidAdmins), '/C')
-                if ($it -is [IO.DirectoryInfo]) { [IO.Directory]::Move($Path, $aside) } else { [IO.File]::Move($Path, $aside) }
+            catch {
+                # Kein halber Zustand: Der Ordner bleibt mit seinem Inhalt, wo er ist (höchstens Besitzer und Löschrecht am
+                # obersten Ordner gehen an Administratoren). Morpheus nutzt ihn nicht und startet im Nur-Lesen-Modus.
+                throw ("Der Datenordner $Path ist nicht gesichert ($gruende) und ließ sich nicht beiseitelegen: " + $_.Exception.Message + ' Er bleibt unverändert an seinem Ort und wird nicht verwendet. Ist er im Explorer oder in einer Konsole geöffnet? Dann das Fenster schließen. Zusätzliche Rechte (z. B. nach „Fortsetzen“ im Explorer) entfernt man in einer Admin-PowerShell, siehe README.')
             }
+            Write-Warning "Der Ordner wurde nach $aside verschoben."
         }
     }
     if (-not (Test-Path -LiteralPath $Path)) { New-MorpheusSecureDirectory -Path $Path }
@@ -352,11 +414,11 @@ function Initialize-MorpheusDataDir {
         if ($hasRead) { MorpheusIcacls @($Path, '/remove:g', ('*' + $script:MorpheusSidAuthUsers), '/C') }
     }
     # Unterordner erben die gesicherten Rechte des neuen Ordners
-    foreach ($sub in 'reports', 'changes', 'state') {
+    foreach ($sub in 'reports', 'changes', 'state', 'temp') {
         $d = Join-Path $Path $sub
         if (-not (Test-Path -LiteralPath $d -PathType Container)) { [void][IO.Directory]::CreateDirectory($d) }
     }
-    $final = Test-MorpheusSecurePath -Path $Path -Recurse
+    $final = Test-MorpheusSecurePath -Path $Path -Recurse -Ausnahmen 'temp'
     if (-not $final.Sicher) { throw ("Der Datenordner $Path ließ sich nicht sichern: " + ($final.Gruende -join ' | ')) }
     $Path
 }
@@ -478,7 +540,7 @@ function Install-Morpheus {
     if ((Test-Path -LiteralPath $srcAcc -PathType Leaf) -and (-not (Test-Path -LiteralPath $dstAcc)) -and (-not (MorpheusIsReparse (Get-Item -LiteralPath $srcAcc -Force)))) {
         [IO.File]::Copy($srcAcc, $dstAcc, $false)
     }
-    $fin = Test-MorpheusSecurePath -Path $dataRoot -Recurse
+    $fin = Test-MorpheusSecurePath -Path $dataRoot -Recurse -Ausnahmen 'temp'
     if (-not $fin.Sicher) { throw ("Der Datenordner $dataRoot ist nach der Übernahme nicht sicher: " + ($fin.Gruende -join ' | ')) }
 
     # Startmenü-Verknüpfung für alle Benutzer

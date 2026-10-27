@@ -382,7 +382,9 @@ function Test-MorpheusPfadBenutzerBeschreibbar {
     if ([string]::IsNullOrWhiteSpace($Pfad)) { return $null }
     $p = $Pfad.Trim().Trim('"').Trim()
     try {
-        $p = [Environment]::ExpandEnvironmentVariables($p)
+        # %TEMP% des Benutzers, nicht Morpheus' eigener Temp-Ordner (2.3.3), wenn Systempfade.ps1 geladen ist
+        if (Get-Command -Name Expand-MorpheusUmgebung -CommandType Function -ErrorAction SilentlyContinue) { $p = Expand-MorpheusUmgebung $p }
+        else { $p = [Environment]::ExpandEnvironmentVariables($p) }
         if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return $null }
         $voll = [IO.Path]::GetFullPath($p)
         $eltern = Split-Path -Parent $voll

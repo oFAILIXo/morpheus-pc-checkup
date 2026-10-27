@@ -31,9 +31,18 @@ param(
     [switch]$ReadOnly,
     [switch]$NoInstallPrompt
 )
+# Sicherheit (2.3.3): Module nur aus System32 und Program Files laden, nie aus Benutzerordnern (gui\lib\Systempfade.ps1).
+# Als erste Anweisung, damit vorher nichts automatisch geladen wird; Kindprozesse und Jobs erben den Wert.
+$env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
+# Kindprozesse (Jobs, Scan, winget, Windows-Programme): PATH nur Systemordner, keine .NET-Profiler-Variablen aus der
+# Benutzerumgebung (HKCU\Environment), über die sich eine DLL in jeden .NET-Prozess laden ließe (2.3.3, N6)
+$env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
+foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
+# Programme nur mit vollem Pfad (Systemordner über die Windows-API, nicht über Umgebungsvariablen)
+$psExe = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\powershell.exe'
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -45,7 +54,7 @@ if ((-not $isAdmin) -and (-not $NoElevate)) {
     $target = $PSCommandPath
     try {
         . (Join-Path $Root 'gui\lib\Install.ps1')
-        $inst = Join-Path $env:ProgramFiles 'Morpheus'
+        $inst = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Morpheus'
         if ((-not (Test-MorpheusCodeSecure -Root $Root).Sicher) -and (Test-MorpheusCodeSecure -Root $inst).Sicher -and (Test-MorpheusInstallCurrent -Source $Root -Target $inst)) {
             $target = Join-Path $inst 'pc-check-gui.ps1'
             Write-Host "Starte die installierte Fassung aus $inst." -ForegroundColor Green
@@ -58,7 +67,7 @@ if ((-not $isAdmin) -and (-not $NoElevate)) {
     if ($SafetyLib) { $argLine += (' -SafetyLib "{0}"' -f $SafetyLib) }
     if ($ReadOnly) { $argLine += ' -ReadOnly' }
     if ($NoInstallPrompt) { $argLine += ' -NoInstallPrompt' }
-    try { Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argLine }
+    try { Start-Process -FilePath $psExe -Verb RunAs -ArgumentList $argLine }
     catch { Write-Host 'Der Start wurde abgebrochen, z. B. weil die Adminabfrage abgelehnt wurde.' -ForegroundColor Yellow; Read-Host 'Enter zum Schließen' | Out-Null }
     return
 }
@@ -94,13 +103,16 @@ try {
     $akzPath = Join-Path $Root 'gui\lib\Akzeptanz.ps1'
     if (Test-Path -LiteralPath $akzPath -PathType Leaf) { . $akzPath }
     else { Write-Host 'Hinweis: gui\lib\Akzeptanz.ps1 fehlt, die Akzeptanzliste ist noch nicht verfügbar.' -ForegroundColor Yellow }
+    # Sichere Pfade für Programme und Temp (2.3.3)
+    $pfadPath = Join-Path $Root 'gui\lib\Systempfade.ps1'
+    if (Test-Path -LiteralPath $pfadPath -PathType Leaf) { . $pfadPath }
 
     # 3a. Ist der Codeordner gesichert? Nur Administratoren, SYSTEM und TrustedInstaller dürfen Code und Ordner ändern.
     # Sonst könnte ein Programm ohne Adminrechte den Code austauschen, den die GUI hier mit Adminrechten ausführt.
     $dataRoot = $Root           # Datenordner (Berichte, Journal, Checkliste, Akzeptanzliste)
     $roMode = $false            # Nur-Lesen-Modus
     $roReason = $null
-    $installTarget = Join-Path $env:ProgramFiles 'Morpheus'
+    $installTarget = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Morpheus'
     if (-not $isAdmin) {
         $roMode = $true
         $roReason = 'Morpheus läuft ohne Administratorrechte.'
@@ -109,7 +121,13 @@ try {
         $codeCheck = Test-MorpheusCodeSecure -Root $Root
         if ($codeCheck.Sicher) {
             # Gesicherter Betrieb (z. B. aus C:\Program Files\Morpheus): Daten in C:\ProgramData\Morpheus, bei jedem Start geprüft
-            try { $dataRoot = Initialize-MorpheusDataDir }
+            try {
+                $dataRoot = Initialize-MorpheusDataDir
+                # TEMP in den gesicherten Datenordner: Add-Type kompiliert dort und lädt die DLL danach (2.3.3)
+                # Ohne gesicherten Temp-Ordner Nur-Lesen-Modus: Sonst kompilierte der Bestätigungsdialog im Temp des Benutzers
+                if (-not (Get-Command -Name Set-MorpheusTempPfad -CommandType Function -ErrorAction SilentlyContinue)) { throw 'gui\lib\Systempfade.ps1 fehlt, der Temp-Ordner lässt sich nicht sichern.' }
+                if (-not (Set-MorpheusTempPfad -DataRoot $dataRoot)) { throw 'Der Temp-Ordner im Datenordner ließ sich nicht sichern.' }
+            }
             catch {
                 $roMode = $true
                 $roReason = 'Der Datenordner unter ProgramData lässt sich nicht sichern: ' + $_.Exception.Message
@@ -144,7 +162,7 @@ try {
                         $al = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"{0}"' -f (Join-Path $installTarget 'pc-check-gui.ps1')))
                         if ($Port -gt 0) { $al += @('-Port', [string]$Port) }
                         if ($NoBrowser) { $al += '-NoBrowser' }
-                        Start-Process -FilePath 'powershell.exe' -ArgumentList $al
+                        Start-Process -FilePath $psExe -ArgumentList $al
                         return
                     }
                     catch {
@@ -184,8 +202,8 @@ try {
     else {
         $edgeExe = $null
         foreach ($c in @(
-                (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
-                (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'))) {
+                (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft\Edge\Application\msedge.exe'),
+                (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Microsoft\Edge\Application\msedge.exe'))) {
             if ($c -and (Test-Path -LiteralPath $c -PathType Leaf)) { $edgeExe = $c; break }
         }
         if ($edgeExe) {
@@ -197,8 +215,10 @@ try {
             Write-Host 'GUI läuft ... (Fenster schließen beendet)' -ForegroundColor Green
         }
         else {
-            Write-Host 'Microsoft Edge wurde nicht gefunden, der Standardbrowser wird geöffnet.' -ForegroundColor Yellow
-            Start-Process $url
+            # Kein Standardbrowser aus dem Admin-Prozess: Sein Startbefehl steht in HKCU\Software\Classes und ist damit von
+            # Benutzerprogrammen änderbar (2.3.3). Die Adresse enthält nur den Einmal-Code, nicht das Token.
+            Write-Host 'Microsoft Edge wurde nicht gefunden. Bitte diese Adresse im Browser öffnen:' -ForegroundColor Yellow
+            Write-Host $url -ForegroundColor Green
             Write-Host 'GUI läuft ... (Ende erkennt nur der Heartbeat der geöffneten Seite)' -ForegroundColor Green
         }
     }

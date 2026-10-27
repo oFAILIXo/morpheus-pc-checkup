@@ -10,14 +10,21 @@
       im Unterordner reports\ dieses Ordners.
     - Sonst (keine oder veraltete Installation, z. B. beim Entwickeln): diese Fassung, mit Hinweis.
 #>
+# Sicherheit (2.3.3): Module nur aus System32 und Program Files laden, nie aus Benutzerordnern (gui\lib\Systempfade.ps1).
+# Als erste Anweisung, damit vorher nichts automatisch geladen wird; Kindprozesse und Jobs erben den Wert.
+$env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
+# Kindprozesse (Jobs, Scan, winget, Windows-Programme): PATH nur Systemordner, keine .NET-Profiler-Variablen aus der
+# Benutzerumgebung (HKCU\Environment), über die sich eine DLL in jeden .NET-Prozess laden ließe (2.3.3, N6)
+$env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
+foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $script = Join-Path $Root 'pc-check.ps1'
 $extra = @()
 try {
     . (Join-Path $Root 'gui\lib\Install.ps1')
-    $inst = Join-Path $env:ProgramFiles 'Morpheus'
-    $data = Join-Path $env:ProgramData 'Morpheus'
+    $inst = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Morpheus'
+    $data = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Morpheus'
     if ((Test-MorpheusCodeSecure -Root $Root).Sicher) {
         $extra = @('-OutputDir', ('"{0}"' -f (Join-Path $data 'reports')), '-AcceptedFile', ('"{0}"' -f (Join-Path $data 'accepted.psd1')), '-NoOpen')
         Write-Host 'Der Bericht wird in C:\ProgramData\Morpheus abgelegt; ansehen in Morpheus unter „Berichte“.' -ForegroundColor Green
@@ -35,5 +42,7 @@ try {
 catch { $script = Join-Path $Root 'pc-check.ps1'; $extra = @() }
 
 $argLine = ('-NoProfile -ExecutionPolicy Bypass -NoExit -File "{0}" ' -f $script) + ($extra -join ' ')
-try { Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argLine }
+# Voller Pfad: Ein Programm namens powershell.exe im Arbeitsordner bekäme sonst die Adminabfrage (2.3.3)
+$psExe = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\powershell.exe'
+try { Start-Process -FilePath $psExe -Verb RunAs -ArgumentList $argLine }
 catch { Write-Host 'Der Start wurde abgebrochen, z. B. weil die Adminabfrage abgelehnt wurde.' -ForegroundColor Yellow; exit 1 }

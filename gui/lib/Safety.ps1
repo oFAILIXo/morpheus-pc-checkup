@@ -273,7 +273,7 @@ function PcCheckSafetyCommandFrequency {
 }
 
 function PcCheckSafetyCommandEnable {
-    $drive = $env:SystemDrive
+    $drive = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
     if (-not $drive) { $drive = 'C:' }
     "Enable-ComputerRestore -Drive '$drive\'"
 }
@@ -451,7 +451,7 @@ function PcCheckSafetyShadowLimit {
     if ($script:PcCheckSafetyShadowCache -and (((Get-Date) - $script:PcCheckSafetyShadowCache.Zeit).TotalSeconds -lt 60)) { return $script:PcCheckSafetyShadowCache.Wert }
     $res = $null
     try {
-        $lw = $env:SystemDrive; if (-not $lw) { $lw = 'C:' }
+        $lw = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\')); if (-not $lw) { $lw = 'C:' }
         $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$lw'" -ErrorAction Stop
         $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { $_.Volume.DeviceID -eq $vol.DeviceID }) | Select-Object -First 1
         if ($ss) {
@@ -473,7 +473,7 @@ function Get-PcCheckSafetyStatus {
     param([string]$Root, [string]$DataRoot)
     if (-not $Root) { $Root = PcCheckSafetyDefaultRoot }
     if (-not $DataRoot) { $DataRoot = $Root }   # Journal liegt im Datenordner (Standard: Projektordner)
-    $drive = $env:SystemDrive
+    $drive = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
     if (-not $drive) { $drive = 'C:' }
     $interval = PcCheckSafetyRegValue $script:PcCheckSafetyRegRestore 'RPSessionInterval'
     $disable = PcCheckSafetyRegValue $script:PcCheckSafetyRegPolicy 'DisableSR'

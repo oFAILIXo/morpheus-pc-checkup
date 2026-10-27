@@ -10,7 +10,8 @@ if not exist "%PCCHECKGUI%" (
 )
 rem Erst ohne Adminrechte starten: das Script entscheidet, welche Fassung erhoeht gestartet wird
 rem (die installierte unter Program Files, falls aktuell; sonst diese zum Installieren).
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PCCHECKGUI%"
+rem Voller Pfad (2.3.3): sonst saehe cmd zuerst im aktuellen Ordner nach einer powershell.exe
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%PCCHECKGUI%"
 if errorlevel 1 (
     echo Der Start wurde abgebrochen, z. B. weil die Adminabfrage abgelehnt wurde.
     pause
