@@ -17,6 +17,8 @@
       Adminrechte. Seit 2.5.0 (Test C) auch die Update-Suche; Morpheus startet winget nie mit Adminrechten.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 # Sichere Pfade (winget-Suche) aus Systempfade.ps1, falls ihre Funktionen fehlen
 if (-not (Get-Command -Name Get-MorpheusWinget -CommandType Function -ErrorAction SilentlyContinue)) {
     $__gSysPfade = Join-Path $PSScriptRoot 'Systempfade.ps1'
@@ -35,7 +37,7 @@ if (-not $script:MorpheusWingetImpl) {
         # mit 0x80070005 (Access is denied).
         Ausfuehren = {
             param($Pfad, $Argumente, $ZeitlimitMs)
-            if (-not (Get-Command -Name Invoke-MorpheusWingetBenutzer -CommandType Function -ErrorAction SilentlyContinue)) { throw 'gui\lib\WingetBenutzer.ps1 fehlt; winget wird nicht mit Adminrechten gestartet.' }
+            if (-not (Get-Command -Name Invoke-MorpheusWingetBenutzer -CommandType Function -ErrorAction SilentlyContinue)) { throw (T 'server.winget.benutzerLibFehlt') }
             $r = Invoke-MorpheusWingetBenutzer -WingetPfad $Pfad -Argumente $Argumente -ZeitlimitSek ([int][math]::Ceiling([int]$ZeitlimitMs / 1000))
             [pscustomobject]@{ text = [string]$r.text; fehlerText = [string]$r.fehler; exitCode = $r.exitCode; zeitueberschritten = [bool]$r.zeitueberschritten }
         }
@@ -54,17 +56,17 @@ function Get-MorpheusWingetPfad {
     [CmdletBinding()]
     param()
     if (-not (Get-Command -Name Get-MorpheusWinget -CommandType Function -ErrorAction SilentlyContinue)) {
-        return [pscustomobject]@{ pfad = $null; grund = 'gui\lib\Systempfade.ps1 fehlt' }
+        return [pscustomobject]@{ pfad = $null; grund = (T 'server.winget.systempfadeFehlt') }
     }
     try {
         $w = Get-MorpheusWinget
         if ($w -and $w.Pfad) { return [pscustomobject]@{ pfad = [string]$w.Pfad; grund = $null } }
-        $g = 'winget (App-Installer) wurde nicht gefunden.'
+        $g = (T 'server.winget.nichtGefunden')
         if ($w -and $w.Grund) { $g = [string]$w.Grund }
         [pscustomobject]@{ pfad = $null; grund = $g }
     }
     catch {
-        [pscustomobject]@{ pfad = $null; grund = ('winget konnte nicht geprüft werden: ' + $_.Exception.Message) }
+        [pscustomobject]@{ pfad = $null; grund = (T 'server.winget.nichtGeprueft' $_.Exception.Message) }
     }
 }
 
@@ -122,13 +124,13 @@ function Get-MorpheusWingetUpdates {
         if (-not $PSBoundParameters.ContainsKey('Text')) {
             $p = Get-MorpheusWingetPfad
             if (-not $p.pfad) { $res.fehler = [string]$p.grund; return [pscustomobject]$res }
-            & $info 'winget sucht nach Updates ...'
+            & $info (T 'server.winget.sucheLaeuft')
             $Text = ''
             for ($versuch = 1; ($versuch -le 2) -and (-not ([string]$Text).Trim()); $versuch++) {
                 $r = & $script:MorpheusWingetImpl.Ausfuehren $p.pfad 'upgrade --source winget --include-unknown --disable-interactivity' 180000
                 if ($r.zeitueberschritten) {
                     $res.status = 'zeitlimit'
-                    $res.fehler = 'winget hat nicht innerhalb von 3 Minuten geantwortet'
+                    $res.fehler = (T 'server.winget.zeitlimit')
                     return [pscustomobject]$res
                 }
                 $Text = [string]$r.text
@@ -142,7 +144,7 @@ function Get-MorpheusWingetUpdates {
             $res.status = $liste.status
             if ($liste.status -eq 'unlesbar') {
                 $zl = @($Text -split "`n" | ForEach-Object { $_.TrimEnd("`r").Split("`r")[-1] } | Where-Object { $_.Trim() } | Select-Object -Last 2)
-                $res.fehler = "Ausgabe nicht auswertbar (Exit-Code $($res.exitCode)): " + ((@($zl) + $fehlerText.Trim() | Where-Object { $_ }) -join ' ')
+                $res.fehler = (T 'server.winget.ausgabeNichtAuswertbar' $res.exitCode ((@($zl) + $fehlerText.Trim() | Where-Object { $_ }) -join ' '))
             }
             return [pscustomobject]$res
         }
@@ -161,7 +163,7 @@ function Get-MorpheusWingetUpdates {
             })
         $res.status = 'ok'
         $res.zeilen = $rows
-        & $info ('{0} Updates gefunden' -f $rows.Count)
+        & $info (T 'server.winget.updatesGefunden' $rows.Count)
     }
     catch {
         $res.status = 'fehler'
@@ -180,7 +182,7 @@ function Test-MorpheusWingetId {
 function Get-MorpheusWingetUpgradeArgumente {
     [CmdletBinding()]
     param($Id)
-    if (-not (Test-MorpheusWingetId -Id $Id)) { throw 'Ungültige winget-Paket-Id.' }
+    if (-not (Test-MorpheusWingetId -Id $Id)) { throw (T 'server.winget.idUngueltig') }
     "upgrade --id $Id --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity"
 }
 
@@ -188,34 +190,34 @@ function Get-MorpheusWingetErgebnis {
     [CmdletBinding()]
     param([long]$ExitCode)
     $e = { param($s, $t) [pscustomobject]@{ status = $s; text = $t } }
-    if ($ExitCode -eq 0) { return (& $e 'aktualisiert' 'Aktualisiert.') }
+    if ($ExitCode -eq 0) { return (& $e 'aktualisiert' (T 'server.winget.e.aktualisiert')) }
     [uint32]$u = [uint32]($ExitCode -band 0xFFFFFFFFL)
     switch ([BitConverter]::ToInt32([BitConverter]::GetBytes($u), 0)) {
-        0x8A150101 { return (& $e 'laeuft-noch' 'Das Programm läuft noch und muss geschlossen werden.') }
-        0x8A150006 { return (& $e 'fehlgeschlagen' 'Der Installer konnte nicht gestartet werden (z. B. Windows-Abfrage nach Adminrechten abgelehnt).') }
-        0x8A150111 { return (& $e 'laeuft-noch' 'Das Programm wird gerade von einer Anwendung verwendet und muss geschlossen werden.') }
-        0x8A150103 { return (& $e 'laeuft-noch' 'Eine Datei des Programms ist in Benutzung; das Programm muss geschlossen werden.') }
-        0x8A150109 { return (& $e 'neustart' 'Aktualisiert; ein Neustart ist nötig, um die Installation abzuschließen.') }
-        0x8A15010A { return (& $e 'neustart' 'Ein Neustart ist nötig, bevor die Installation fortgesetzt werden kann.') }
-        0x8A15010B { return (& $e 'neustart' 'Der Installer hat einen Neustart eingeleitet.') }
-        0x8A15002B { return (& $e 'kein-update' 'Es ist kein anwendbares Update vorhanden.') }
-        0x8A15010D { return (& $e 'kein-update' 'Das Programm ist bereits installiert.') }
-        0x8A15010E { return (& $e 'kein-update' 'Eine neuere Version ist bereits installiert.') }
-        0x8A150114 { return (& $e 'fehlgeschlagen' 'Der Installer unterstützt kein Upgrade der vorhandenen Installation; eine manuelle Neuinstallation ist nötig.') }
-        0x8A150108 { return (& $e 'fehlgeschlagen' 'Unbestimmter Installationsfehler; der Hersteller-Support kann helfen.') }
-        0x8A150110 { return (& $e 'fehlgeschlagen' 'Die Abhängigkeiten des Programms konnten nicht installiert werden.') }
-        0x8A150112 { return (& $e 'fehlgeschlagen' 'Dem Installer wurde ein ungültiger Parameter übergeben.') }
-        0x8A150113 { return (& $e 'fehlgeschlagen' 'Dieses System wird vom Programm nicht unterstützt.') }
-        0x8A150115 { return (& $e 'fehlgeschlagen' 'Der Installer des Programms hat einen eigenen Fehler gemeldet.') }
-        0x8A150102 { return (& $e 'fehlgeschlagen' 'Es läuft bereits eine andere Installation. Später erneut versuchen.') }
-        0x8A150104 { return (& $e 'fehlgeschlagen' 'Eine benötigte Abhängigkeit fehlt.') }
-        0x8A150105 { return (& $e 'fehlgeschlagen' 'Nicht genug freier Speicherplatz.') }
-        0x8A150106 { return (& $e 'fehlgeschlagen' 'Nicht genug Arbeitsspeicher für die Installation.') }
-        0x8A150107 { return (& $e 'fehlgeschlagen' 'Keine Netzwerkverbindung für die Installation.') }
-        0x8A15010C { return (& $e 'fehlgeschlagen' 'Die Installation wurde abgebrochen.') }
-        0x8A15010F { return (& $e 'fehlgeschlagen' 'Eine Richtlinie blockiert die Installation.') }
-        0x8A150010 { return (& $e 'fehlgeschlagen' 'Für dieses System ist kein passender Installer vorhanden.') }
-        0x8A150011 { return (& $e 'fehlgeschlagen' 'Die Prüfsumme (Hash) der heruntergeladenen Datei stimmt nicht; die Installation wurde aus Sicherheitsgründen abgebrochen.') }
+        0x8A150101 { return (& $e 'laeuft-noch' (T 'server.winget.e.laeuftNoch')) }
+        0x8A150006 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.startFehler')) }
+        0x8A150111 { return (& $e 'laeuft-noch' (T 'server.winget.e.inVerwendung')) }
+        0x8A150103 { return (& $e 'laeuft-noch' (T 'server.winget.e.dateiInBenutzung')) }
+        0x8A150109 { return (& $e 'neustart' (T 'server.winget.e.neustartAbschliessen')) }
+        0x8A15010A { return (& $e 'neustart' (T 'server.winget.e.neustartVorher')) }
+        0x8A15010B { return (& $e 'neustart' (T 'server.winget.e.neustartEingeleitet')) }
+        0x8A15002B { return (& $e 'kein-update' (T 'server.winget.e.keinUpdate')) }
+        0x8A15010D { return (& $e 'kein-update' (T 'server.winget.e.bereitsInstalliert')) }
+        0x8A15010E { return (& $e 'kein-update' (T 'server.winget.e.neuerInstalliert')) }
+        0x8A150114 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.keinUpgrade')) }
+        0x8A150108 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.unbestimmt')) }
+        0x8A150110 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.abhaengigkeitenFehler')) }
+        0x8A150112 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.ungueltigerParameter')) }
+        0x8A150113 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.systemNichtUnterstuetzt')) }
+        0x8A150115 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.eigenerFehler')) }
+        0x8A150102 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.andereInstallation')) }
+        0x8A150104 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.abhaengigkeitFehlt')) }
+        0x8A150105 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.speicherplatz')) }
+        0x8A150106 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.arbeitsspeicher')) }
+        0x8A150107 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.keinNetz')) }
+        0x8A15010C { return (& $e 'fehlgeschlagen' (T 'server.winget.e.abgebrochen')) }
+        0x8A15010F { return (& $e 'fehlgeschlagen' (T 'server.winget.e.richtlinie')) }
+        0x8A150010 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.keinInstaller')) }
+        0x8A150011 { return (& $e 'fehlgeschlagen' (T 'server.winget.e.hash')) }
     }
-    & $e 'fehlgeschlagen' ('winget-Fehlercode {0} (0x{1:X8})' -f $ExitCode, $u)
+    & $e 'fehlgeschlagen' (T 'server.winget.e.fehlercode' $ExitCode $u)
 }

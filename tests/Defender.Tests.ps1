@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Defender.ps1. Ruft nie die echten Defender-Aktionen auf:
 # alle Einträge von $script:MorpheusDefenderImpl sind Attrappen.
 # Ausführen: Invoke-Pester tests\Defender.Tests.ps1

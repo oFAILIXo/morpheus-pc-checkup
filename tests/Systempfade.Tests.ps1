@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests fuer gui\lib\Systempfade.ps1 und die statische Pruefung des Admin-Codes (Hotfix 2.3.3).
 # Teil A: AST-Pruefung (Modulpfad-Haertung, volle Programmpfade, -NoProfile, keine Umgebungsvariablen fuer Systemordner).
 # Teil B: Funktionen aus Systempfade.ps1 mit Attrappen (keine Registry, kein Download, keine Installation).

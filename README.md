@@ -98,6 +98,8 @@ Voraussetzungen: Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerS
 
 **Menü (ab 2.5):** Jeder Bereich mit einem Pfeil `›` klappt seine Unterpunkte auf: Sicherheit, Leistung, Gaming und Stabilität ihre Kategorien, „Alle Prüfungen“ die Status-Filter, „Werkzeuge“ die Karten und unter „Wartung & Reparatur“ jedes einzelne Werkzeug. Ein Klick springt direkt dorthin. Ein Klick auf den Bereich selbst öffnet ihn und klappt ihn auf. Mit der Tastatur: Pfeil hoch/runter wechselt den Eintrag, Pfeil rechts klappt auf bzw. geht zum ersten Unterpunkt, Pfeil links klappt zu bzw. geht zurück zum Bereich, Enter öffnet.
 
+**Sprache (ab 2.6):** Morpheus gibt es auf Deutsch und Englisch: Oberfläche, Befunde, Erklärungen, Berichte und Konsole. Beim ersten Start gilt die Sprache von Windows (Deutsch bei deutschem Windows, sonst Englisch). Umschalten geht im Menü unter „Verwalten“. Die Wahl wird in `C:\ProgramData\Morpheus\state\sprache.json` gespeichert und gilt auch für den Scan über `pc-check.cmd`. Ein Bericht bleibt in der Sprache, die beim Scan eingestellt war. Akzeptierte Befunde gelten in beiden Sprachen.
+
 ![Menü mit aufgeklappten Werkzeugen (Demodaten)](docs/screenshots/07-werkzeuge-menue.png)
 | Werkzeuge | Wartung & Reparatur (Wiederherstellungspunkt anlegen, DISM, SFC, Komponentenspeicher, chkdsk, DNS, ReTrim, Zeit, Energieberichte, Zuverlässigkeitsverlauf); Defender-Signaturen aktualisieren, Schnellscan, Offline-Scan (mit Countdown, der PC startet neu); Programme aktualisieren (winget); eigene Spiele-Ordner; Sysinternals-Werkzeuge einrichten |
 

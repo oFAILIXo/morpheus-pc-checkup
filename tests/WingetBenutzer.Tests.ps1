@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\WingetBenutzer.ps1 (2.5, #67: winget ohne Adminrechte).
 # Kein echtes winget und keine Aufgabenplanung: Starten wird ersetzt. Entweder schreibt ein Hilfsprozess
 # (powershell.exe -NoProfile) feste Zeilen in die Pipe, oder conhost/cmd laufen echt mit ping 127.0.0.1 bzw. findstr.

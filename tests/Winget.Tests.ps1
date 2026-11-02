@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Winget.ps1.
 # Startet nie echtes winget und braucht kein echtes Get-AppxPackage: Paket, Signatur, Existiert, Attribute,
 # Ausfuehren, ArpNamen und Appx sind Attrappen. Existiert/Attribute sind Impl-Einträge, damit die Pfadprüfung

@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests fuer gui\lib\Server.ps1 (Offline-Countdown und statische Pruefungen). Startet keinen Server,
 # ruft keine echten Defender-Funktionen auf. Ausfuehren: Invoke-Pester tests\Server.Tests.ps1
 
@@ -197,6 +199,13 @@ Describe 'Test-GuiSpielordnerEintraege und Read-GuiSpielordner' {
         [IO.File]::ReadAllText($p) | Should Match '^\[\{"plattform":"Steam","pfad":".*"\}\]$'
         @(Read-GuiSpielordner $p).Count | Should Be 1
     }
+    It 'Speichern: Save-GuiTextAtomic ersetzt eine vorhandene Datei (zweites Speichern, z. B. Sprache)' {
+        $p = Join-Path $script:TestDir 'state\sprache.json'
+        Save-GuiTextAtomic $p '{"sprache":"de"}'
+        { Save-GuiTextAtomic $p '{"sprache":"en"}' } | Should Not Throw
+        [IO.File]::ReadAllText($p) | Should Be '{"sprache":"en"}'
+        Test-Path -LiteralPath ($p + '.tmp') | Should Be $false
+    }
 }
 
 Describe 'Route /api/spielordner (statisch)' {
@@ -211,7 +220,7 @@ Describe 'Route /api/spielordner (statisch)' {
         $route | Should Match 'Save-GuiTextAtomic'
     }
     It 'Falsche Methode ergibt 405, GET liest über Read-GuiSpielordner' {
-        $route | Should Match "405 'Methode nicht erlaubt\.'"
+        $route | Should Match "405 \(T 'server\.methodeNichtErlaubt'\)"
         $route | Should Match 'Read-GuiSpielordner'
     }
     It 'Log-Zeile ohne Pfade' {
@@ -1686,7 +1695,8 @@ Describe 'Test-GuiServerEnde und Heartbeat-Schutz' {
         $t = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\app.js'), [Text.Encoding]::UTF8)
         $t | Should Match "addEventListener\('visibilitychange'"
         $t | Should Match "addEventListener\('focus'"
-        $t | Should Match 'Morpheus läuft nicht mehr'
+        $t | Should Match "t\('api\.laeuftNichtMehr'"
+        [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\lang\de\gui.psd1'), [Text.Encoding]::UTF8) | Should Match 'Morpheus läuft nicht mehr'
     }
 }
 

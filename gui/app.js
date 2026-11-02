@@ -1,11 +1,32 @@
 /* pc-check GUI (v2.0): Oberfläche in Vanilla JS.
-   Kein Inline-Script, kein eval. Alle Texte aus Berichtsdaten werden per textContent eingesetzt (siehe h()). */
+   Kein Inline-Script, kein eval. Alle Texte aus Berichtsdaten werden per textContent eingesetzt (siehe h()).
+   Texte der Oberfläche (2.6, #66): lang\<sprache>\gui.psd1, geladen von GET /api/texte; die Funktion t liefert den Text zum Schlüssel. */
 'use strict';
 (() => {
 
+// ---------------------------------------------------------------- Texte und Sprache (2.6, #66)
+let TX = {}, LANG = 'de';
+// Nur für Meldungen, bevor die Texte geladen sind (Startcode abgelehnt, kein Token); alles andere kommt aus gui.psd1
+const PRE = {
+  de: { 'api.startcodeAbgelehnt': 'Der Startcode wurde abgelehnt. Bitte die GUI neu starten.', 'api.keinToken': 'Kein Zugriffstoken. Bitte die GUI über pc-check-gui starten.', 'api.sitzungAbgelaufen': 'Sitzung abgelaufen, GUI neu starten.', 'api.keineVerbindung': 'Keine Verbindung zur GUI. Läuft sie noch?' },
+  en: { 'api.startcodeAbgelehnt': 'The start code was rejected. Please restart the GUI.', 'api.keinToken': 'No access token. Please start the GUI via pc-check-gui.', 'api.sitzungAbgelaufen': 'Session expired, restart the GUI.', 'api.keineVerbindung': 'No connection to the GUI. Is it still running?' },
+};
+const fmtText = (s, w) => String(s).replace(/\{\{|\}\}|\{(\d+)\}/g, (m, i) => m === '{{' ? '{' : (m === '}}' ? '}' : (w[+i] != null ? String(w[+i]) : m)));
+/** Text zum Schlüssel (ohne Präfix gui.); Platzhalter {0}, {1} …; {{ und }} sind wörtliche Klammern. Unbekannt = der Schlüssel selbst. */
+function t(key, ...w) {
+  let s = TX[key];
+  if (s == null) { const pre = PRE[(typeof navigator !== 'undefined' && /^en/i.test(navigator.language || '')) ? 'en' : 'de']; s = pre[key]; }
+  return s == null ? key : fmtText(s, w);
+}
+/** Text zu einem zur Laufzeit gebildeten Schlüssel (z. B. 'stufe.' + wert); ohne Text der Rückfall. */
+const tk = (key, fallback) => TX[key] != null ? String(TX[key]) : fallback;
+const lc = () => LANG === 'en' ? 'en' : 'de';             // für localeCompare
+const locTag = () => LANG === 'en' ? 'en-GB' : 'de-DE';   // für toLocale…String
+const cmpTxt = (a, b) => String(a).localeCompare(String(b), lc());
+
 // ---------------------------------------------------------------- Konstanten
 const STATUS = ['CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP'];
-const STATUS_NAME = { CRIT: 'Kritisch', WARN: 'Warnung', TIPP: 'Tipp', ACK: 'Akzeptiert', INFO: 'Hinweis', OK: 'OK', SKIP: 'Nicht geprüft' };
+let STATUS_NAME = {};   // Anzeigenamen der Status, gefüllt von buildTexts()
 const STATUS_COLOR = { CRIT: 'var(--red)', WARN: 'var(--orange)', TIPP: 'var(--magenta)', ACK: 'var(--violet)', INFO: 'var(--blue)', OK: 'var(--green)', SKIP: 'var(--b01)' };
 const RANK = { CRIT: 0, WARN: 1, TIPP: 2, INFO: 3, ACK: 4, SKIP: 5, OK: 6 };
 const LEVEL = { gering: 1, mittel: 2, hoch: 3 };
@@ -13,32 +34,10 @@ const GAMING_CHECKS = ['Bildschirme und Bildwiederholrate', 'Grafikkarte und Tre
   'Spielebibliotheken', 'Spielmodus', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'Hintergrundaufzeichnung (Game DVR)', 'Optimierungen für Spiele im Fenstermodus',
   'Overlays und Hintergrund-Tools', 'Mausbeschleunigung', 'Netzwerkverbindung', 'Netzwerkkarte: Energiesparfunktionen', 'Virtualisierung und Spieleleistung'];
 const REPORT_RE = /^pc-check_\d{4}-\d{2}-\d{2}_\d{4}$/;
-// Menütexte zentral (2.5, #65): Für die englische Oberfläche (#66) wird nur dieses Objekt übersetzt.
-const MENU_TEXTE = {
-  gruppen: { bereiche: 'Bereiche', verwalten: 'Verwalten' },
-  punkte: { uebersicht: 'Übersicht', sicherheit: 'Sicherheit', leistung: 'Leistung', gaming: 'Gaming', stabilitaet: 'Stabilität', alle: 'Alle Prüfungen',
-    checkliste: 'Checkliste', aenderungen: 'Änderungen', werkzeuge: 'Werkzeuge', berichte: 'Berichte', scan: 'Neuer Scan', rohdaten: 'Rohdaten', einstellungen: 'Einstellungen' },
-  unter: { gamingCheck: 'Gaming-Check', wartung: 'Wartung & Reparatur', defender: 'Microsoft Defender', updates: 'Programme aktualisieren',
-    sysinternals: 'Sysinternals', spieleOrdner: 'Eigene Spiele-Ordner', keinBericht: 'Kategorien nach dem ersten Scan' },
-  filter: { problem: 'Nur Probleme', CRIT: 'Kritisch', WARN: 'Warnungen', TIPP: 'Tipps', ACK: 'Akzeptiert', SKIP: 'Nicht geprüft' },
-  // Reihenfolge wie in der Karte „Wartung & Reparatur“
-  werkzeuge: [['wiederherstellung.punkt', 'Wiederherstellungspunkt'], ['dism.checkhealth', 'DISM: schnell prüfen'], ['dism.scanhealth', 'DISM: gründlich prüfen'],
-    ['dism.restorehealth', 'DISM: reparieren'], ['sfc.scannow', 'SFC: Systemdateien'], ['dism.analyze', 'WinSxS analysieren'], ['dism.cleanup', 'WinSxS bereinigen'],
-    ['chkdsk.scan', 'Datenträger prüfen'], ['perfmon.rel', 'Zuverlässigkeitsverlauf'], ['dns.flush', 'DNS-Speicher leeren'], ['trim', 'SSD optimieren (TRIM)'],
-    ['zeit.resync', 'Uhrzeit synchronisieren'], ['powercfg.energy', 'Energiebericht'], ['powercfg.akku', 'Akkubericht'], ['powercfg.schlaf', 'Schlafstudie']],
-  aria: { nav: 'Hauptnavigation', auf: 'Unterpunkte von {0} einblenden', zu: 'Unterpunkte von {0} ausblenden' },
-};
-const MT = MENU_TEXTE.punkte;
+// Menütexte zentral (2.5, #65); ab 2.6 aus den Sprachdateien, gefüllt von buildTexts()
+let MENU_TEXTE = { gruppen: {}, punkte: {}, unter: {}, filter: {}, werkzeuge: [], aria: {} };
 // kinder: 'kategorien' (aus dem Bericht), 'filter' (Status-Filter), 'werkzeuge' (Karten und Einzelwerkzeuge)
-const NAV = [
-  { id: 'uebersicht', label: MT.uebersicht, icon: 'home' }, { group: MENU_TEXTE.gruppen.bereiche },
-  { id: 'sicherheit', label: MT.sicherheit, icon: 'shield', badge: true, kinder: 'kategorien' }, { id: 'leistung', label: MT.leistung, icon: 'gauge', badge: true, kinder: 'kategorien' },
-  { id: 'gaming', label: MT.gaming, icon: 'pad', badge: true, kinder: 'kategorien' }, { id: 'stabilitaet', label: MT.stabilitaet, icon: 'pulse', badge: true, kinder: 'kategorien' },
-  { id: 'alle', label: MT.alle, icon: 'list', kinder: 'filter' }, { group: MENU_TEXTE.gruppen.verwalten },
-  { id: 'checkliste', label: MT.checkliste, icon: 'check' }, { id: 'aenderungen', label: MT.aenderungen, icon: 'undo' }, { id: 'werkzeuge', label: MT.werkzeuge, icon: 'tool', kinder: 'werkzeuge' },
-  { id: 'berichte', label: MT.berichte, icon: 'doc' }, { id: 'scan', label: MT.scan, icon: 'scan' },
-  { id: 'rohdaten', label: MT.rohdaten, icon: 'db' }, { id: 'einstellungen', label: MT.einstellungen, icon: 'gear' },
-];
+let NAV = [];
 const NAV_KEY = 'morpheusNavAuf';
 const NAV_STANDARD_AUF = { 'werkzeuge/wartung': true };   // Einzelwerkzeuge sofort sichtbar, sobald „Werkzeuge“ offen ist
 const CAT_VIEWS = ['sicherheit', 'leistung', 'gaming', 'stabilitaet', 'alle'];
@@ -64,7 +63,7 @@ function add(e, kids) {
 /** Element bauen. Attribute: class, text, on<Ereignis> (Funktion), checked/value/selected/disabled (Eigenschaften). */
 function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);
-  if (tag === 'button' && attrs && !attrs['data-mark'] && !attrs['data-filter'] && !/(btn|info|kpi|pill|srow|tile)/.test(attrs.class || '')) {
+  if (tag === 'button' && attrs && !attrs['data-mark'] && !attrs['data-filter'] && !/\b(btn|info|kpi|pill|srow|tile)\b/.test(attrs.class || '')) {
     attrs = { ...attrs, class: ('btn ' + (attrs.class === 'copy' ? 'sm ghost' : (attrs.class || ''))).trim() };   // einheitlicher Button-Stil
   }
   if (attrs) {
@@ -93,51 +92,58 @@ const pad = n => String(n).padStart(2, '0');
 function fmtDate(s) {
   const d = new Date(s);
   if (isNaN(d)) return s || '';
+  if (LANG === 'en') return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 function fmtWhen(s) {   // „heute 14:25“, „gestern 11:40“, sonst „24.10. 19:02“
   const d = new Date(s); if (isNaN(d)) return s || '';
-  const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`, now = new Date();
+  const tm = `${pad(d.getHours())}:${pad(d.getMinutes())}`, now = new Date();
   const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diff = Math.round((day(now) - day(d)) / 86400000);
-  if (diff === 0) return 'heute ' + t;
-  if (diff === 1) return 'gestern ' + t;
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}. ${t}`;
+  if (diff === 0) return t('zeit.heute', tm);
+  if (diff === 1) return t('zeit.gestern', tm);
+  if (LANG === 'en') return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${tm}`;
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}. ${tm}`;
 }
 function fmtAgo(s) {
   const d = new Date(s); if (isNaN(d)) return '–';
   const m = Math.round((Date.now() - d.getTime()) / 60000);
-  if (m < 2) return 'gerade eben';
-  if (m < 60) return `vor ${m} min`;
-  if (m < 60 * 36) return `vor ${Math.round(m / 60)} h`;
-  const t = Math.round(m / 1440);
-  return t === 1 ? 'vor 1 Tag' : `vor ${t} Tagen`;
+  if (m < 2) return t('zeit.geradeEben');
+  if (m < 60) return t('zeit.vorMin', m);
+  if (m < 60 * 36) return t('zeit.vorStd', Math.round(m / 60));
+  const n = Math.round(m / 1440);
+  return n === 1 ? t('zeit.vorTag') : t('zeit.vorTagen', n);
 }
-const dec = (v, d = 0) => (v == null || isNaN(v)) ? '–' : Number(v).toFixed(d).replace('.', ',');
-function fmtShort(s) { const d = new Date(s); return isNaN(d) ? '' : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)}`; }
+const dec = (v, d = 0) => (v == null || isNaN(v)) ? '–' : (LANG === 'en' ? Number(v).toFixed(d) : Number(v).toFixed(d).replace('.', ','));
+function fmtShort(s) {
+  const d = new Date(s); if (isNaN(d)) return '';
+  return LANG === 'en' ? `${String(d.getFullYear()).slice(2)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)}`;
+}
 function fmtState(v) {
-  if (v == null) return 'nicht gesetzt';
-  if (typeof v === 'object') { let t = JSON.stringify(v); if (t.length > 120) t = t.slice(0, 117) + '…'; return t; }
+  if (v == null) return t('zustand.nichtGesetzt');
+  if (typeof v === 'object') { let s = JSON.stringify(v); if (s.length > 120) s = s.slice(0, 117) + '…'; return s; }
   return String(v);
 }
 function toast(msg) {
-  const t = h('div', { class: 'toast', role: 'status', text: msg });
-  document.body.append(t);
-  setTimeout(() => t.remove(), 3500);
+  const el = h('div', { class: 'toast', role: 'status', text: msg });
+  document.body.append(el);
+  setTimeout(() => el.remove(), 3500);
 }
 async function copyText(text, btn) {
   const label = btn ? btn.textContent : '';
-  const done = ok => { if (btn) { btn.textContent = ok ? '✔ Kopiert' : 'Nicht möglich'; setTimeout(() => { btn.textContent = label; }, 2000); } else toast(ok ? 'Kopiert' : 'Kopieren nicht möglich'); };
+  const done = ok => { if (btn) { btn.textContent = ok ? t('kopieren.ok') : t('kopieren.nein'); setTimeout(() => { btn.textContent = label; }, 2000); } else toast(ok ? t('kopieren.toastOk') : t('kopieren.toastNein')); };
   try { await navigator.clipboard.writeText(text); done(true); return; } catch { /* Rückfall */ }
   const ta = h('textarea', { style: 'position:fixed;left:-9999px', 'aria-hidden': 'true' });
   ta.value = text; document.body.append(ta); ta.select();
   let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
   ta.remove(); done(ok);
 }
+/** Stufe (gering/mittel/hoch) für die Anzeige; die Kennung selbst bleibt in Klassen und Vergleichen. */
+const stufeName = v => tk('stufe.' + v, String(v));
 function levelsNode(n, a, r) {
-  const parts = [['Nutzen', n, 'n'], ['Aufwand', a, 'a'], ['Risiko', r, 'r']].filter(x => x[1]);
+  const parts = [[t('stufe.nutzen'), n, 'n'], [t('stufe.aufwand'), a, 'a'], [t('stufe.risiko'), r, 'r']].filter(x => x[1]);
   if (!parts.length) return null;
-  return h('span', { class: 'lv' }, parts.map(x => h('span', { class: `${x[2]}-${x[1]}`, text: `${x[0]} ${x[1]}` })));
+  return h('span', { class: 'lv' }, parts.map(x => h('span', { class: `${x[2]}-${x[1]}`, text: `${x[0]} ${stufeName(x[1])}` })));
 }
 /** Befehl mit einfacher Einfärbung (Cmdlet = blau, Parameter = gelb); nur DOM-Knoten. */
 function fillCmd(pre, text) {
@@ -149,12 +155,23 @@ function fillCmd(pre, text) {
     else pre.append(document.createTextNode(tok));
   });
 }
-function cmdBlock(text, withCopy = true, label = 'PowerShell · Administrator') {
-  const btn = withCopy ? h('button', { type: 'button', class: 'btn sm ghost', text: 'Kopieren', onclick: e => copyText(text, e.currentTarget) }) : null;
+function cmdBlock(text, withCopy = true, label = null) {
+  const btn = withCopy ? h('button', { type: 'button', class: 'btn sm ghost', text: t('kopieren.knopf'), onclick: e => copyText(text, e.currentTarget) }) : null;
   const pre = h('pre'); fillCmd(pre, text);
-  return h('div', { class: 'code' }, h('div', { class: 'ch' }, h('span', { text: label }), btn), pre);
+  return h('div', { class: 'code' }, h('div', { class: 'ch' }, h('span', { text: label || t('cmd.psAdmin') }), btn), pre);
 }
 const norm = s => (s || '').normalize('NFC');
+// Anzeigenamen (2.6): Der Bericht trägt neben den festen Kennungen den Namen in der Sprache des Scans; Logik bleibt bei den Kennungen
+const chkName = f => f.CheckName || f.Check;
+const catName = f => f.CategoryName || f.Category;
+const areaName = f => f.AreaName || f.Area;
+const tblName = id => (S.report && S.report.DataNamen && S.report.DataNamen.Tabellen && S.report.DataNamen.Tabellen[id]) || id;
+const colName = id => (S.report && S.report.DataNamen && S.report.DataNamen.Spalten && S.report.DataNamen.Spalten[id]) || id;
+/** Anzeigename einer Katalog-Variante: variantenNamen[i] zu varianten[i], gesendet wird weiter die Kennung. */
+function varName(a, v) {
+  const i = (a.varianten || []).indexOf(v);
+  return (i >= 0 && a.variantenNamen && a.variantenNamen[i]) || v;
+}
 
 // ---------------------------------------------------------------- API
 class ApiError extends Error { constructor(msg, status) { super(msg); this.status = status; } }
@@ -168,12 +185,12 @@ async function api(path, o = {}) {
   const opt = { method, headers: { 'X-PcCheck-Token': S.token || '' } };
   if (method === 'POST') { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(o.body == null ? {} : o.body); }
   let r;
-  try { r = await fetch(path, opt); } catch { throw new ApiError('Keine Verbindung zur GUI. Läuft sie noch?', 0); }
-  if (r.status === 401) { fatal('Sitzung abgelaufen, GUI neu starten.'); throw new ApiError('Sitzung abgelaufen, GUI neu starten.', 401); }
+  try { r = await fetch(path, opt); } catch { throw new ApiError(t('api.keineVerbindung'), 0); }
+  if (r.status === 401) { fatal(t('api.sitzungAbgelaufen')); throw new ApiError(t('api.sitzungAbgelaufen'), 401); }
   const txt = await r.text();
   let data = null;
   try { data = txt ? JSON.parse(txt) : null; } catch { data = null; }
-  if (!r.ok) throw new ApiError((data && data.error) || `Fehler ${r.status}`, r.status);
+  if (!r.ok) throw new ApiError((data && data.error) || t('api.fehler', r.status), r.status);
   return data;
 }
 /**
@@ -186,7 +203,7 @@ async function initToken() {
     history.replaceState(null, '', location.pathname + location.search + '#/uebersicht');
     const r = await fetch('/api/session/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: m[1] }) });
     let data = null; try { data = await r.json(); } catch { /* leer */ }
-    if (!r.ok || !data || !data.token) throw new Error((data && data.error) || 'Der Startcode wurde abgelehnt. Bitte die GUI neu starten.');
+    if (!r.ok || !data || !data.token) throw new Error((data && data.error) || t('api.startcodeAbgelehnt'));
     S.token = data.token;
     try { sessionStorage.setItem('pcCheckToken', S.token); } catch { /* ohne Speicher weiter */ }
   } else {
@@ -198,8 +215,8 @@ function startHeartbeat() {
   // sofort=true (Fenster wieder sichtbar/fokussiert): Ein Verbindungsfehler heißt, der Server ist beendet
   const beat = (sofort) => api('/api/heartbeat', { method: 'POST' }).then(() => { hbFail = 0; }, e => {
     if (e.status === 401) return;
-    if (sofort === true && e.status === 0) { fatal('Morpheus läuft nicht mehr. Bitte über das Startmenü neu starten.'); return; }
-    if (++hbFail >= 3) fatal('Verbindung zur GUI verloren. Das Fenster kann geschlossen werden.');
+    if (sofort === true && e.status === 0) { fatal(t('api.laeuftNichtMehr')); return; }
+    if (++hbFail >= 3) fatal(t('api.verbindungVerloren'));
   });
   setInterval(() => beat(false), 10000);
   // Edge drosselt Hintergrundfenster: beim Zurückkehren sofort ein Lebenszeichen senden
@@ -224,7 +241,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ---------------------------------------------------------------- Daten laden
 const normName = n => String(n || '').replace(/\.(json|html|md)$/i, '');
 async function loadReportJson(name) {
-  if (!REPORT_RE.test(name)) throw new ApiError('Ungültiger Berichtsname', 400);
+  if (!REPORT_RE.test(name)) throw new ApiError(t('api.berichtsnameUngueltig'), 400);
   if (!S.cache[name]) S.cache[name] = await api(`/api/reports/${name}.json`);
   return S.cache[name];
 }
@@ -238,6 +255,7 @@ async function loadReports() {
   S.reports = (list || []).map(r => ({ ...r, name: normName(r.name) })).filter(r => REPORT_RE.test(r.name));
 }
 async function loadActions() { try { S.actions = (await api('/api/actions')) || []; } catch (e) { if (e.status === 401) throw e; S.actions = []; } }
+async function loadHelp() { try { S.help = await api('/api/help'); } catch (e) { if (e.status === 401) throw e; S.help = null; } }
 /**
  * Zustände der Aktionen am System neu lesen lassen (Job „refresh“), danach Liste und Ansicht aktualisieren.
  * Ohne diesen Anstoß kennt der Server keine Zustände: Alle Karten zeigten „Zustand unbekannt“ und „Ausführen“.
@@ -263,7 +281,7 @@ async function loadAll() {
   await Promise.all([loadSession(), loadReports()]);
   await Promise.all([
     loadActions(),
-    api('/api/help').then(x => { S.help = x; }, () => { S.help = null; }),
+    loadHelp(),
     api('/api/checklist').then(x => { S.checklist = x || {}; }, () => { S.checklist = {}; }),
     loadSpeicher(),
   ]);
@@ -289,7 +307,7 @@ const safety = () => (S.session && S.session.safety) || {};
 // Nur-Lesen-Modus: der Codeordner ist nicht gesichert (oder keine Adminrechte); der Server antwortet bei Änderungen mit 403
 const readOnly = () => !!(S.session && S.session.readOnly);
 const locked = () => safety().schutzAn === false || readOnly();
-const lockTitle = () => readOnly() ? 'Nur-Lesen-Modus: Morpheus läuft nicht aus einem gesicherten Ordner, deshalb wird nichts geändert.' : 'Computerschutz ist aus: ohne Wiederherstellungspunkt wird nichts geändert.';
+const lockTitle = () => readOnly() ? t('sperre.nurLesen') : t('sperre.schutzAus');
 function uiF(view) { return S.ui.f[view] || (S.ui.f[view] = { mode: 'all', term: '' }); }
 
 // ---------------------------------------------------------------- Dialog
@@ -325,21 +343,20 @@ document.addEventListener('keydown', e => {
   }
 });
 
+/** Text mit eingebetteten Elementen: tn(Schlüssel, Knoten …) setzt die Knoten an die Stelle {0}, {1} … (nur DOM-Knoten, kein HTML). */
+function tn(key, ...nodes) {
+  const s = t(key, ...nodes.map((_, i) => `\u0001${i}\u0002`));
+  return s.split(/\u0001(\d+)\u0002/).map((p, i) => i % 2 ? nodes[+p] : p);
+}
+
 // ---------------------------------------------------------------- Aktionen ausführen
-const RUN_STEPS = [
-  ['Aktuellen Zustand lesen', /lese|zustand|vorher/i],
-  ['Wiederherstellungspunkt anlegen', /wiederherstellungspunkt|checkpoint/i],
-  ['Wiederherstellungspunkt prüfen', /geprüft|prüfe|vorhanden|bestätigt/i],
-  ['Journal-Eintrag schreiben', /journal/i],
-  ['Änderung ausführen', /ausführ|führe|setze|schalte|ändere/i],
-  ['Ergebnis prüfen', /ergebnis|nachher|erledigt|kontroll/i],
-];
-const RESULT_TEXT = { erledigt: 'Erledigt', fehlgeschlagen: 'Fehlgeschlagen', 'fehlgeschlagen-zurueckgesetzt': 'Fehlgeschlagen, wieder zurückgesetzt', zurueckgenommen: 'Zurückgenommen', uebersprungen: 'Übersprungen', 'übersprungen': 'Übersprungen', 'uebersprungen-erreicht': 'Schon erledigt, nichts geändert', 'uebersprungen-voraussetzung': 'Nicht ausgeführt (Voraussetzung fehlt)' };
-const FORCE_RE = /zustand.*ge[äa]ndert|ge[äa]ndert.*zustand/i;
+let RUN_STEPS = [];   // Schritte der Anzeige: [Name, Muster für die Logzeile]; Muster stehen in gui.psd1, damit sie zur Sprache der Logzeilen passen
+let RESULT_TEXT = {};
+const FORCE_RE = /zustand.*ge[äa]ndert|ge[äa]ndert.*zustand|state.*changed|changed.*state/i;
 
 /** Gemeinsame Anzeige eines laufenden Jobs im Dialog: Schritte, Live-Log, Ergebnis. */
 function jobView(steps) {
-  const ul = h('ul', { class: 'steps', 'aria-label': 'Ablauf' }, steps.map(s => h('li', null, h('span', { class: 's' }), s[0])));
+  const ul = h('ul', { class: 'steps', 'aria-label': t('run.ablauf') }, steps.map(s => h('li', null, h('span', { class: 's' }), s[0])));
   const log = h('pre', { class: 'log', 'aria-live': 'polite', text: '' });
   let cur = -1;
   const setLi = (li, cls) => { li.className = cls; li.firstChild.textContent = cls === 'done' ? '✓' : (cls === 'fail' ? '✕' : ''); };
@@ -364,10 +381,10 @@ function resultList(items) {
     const a = S.actions.find(x => x.id === r.id);
     const okc = r.status === 'erledigt' ? 'ok' : (String(r.status).startsWith('fehl') ? 'rem' : 'warn');
     return h('li', null,
-      h('b', { text: a ? a.titel : (r.id || 'Aktion') }), ' ',
+      h('b', { text: a ? a.titel : (r.id || t('run.aktion')) }), ' ',
       h('span', { class: okc, text: RESULT_TEXT[r.status] || r.status || '' }),
       r.meldung ? h('div', { class: 'note', text: r.meldung }) : null,
-      r.status === 'erledigt' && r.neustart ? h('div', { class: 'warn', text: '⟳ Für diese Änderung ist ein Neustart nötig. Er wird nicht automatisch ausgelöst.' }) : null);
+      r.status === 'erledigt' && r.neustart ? h('div', { class: 'warn', text: t('run.neustartNoetig') }) : null);
   }));
 }
 async function afterChange() {
@@ -379,31 +396,31 @@ function runCmdText(a, variante) { return (a.befehle && a.befehle.ausfuehren || 
 
 function openRunDialog(actions, variante) {
   if (!actions.length) return;
-  const title = actions.length > 1 ? `${actions.length} Änderungen ausführen` : actions[0].titel;
+  const title = actions.length > 1 ? t('run.titelMehrere', actions.length) : actions[0].titel;
   const body = [];
   actions.forEach(a => {
     const v = a.varianten && a.varianten.length ? (variante || S.variant[a.id] || a.varianten[0]) : null;
-    body.push(h('div', null, actions.length > 1 ? h('b', { text: a.titel }) : null, v ? h('div', { class: 'note', text: `Variante: ${v}` }) : null, cmdBlock(runCmdText(a, v), false)));
+    body.push(h('div', null, actions.length > 1 ? h('b', { text: a.titel }) : null, v ? h('div', { class: 'note', text: t('run.variante', varName(a, v)) }) : null, cmdBlock(runCmdText(a, v), false)));
   });
   const noRp = actions.some(a => a.ohneWiederherstellungspunkt || a.id === 'system.wiederherstellung');
-  body.push(h('div', { class: 'note', text: noRp ? 'Achtung: Diese Aktion schaltet die Wiederherstellungspunkte erst ein und kann deshalb vorher keinen anlegen.' : 'Vorher wird ein Wiederherstellungspunkt angelegt und geprüft. Fehlt er, wird nichts geändert. Jede Änderung erscheint danach unter „Änderungen“ und lässt sich einzeln zurücknehmen.' }));
-  if (actions.some(a => a.neustart)) body.push(h('div', { class: 'warn', style: 'margin-top:6px', text: '⟳ Mindestens eine Änderung wirkt erst nach einem Neustart. Neu gestartet wird nicht automatisch.' }));
-  dlgOpen(title, body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Ausführen', primary: true, onClick: () => startRun(actions, title, variante) }]);
+  body.push(h('div', { class: 'note', text: noRp ? t('run.ohnePunktNote') : t('run.mitPunktNote') }));
+  if (actions.some(a => a.neustart)) body.push(h('div', { class: 'warn', style: 'margin-top:6px', text: t('run.neustartHinweis') }));
+  dlgOpen(title, body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.ausfuehren'), primary: true, onClick: () => startRun(actions, title, variante) }]);
 }
 async function startRun(actions, title, variante) {
   const jv = jobView(RUN_STEPS);
   const single = actions.length === 1 && actions[0].varianten && actions[0].varianten.length;
   const v = single ? (variante || S.variant[actions[0].id] || actions[0].varianten[0]) : null;
-  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let job = null, err = null;
   try {
     const body = { ids: actions.map(a => a.id) };
     if (v) body.variante = v;
-    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/actions/run', { method: 'POST', body });
     job = await followJob(r.jobId, jv.lines);
   } catch (e) { err = e; }
-  finishJob(title, jv, job, err, 'Fertig');
+  finishJob(title, jv, job, err, t('btn.fertig'));
 }
 function finishJob(title, jv, job, err, doneLabel) {
   const ok = !err && job && job.status === 'done';
@@ -411,9 +428,9 @@ function finishJob(title, jv, job, err, doneLabel) {
   const body = [...jv.nodes];
   const res = job && job.ergebnis;
   if (err) body.push(h('p', { class: 'rem', text: err.message }));
-  else if (job && job.status === 'failed') body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (job && job.status === 'failed') body.push(h('p', { class: 'rem', text: (res && res.error) || t('run.fehlgeschlagen') }));
   const list = res && !res.error ? resultList(res) : null;
-  if (list) body.push(h('h3', { text: 'Ergebnis' }), list);
+  if (list) body.push(h('h3', { text: t('run.ergebnis') }), list);
   dlgOpen(title, body, [{ label: doneLabel, primary: true, onClick: dlgClose }]);
   Dlg.running = false;
   afterChange();
@@ -422,35 +439,35 @@ function finishJob(title, jv, job, err, doneLabel) {
 // ---------------------------------------------------------------- Rückgängig
 function openUndoDialog(e) {
   const body = [
-    h('p', { text: `„${e.titel || e.aktion}“ wird auf den früheren Zustand zurückgesetzt: ${fmtState(e.nachher)} → ${fmtState(e.vorher)}.` }),
-    h('div', { class: 'note', text: 'Auch das Zurücknehmen ist eine Änderung: Vorher wird ein neuer Wiederherstellungspunkt angelegt und geprüft.' }),
+    h('p', { text: t('undo.text', e.titel || e.aktion, fmtState(e.nachher), fmtState(e.vorher)) }),
+    h('div', { class: 'note', text: t('undo.note') }),
   ];
-  dlgOpen('Änderung rückgängig machen', body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: '↶ Rückgängig', primary: true, onClick: () => startUndo(e, false) }]);
+  dlgOpen(t('undo.titel'), body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('undo.knopf'), primary: true, onClick: () => startUndo(e, false) }]);
 }
 async function startUndo(e, force, vorRep) {
-  const title = 'Rückgängig: ' + (e.titel || e.aktion);
+  const title = t('undo.titelRun', e.titel || e.aktion);
   const jv = jobView(RUN_STEPS);
-  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let job = null, err = null;
   try {
-    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    jv.lines([t('win.bestaetigen')]);
     const r = await api(`/api/journal/${encodeURIComponent(e.id)}/undo`, { method: 'POST', body: Object.assign({}, force ? { force: true } : null, vorRep ? { vorReparatur: true } : null) });
     job = await followJob(r.jobId, jv.lines);
   } catch (x) { err = x; }
   const msg = err ? err.message : (job && job.status === 'failed' && job.ergebnis && job.ergebnis.error) || '';
-  if (!vorRep && /vor der Reparatur des Datenordners/i.test(msg)) {
+  if (!vorRep && /vor der Reparatur des Datenordners|before (the )?repair(ing)? (of )?the data folder/i.test(msg)) {
     Dlg.running = false;
-    dlgOpen(title, [h('p', { class: 'warn', text: 'Dieser Eintrag stammt aus der Zeit, in der der Datenordner ungeschützt war. Hast du diese Änderung selbst vorgenommen?' })],
-      [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Ja, trotzdem zurücknehmen', danger: true, onClick: () => startUndo(e, force, true) }]);
+    dlgOpen(title, [h('p', { class: 'warn', text: t('undo.vorReparatur') })],
+      [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('undo.jaTrotzdem'), danger: true, onClick: () => startUndo(e, force, true) }]);
     return;
   }
   if (!force && FORCE_RE.test(msg)) {
     Dlg.running = false;
-    dlgOpen(title, [h('p', { class: 'warn', text: msg }), h('p', { text: 'Der Zustand hat sich seit der Änderung geändert. Trotzdem auf den früheren Wert zurücksetzen?' })],
-      [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Trotzdem zurücksetzen', danger: true, onClick: () => startUndo(e, true, vorRep) }]);
+    dlgOpen(title, [h('p', { class: 'warn', text: msg }), h('p', { text: t('undo.zustandGeaendert') })],
+      [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('undo.trotzdem'), danger: true, onClick: () => startUndo(e, true, vorRep) }]);
     return;
   }
-  finishJob(title, jv, job, err, 'Fertig');
+  finishJob(title, jv, job, err, t('btn.fertig'));
 }
 
 // ---------------------------------------------------------------- Bausteine
@@ -459,15 +476,15 @@ function infoTip(check, cat) {
   const P = hp.Pruefungen || hp.pruefungen || {}, K = hp.Kategorien || hp.kategorien || {};
   const e = P[check];
   let tip = null;
-  if (e) tip = h('span', { class: 'tip', role: 'tooltip' }, h('b', { text: 'Was wird geprüft? ' }), e.Was, h('br'), h('b', { text: 'Warum wichtig? ' }), e.Warum, h('br'), h('b', { text: 'Wann ist eine Warnung harmlos? ' }), e.Harmlos);
+  if (e) tip = h('span', { class: 'tip', role: 'tooltip' }, h('b', { text: t('tip.was') }), e.Was, h('br'), h('b', { text: t('tip.warum') }), e.Warum, h('br'), h('b', { text: t('tip.harmlos') }), e.Harmlos);
   else if (K[cat]) tip = h('span', { class: 'tip', role: 'tooltip', text: K[cat] });
   if (!tip) return null;
-  return [h('button', { type: 'button', class: 'info', 'aria-label': 'Erklärung', 'aria-expanded': 'false', text: 'i' }), tip];
+  return [h('button', { type: 'button', class: 'info', 'aria-label': t('tip.aria'), 'aria-expanded': 'false', text: 'i' }), tip];
 }
 function howTo(f) {
   const steps = f.Steps || [];
   if (!steps.length && !f.Command) return null;
-  return h('details', { class: 'how' }, h('summary', { text: 'So geht\'s' }),
+  return h('details', { class: 'how' }, h('summary', { text: t('howto.summary') }),
     steps.length ? h('ol', null, steps.map(s => h('li', { text: s }))) : null,
     f.Command ? cmdBlock(f.Command) : null);
 }
@@ -475,54 +492,54 @@ function actionCard(a) {
   const z = a.zustand || {};
   const done = z.aktiv === true, lock = locked();
   const hasVar = a.varianten && a.varianten.length;
-  const stateNode = h('span', { class: 'state ' + (z.aktiv === true ? 'on' : (z.aktiv === false ? 'off' : 'unk')), title: z.stand ? `Gelesen: ${fmtDate(z.stand)}` : null },
-    h('i'), z.wert != null && z.wert !== '' ? `Zustand: ${z.wert}${done ? ' ✓' : ''}` : 'Zustand unbekannt');
+  const stateNode = h('span', { class: 'state ' + (z.aktiv === true ? 'on' : (z.aktiv === false ? 'off' : 'unk')), title: z.stand ? t('karte.gelesen', fmtDate(z.stand)) : null },
+    h('i'), z.wert != null && z.wert !== '' ? t('karte.zustand', z.wert, done ? ' ✓' : '') : t('karte.zustandUnbekannt'));
   let sel = null, curCmd = runCmdText(a, hasVar ? (S.variant[a.id] || a.varianten[0]) : null);
   const cmdPre = h('pre'); fillCmd(cmdPre, curCmd);
   if (hasVar) {
-    sel = h('select', { 'aria-label': 'Variante', onchange: e => { S.variant[a.id] = e.target.value; curCmd = runCmdText(a, e.target.value); fillCmd(cmdPre, curCmd); } },
-      a.varianten.map(v => h('option', { value: v, selected: (S.variant[a.id] || a.varianten[0]) === v, text: v })));
+    sel = h('select', { 'aria-label': t('karte.variante'), onchange: e => { S.variant[a.id] = e.target.value; curCmd = runCmdText(a, e.target.value); fillCmd(cmdPre, curCmd); } },
+      a.varianten.map(v => h('option', { value: v, selected: (S.variant[a.id] || a.varianten[0]) === v, text: varName(a, v) })));
   }
   const chk = (!hasVar && !done && !lock)
-    ? h('input', { type: 'checkbox', checked: S.sel.has(a.id), 'aria-label': `${a.titel} auswählen`, onchange: e => { if (e.target.checked) S.sel.add(a.id); else S.sel.delete(a.id); updateMulti(); } })
+    ? h('input', { type: 'checkbox', checked: S.sel.has(a.id), 'aria-label': t('karte.auswaehlen', a.titel), onchange: e => { if (e.target.checked) S.sel.add(a.id); else S.sel.delete(a.id); updateMulti(); } })
     : null;
-  const btn = done ? h('button', { type: 'button', class: 'sm', disabled: true, text: 'Bereits erledigt' })
-    : lock ? h('button', { type: 'button', class: 'sm', disabled: true, title: lockTitle(), text: 'Gesperrt' })
-      : h('button', { type: 'button', class: 'sm primary', text: 'Ausführen', onclick: () => openRunDialog([a], sel ? sel.value : null) });
+  const btn = done ? h('button', { type: 'button', class: 'sm', disabled: true, text: t('karte.bereitsErledigt') })
+    : lock ? h('button', { type: 'button', class: 'sm', disabled: true, title: lockTitle(), text: t('karte.gesperrt') })
+      : h('button', { type: 'button', class: 'sm primary', text: t('btn.ausfuehren'), onclick: () => openRunDialog([a], sel ? sel.value : null) });
   const expl = (a.befehle && a.befehle.erklaerung) || [];
-  const copyBtn = h('button', { type: 'button', class: 'copy', text: 'Kopieren', onclick: e => copyText(curCmd, e.currentTarget) });
+  const copyBtn = h('button', { type: 'button', class: 'copy', text: t('kopieren.knopf'), onclick: e => copyText(curCmd, e.currentTarget) });
   return h('div', { class: 'action' + (done ? ' quiet' : ''), 'data-id': a.id },
     h('div', { class: 'ah' }, chk, h('span', { class: 'at', text: a.titel }), levelsNode(a.nutzen, a.aufwand, a.risiko),
-      a.neustart ? h('span', { class: 'lv' }, h('span', { class: 'restart', text: 'Neustart nötig' })) : null,
+      a.neustart ? h('span', { class: 'lv' }, h('span', { class: 'restart', text: t('karte.neustartNoetig') })) : null,
       h('div', { class: 'acts' }, sel, stateNode, btn)),
     a.erklaerung ? h('p', { class: 'ae', text: a.erklaerung }) : null,
-    h('details', { class: 'cmd' }, h('summary', { text: 'Befehl zeigen und erklären' }),
-      h('div', { class: 'code' }, h('div', { class: 'ch' }, h('span', { text: 'PowerShell · Administrator' }), copyBtn), cmdPre),
+    h('details', { class: 'cmd' }, h('summary', { text: t('karte.befehlZeigen') }),
+      h('div', { class: 'code' }, h('div', { class: 'ch' }, h('span', { text: t('cmd.psAdmin') }), copyBtn), cmdPre),
       expl.length ? h('ul', { class: 'explain' }, expl.map(x => h('li', { text: x }))) : null,
-      a.befehle && a.befehle.rueckgaengig ? h('div', { class: 'note' }, 'Rückgängig: ', h('code', { text: a.befehle.rueckgaengig }), ' (der vorherige Wert wird im Journal gespeichert)') : null));
+      a.befehle && a.befehle.rueckgaengig ? h('div', { class: 'note' }, tn('karte.rueckgaengig', h('code', { text: a.befehle.rueckgaengig }))) : null));
 }
 function updateMulti() {
   const n = S.sel.size;
-  S.multiBtns.forEach(b => { b.disabled = !n || locked(); b.textContent = `Ausgewählte ausführen (${n})`; });
+  S.multiBtns.forEach(b => { b.disabled = !n || locked(); b.textContent = t('multi.knopf', n); });
 }
 /** Akzeptieren am Befund: nur bei angezeigtem Bericht, offenen Status und nicht bei Sigcheck (dort je Datei). */
 const canAccept = f => !!S.cur && ['CRIT', 'WARN', 'TIPP', 'INFO'].includes(f.Status) && norm(f.Check) !== SIG_CHECK;
 function findingRow(f, opts = {}) {
   const m = S.checklist[f.Check];
   const acts = actionsFor(f);
-  const note = f.Status === 'ACK' ? `Ursprünglich: ${STATUS_NAME[f.OriginalStatus] || f.OriginalStatus || ''} · ${f.Note || ''}` : f.Note;
+  const note = f.Status === 'ACK' ? t('befund.urspruenglich', STATUS_NAME[f.OriginalStatus] || f.OriginalStatus || '', f.Note || '') : f.Note;
   const todo = (isOpen(f) || canAccept(f)) ? h('div', { class: 'todo' },
-    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'done' ? 'on' : '', 'data-mark': 'done', title: 'Als erledigt markieren; der nächste Lauf zeigt, ob es wirklich behoben ist', text: '✔ erledigt', onclick: () => toggleMark(f.Check, 'done') }),
-    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'later' ? 'on' : '', 'data-mark': 'later', title: 'Für später vormerken', text: '⏱ später', onclick: () => toggleMark(f.Check, 'later') }),
-    canAccept(f) ? h('button', { type: 'button', 'data-mark': 'acc', title: readOnly() ? lockTitle() : 'Diesen Befund in die Akzeptanzliste aufnehmen', disabled: readOnly(), text: 'Akzeptieren …', onclick: () => openAkzeptieren({ art: 'befund', check: f.Check }) }) : null) : null;
+    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'done' ? 'on' : '', 'data-mark': 'done', title: t('befund.erledigtTitel'), text: t('befund.erledigtText'), onclick: () => toggleMark(f.Check, 'done') }),
+    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'later' ? 'on' : '', 'data-mark': 'later', title: t('befund.spaeterTitel'), text: t('befund.spaeterText'), onclick: () => toggleMark(f.Check, 'later') }),
+    canAccept(f) ? h('button', { type: 'button', 'data-mark': 'acc', title: readOnly() ? lockTitle() : t('befund.akzTitel'), disabled: readOnly(), text: t('befund.akzText'), onclick: () => openAkzeptieren({ art: 'befund', check: f.Check }) }) : null) : null;
   const lvl = levelsNode(f.Benefit, f.Effort, f.Risk);
   const tbls = tablesFor(f.Check);
-  const dataBtn = tbls.length ? h('button', { type: 'button', class: 'btn sm ghost data-link', title: 'Die Detailtabelle(n) zu dieser Prüfung im Anhang (Rohdaten) öffnen', text: `📋 Daten ansehen${tbls.length > 1 ? ` (${tbls.length})` : ''}`, onclick: () => openRaw(tbls) }) : null;
+  const dataBtn = tbls.length ? h('button', { type: 'button', class: 'btn sm ghost data-link', title: t('befund.datenTitel'), text: tbls.length > 1 ? t('befund.datenMehr', tbls.length) : t('befund.datenText'), onclick: () => openRaw(tbls) }) : null;
   return h('div', { class: 'card finding' + (m && m.state === 'done' ? ' m-done' : ''), 'data-check': f.Check, 'data-status': f.Status },
     h('div', { class: 'fhead' },
       h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] || f.Status }),
-      h('span', { class: 'fname' }, f.Check, infoTip(f.Check, f.Category)),
-      opts.hint ? h('span', { class: 'cat-hint', text: `${f.Area} · ${f.Category}` }) : null,
+      h('span', { class: 'fname' }, chkName(f), infoTip(f.Check, f.Category)),
+      opts.hint ? h('span', { class: 'cat-hint', text: `${areaName(f)} · ${catName(f)}` }) : null,
       dataBtn, todo),
     h('p', { class: 'fval', text: f.Value }),
     note ? h('div', { class: 'fnote', text: note }) : null,
@@ -533,14 +550,14 @@ function findingRow(f, opts = {}) {
     howTo(f),
     acts.map(actionCard));
 }
-const DEF_FIND = { 'Defender: Signaturen': ['signaturen', 'Signaturen aktualisieren'], 'Defender: Scans': ['schnellscan', 'Schnellscan starten'] };
+const DEF_FIND = { 'Defender: Signaturen': 'signaturen', 'Defender: Scans': 'schnellscan' };
 /** Knopf am Befund „Defender: Signaturen“ / „Defender: Scans“ (nur bei offenem Befund), startet dieselbe Aufgabe wie unter „Werkzeuge“. */
 function defenderTool(f) {
-  const d = DEF_FIND[norm(f.Check)];
-  if (!d || f.Status === 'OK' || f.Status === 'ACK' || f.Status === 'SKIP') return null;
+  const art = DEF_FIND[norm(f.Check)];
+  if (!art || f.Status === 'OK' || f.Status === 'ACK' || f.Status === 'SKIP') return null;
   return h('div', { class: 'deftool' },
-    h('button', { type: 'button', class: 'sm primary', disabled: readOnly(), title: readOnly() ? lockTitle() : null, text: d[1], onclick: () => startDefender(d[0]) }),
-    h('a', { href: '#/werkzeuge', text: 'Alle Defender-Werkzeuge →' }));
+    h('button', { type: 'button', class: 'sm primary', disabled: readOnly(), title: readOnly() ? lockTitle() : null, text: art === 'signaturen' ? t('def.signaturenAkt') : t('def.schnellscanStart'), onclick: () => startDefender(art) }),
+    h('a', { href: '#/werkzeuge', text: t('def.alleWerkzeuge') }));
 }
 const SYS_FIND = new Set(['Autostarts: Signaturen (Autoruns)', 'Autostarts: beschreibbare Pfade (Autoruns)', 'Systemdateien: Signaturen (Sigcheck)']);
 /** Link am Sysinternals-Befund zur Karte unter „Werkzeuge“, nur wenn dort etwas zu tun ist (nicht eingerichtet bzw. Werkzeug nicht vertrauenswürdig). */
@@ -548,45 +565,45 @@ function sysTool(f) {
   if (!SYS_FIND.has(norm(f.Check))) return null;
   const v = String(f.Value || '');
   let text = null;
-  if (f.Status === 'SKIP' && v.startsWith('Sysinternals nicht eingerichtet')) text = 'Sysinternals einrichten →';
-  else if (f.Status === 'WARN' && v.includes('nicht ausgeführt')) text = 'Werkzeuge neu herunterladen →';
+  if (f.Status === 'SKIP' && /^Sysinternals (nicht eingerichtet|not set up|not installed|not configured)/i.test(v)) text = t('sys.einrichtenLink');
+  else if (f.Status === 'WARN' && /nicht ausgeführt|not (run|executed)/i.test(v)) text = t('sys.neuLadenLink');
   if (!text) return null;
   return h('div', { class: 'deftool' }, h('a', { href: '#/werkzeuge', text }));
 }
 function toggleMark(check, state) {
   // Im Nur-Lesen-Modus speichert der Server nichts (403), also auch lokal nichts ändern
-  if (readOnly()) { toast('Im Nur-Lesen-Modus wird die Checkliste nicht gespeichert.'); return; }
+  if (readOnly()) { toast(t('check.nurLesen')); return; }
   const m = S.checklist[check];
   if (m && m.state === state) delete S.checklist[check];
-  else S.checklist[check] = { state, date: new Date().toLocaleDateString('de-DE'), report: S.report.Meta.Erstellt };
-  api('/api/checklist', { method: 'POST', body: S.checklist }).catch(e => toast('Checkliste nicht gespeichert: ' + e.message));
+  else S.checklist[check] = { state, date: new Date().toLocaleDateString(locTag()), report: S.report.Meta.Erstellt };
+  api('/api/checklist', { method: 'POST', body: S.checklist }).catch(e => toast(t('check.nichtGespeichert', e.message)));
   refreshView();
 }
 function banner(kind, iconId, ...kids) { return h('div', { class: 'banner' + (kind ? ' b-' + kind : '') }, icon(iconId), h('div', null, ...kids)); }
 function reportBar() {
   if (!S.reports.length || S.cur === S.reports[0].name) return null;
-  return banner('info', 'doc', h('b', { text: 'Du siehst den Bericht vom ' + fmtDate(S.report.Meta.Erstellt) + '. ' }), 'Es gibt einen neueren. ',
-    h('button', { type: 'button', class: 'link', text: 'Zum neuesten Bericht', onclick: async () => { try { await showReport(S.reports[0].name); refreshView(); } catch (e) { toast(e.message); } } }));
+  return banner('info', 'doc', h('b', { text: t('bar.siehstBericht', fmtDate(S.report.Meta.Erstellt)) }), t('bar.neuerer'),
+    h('button', { type: 'button', class: 'link', text: t('bar.zumNeuesten'), onclick: async () => { try { await showReport(S.reports[0].name); refreshView(); } catch (e) { toast(e.message); } } }));
 }
 // ---- Datenordner-Rechte (Vertrag 18.10)
 const dOrd = () => (S.session && S.session.datenordner) || null;
 const dOrdRepariert = d => Array.isArray(d.repariert) ? !!d.repariert[0] : !!d.repariert;
 const dOrdReparierbar = () => { const d = dOrd(); return !!(d && d.zustand === 'reparierbar' && !dOrdRepariert(d)); };
-function dOrdKonten(d) { return (d.konten || []).map(k => (k.rechte === 'schreiben' ? 'Vollzugriff für ' : 'Leserecht für ') + (k.name || k.sid)).join(', '); }
+function dOrdKonten(d) { return (d.konten || []).map(k => (k.rechte === 'schreiben' ? t('dord.vollzugriff', k.name || k.sid) : t('dord.leserecht', k.name || k.sid))).join(', '); }
 function dOrdHinweis() {
   // Der Server liefert reparaturZeit auf oberster Ebene von /api/session (auch im normalen Modus, höchstens 7 Tage alt)
   const zeit = S.session && S.session.reparaturZeit;
   if (!zeit || dOrdReparierbar()) return null;
-  return banner('', 'warn', h('b', { text: 'Der Datenordner wurde am ' + fmtDate(zeit) + ' repariert. ' }), 'Bitte prüfen, ob alle Einträge von dir stammen.');
+  return banner('', 'warn', h('b', { text: t('dord.repariertAm', fmtDate(zeit)) }), t('dord.pruefen'));
 }
 function dOrdBanner() {
   const d = dOrd();
-  const b = banner('err', 'warn', h('b', { text: 'Die Rechte des Datenordners wurden geändert' }),
-    h('p', { text: (dOrdKonten(d) || 'Weitere Konten') + (d.pfad ? ' auf ' + d.pfad : '') + '. Ursache: meist „Fortsetzen“ im Explorer.' }),
-    h('p', { text: 'Risiko: Programme unter diesem Konto könnten Morpheus’ Daten ändern. Bis zur Reparatur ist Morpheus im Nur-Lesen-Modus.' }),
+  const b = banner('err', 'warn', h('b', { text: t('dord.geaendert') }),
+    h('p', { text: t('dord.ursache', dOrdKonten(d) || t('dord.weitereKonten'), d.pfad ? t('dord.auf', d.pfad) : '') }),
+    h('p', { text: t('dord.risiko') }),
     h('div', { class: 'brow' },
-      h('button', { type: 'button', class: 'sm primary', 'data-f': 'repair', text: 'Rechte reparieren …', onclick: () => openDatenordner('reparieren') }), ' ',
-      h('button', { type: 'button', class: 'sm', 'data-f': 'neu', text: 'Stattdessen neu anlegen …', onclick: () => openDatenordner('neu') })));
+      h('button', { type: 'button', class: 'sm primary', 'data-f': 'repair', text: t('dord.reparieren'), onclick: () => openDatenordner('reparieren') }), ' ',
+      h('button', { type: 'button', class: 'sm', 'data-f': 'neu', text: t('dord.neuAnlegen'), onclick: () => openDatenordner('neu') })));
   b.classList.add('dord-banner');
   return b;
 }
@@ -605,95 +622,95 @@ function dOrdBannerEinsetzen(node) {
 function openDatenordner(art) {
   const d = dOrd() || {}, neu = art === 'neu';
   const body = neu ? [
-    h('p', { text: `Der Ordner wird beiseitegelegt (${(d.pfad || 'C:\\ProgramData\\Morpheus')}.unsicher-<Datum>) und leer neu angelegt.` }),
-    h('p', { class: 'warn', text: 'Berichte, Journal und Akzeptanzliste sind dann in Morpheus nicht mehr sichtbar.' }),
-    h('p', { class: 'muted', text: 'Windows fragt danach in einem eigenen Fenster nach.' })]
+    h('p', { text: t('dord.neuP1', d.pfad || 'C:\\ProgramData\\Morpheus') }),
+    h('p', { class: 'warn', text: t('dord.neuWarn') }),
+    h('p', { class: 'muted', text: t('dord.windowsFragt') })]
   : [
-    h('p', { text: 'Das passiert:' }),
+    h('p', { text: t('dord.repDas') }),
     h('ul', null,
-      h('li', { text: 'Die Rechte der genannten Konten werden entfernt' + (dOrdKonten(d) ? ' (' + dOrdKonten(d) + ')' : '') + '.' }),
-      h('li', { text: 'temp, tools und der gespeicherte Zustand werden neu angelegt.' }),
-      h('li', { text: 'Journal, Akzeptanzliste und Checkliste bleiben und werden neu geschrieben.' }),
-      h('li', { text: 'Berichte bleiben unverändert.' }),
-      h('li', { text: 'Die Sysinternals-Werkzeuge werden bei Bedarf neu geladen.' })),
-    h('p', { class: 'muted', text: 'Windows fragt danach in einem eigenen Fenster nach.' })];
-  dlgOpen(neu ? 'Datenordner neu anlegen' : 'Rechte des Datenordners reparieren', body,
-    [{ label: 'Abbrechen', onClick: dlgClose }, neu ? { label: 'Neu anlegen', danger: true, onClick: () => runDatenordner(art) } : { label: 'Rechte reparieren', primary: true, onClick: () => runDatenordner(art) }]);
+      h('li', { text: dOrdKonten(d) ? t('dord.repL1Konten', dOrdKonten(d)) : t('dord.repL1') }),
+      h('li', { text: t('dord.repL2') }),
+      h('li', { text: t('dord.repL3') }),
+      h('li', { text: t('dord.repL4') }),
+      h('li', { text: t('dord.repL5') })),
+    h('p', { class: 'muted', text: t('dord.windowsFragt') })];
+  dlgOpen(neu ? t('dord.titelNeu') : t('dord.titelRep'), body,
+    [{ label: t('btn.abbrechen'), onClick: dlgClose }, neu ? { label: t('dord.neuKnopf'), danger: true, onClick: () => runDatenordner(art) } : { label: t('dord.repKnopf'), primary: true, onClick: () => runDatenordner(art) }]);
 }
 async function runDatenordner(art) {
-  const title = art === 'neu' ? 'Datenordner neu anlegen' : 'Rechte des Datenordners reparieren';
-  dlgOpen(title, [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Läuft …', disabled: true }], { lock: true });
+  const title = art === 'neu' ? t('dord.titelNeu') : t('dord.titelRep');
+  dlgOpen(title, [h('p', { text: t('win.bestaetigen') })], [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let r = null, err = null;
   try { r = await api('/api/datenordner/reparieren', { method: 'POST', body: { art } }); } catch (x) { err = x; }
   Dlg.running = false;
   if (err || !r || r.ok === false) {
-    const msg = err ? (err.status === 403 ? 'Im Windows-Dialog abgelehnt. Es wurde nichts geändert.' : err.message) : (r && r.meldung) || 'Das hat nicht geklappt.';
-    dlgOpen(title, [h('p', { class: 'rem', text: msg })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    const msg = err ? (err.status === 403 ? t('dord.abgelehnt') : err.message) : (r && r.meldung) || t('dord.nichtGeklappt');
+    dlgOpen(title, [h('p', { class: 'rem', text: msg })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
     return;
   }
   const d = dOrd(); if (d) d.repariert = [true];
   const note = h('p', { class: 'muted' });
   const quit = async () => {
     try { await api('/api/shutdown', { method: 'POST' }); } catch { /* Server beendet sich, die Antwort kann ausbleiben */ }
-    note.textContent = 'Morpheus wurde beendet. Morpheus über das Startmenü neu starten.';
-    dlgOpen(title, [h('p', { class: 'ok', text: 'Morpheus wurde beendet.' }), h('p', { text: 'Morpheus über das Startmenü neu starten.' })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    note.textContent = t('dord.beendetKurz') + ' ' + t('dord.neuStarten');
+    dlgOpen(title, [h('p', { class: 'ok', text: t('dord.beendetKurz') }), h('p', { text: t('dord.neuStarten') })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
   };
-  dlgOpen(title, [h('p', { class: 'ok', text: r.meldung || 'Fertig.' }), h('p', { text: 'Morpheus muss neu gestartet werden, damit es wieder normal arbeitet.' }), note],
-    [{ label: 'Später', onClick: () => { dlgClose(); refreshView(); } }, { label: 'Morpheus beenden', primary: true, onClick: quit }]);
+  dlgOpen(title, [h('p', { class: 'ok', text: r.meldung || t('dord.fertig') }), h('p', { text: t('dord.neustartNoetig') }), note],
+    [{ label: t('dord.spaeter'), onClick: () => { dlgClose(); refreshView(); } }, { label: t('dord.beenden'), primary: true, onClick: quit }]);
 }
 function safetyBanner() {
   const s = safety();
   if (dOrdReparierbar()) return dOrdBanner();
   if (readOnly()) {
-    return banner('err', 'warn', h('b', { text: 'Nur-Lesen-Modus: ' }), (S.session.readOnlyReason || 'Morpheus läuft nicht aus einem gesicherten Ordner.') + ' Änderungen, „Rückgängig“ und Scans sind gesperrt. Starte Morpheus über das Startmenü bzw. ',
-      h('code', { text: 'C:\\Program Files\\Morpheus\\pc-check-gui.cmd' }), '.');
+    return banner('err', 'warn', h('b', { text: t('sb.nurLesen') }), tn('sb.nurLesenText', S.session.readOnlyReason || t('sb.nurLesenStandard'),
+      h('code', { text: 'C:\\Program Files\\Morpheus\\pc-check-gui.cmd' })));
   }
   if (s.schutzAn === false) {
     const cmd = `Enable-ComputerRestore -Drive '${(s.laufwerk || 'C:').replace(/\\$/, '')}\\'`;
-    return banner('err', 'warn', h('b', { text: 'Computerschutz ist aus: ' }), 'Ohne Wiederherstellungspunkt führt die GUI keine Änderungen aus. Alle Ausführen-Buttons sind gesperrt.',
-      h('details', { class: 'cmd' }, h('summary', { text: 'Befehl zum Einschalten (Administrator-PowerShell)' }), cmdBlock(cmd),
-        h('ul', { class: 'explain' }, h('li', { text: 'Schaltet den Computerschutz (Systemwiederherstellung) für das Laufwerk ein. Danach die GUI-Seite neu laden.' }))));
+    return banner('err', 'warn', h('b', { text: t('sb.schutzAus') }), t('sb.schutzAusText'),
+      h('details', { class: 'cmd' }, h('summary', { text: t('sb.einschaltenBefehl') }), cmdBlock(cmd),
+        h('ul', { class: 'explain' }, h('li', { text: t('sb.einschaltenErkl') }))));
   }
   if (s.speicherKlein) {
-    return banner('', 'warn', h('b', { text: 'Speicher für Wiederherstellungspunkte zu klein. ' }), `Erlaubt sind nur ${s.speicherMax || 'wenige GB'}. Windows löscht ältere Punkte, sobald neue entstehen; das Netz vor Änderungen hält dann nur kurz. Rückgängig über „Änderungen“ funktioniert trotzdem. `,
-      h('a', { href: '#/sicherheit', text: 'Unter Sicherheit > Wiederherstellung vergrößern' }), '.');
+    return banner('', 'warn', h('b', { text: t('sb.speicherKlein') }), t('sb.speicherKleinText', s.speicherMax || t('sb.wenigeGB')),
+      h('a', { href: '#/sicherheit', text: t('sb.vergroessern') }), '.');
   }
   if (s.sperre24h) {
-    return banner('', 'warn', h('b', { text: '24-Stunden-Sperre aktiv. ' }), 'Windows legt höchstens einen Wiederherstellungspunkt pro 24 Stunden an. Solange das so ist, kann die GUI heute eventuell keine weitere Änderung absichern und führt sie dann nicht aus.',
-      h('details', { class: 'cmd' }, h('summary', { text: 'Befehl zum Aufheben der Sperre (einmalig, Administrator-PowerShell)' }), cmdBlock(s.befehl || ''),
-        h('ul', { class: 'explain' }, h('li', { text: 'Setzt den Mindestabstand zwischen zwei Wiederherstellungspunkten auf 0 Minuten.' }), h('li', null, 'Rückgängig: den Wert wieder löschen (', h('code', { text: 'Remove-ItemProperty … -Name SystemRestorePointCreationFrequency' }), ').'))));
+    return banner('', 'warn', h('b', { text: t('sb.sperre24') }), t('sb.sperre24Text'),
+      h('details', { class: 'cmd' }, h('summary', { text: t('sb.sperre24Befehl') }), cmdBlock(s.befehl || ''),
+        h('ul', { class: 'explain' }, h('li', { text: t('sb.sperre24L1') }), h('li', null, tn('sb.sperre24L2', h('code', { text: 'Remove-ItemProperty … -Name SystemRestorePointCreationFrequency' }))))));
   }
   return null;
 }
 const MONO_COL = /^(Pfad|Path|Image Path|Launch String|Befehl\w*|Ort|Datei(?:name|pfad)?|Sha256)$|(^|[\s_-])(Pfad|Path|Befehl|Ort|Datei|Dateiname|Sha256)($|[\s_-])/i;
 const accLocal = new Set();   // lokal als „akzeptiert (ab nächstem Scan)“ markierte Sigcheck-Dateien (Pfad klein)
 const SIG_TABLE = 'Unsignierte Systemdateien (Sigcheck)', SIG_CHECK = 'Systemdateien: Signaturen (Sigcheck)';
-const cellText = v => v == null ? '' : (typeof v === 'boolean' ? (v ? 'Ja' : 'Nein') : (typeof v === 'object' ? JSON.stringify(v) : v));
+const cellText = v => v == null ? '' : (typeof v === 'boolean' ? (v ? t('tab.ja') : t('tab.nein')) : (typeof v === 'object' ? JSON.stringify(v) : v));
 function tableFrom(rows, max = 300, name = '') {
   rows = (rows || []).filter(r => r != null);
-  if (!rows.length) return h('p', { class: 'muted', text: 'Keine Einträge.' });
+  if (!rows.length) return h('p', { class: 'muted', text: t('tab.keineEintraege') });
   const cols = Object.keys(rows[0]);
   const sig = norm(name) === SIG_TABLE && !!S.cur;
-  const t = h('div', { class: 'tbl-scroll' }, h('table', null,
-    h('thead', null, h('tr', null, cols.map(c => h('th', { text: c })), sig ? h('th', { text: 'Aktionen' }) : null)),
+  const tb = h('div', { class: 'tbl-scroll' }, h('table', null,
+    h('thead', null, h('tr', null, cols.map(c => h('th', { text: colName(c) })), sig ? h('th', { text: t('tab.aktionen') }) : null)),
     h('tbody', null, rows.slice(0, max).map(r => { const cell = sig ? h('td') : null; if (cell) cell.append(sigActions(r, cell)); return h('tr', null, cols.map(c => h('td', { class: MONO_COL.test(c) ? 'mono' : null, text: cellText(r[c]) })), cell); }))));
-  return rows.length > max ? h('div', null, t, h('p', { class: 'muted', text: `… ${rows.length - max} weitere Einträge im JSON-Bericht.` })) : t;
+  return rows.length > max ? h('div', null, tb, h('p', { class: 'muted', text: t('tab.weitere', rows.length - max) })) : tb;
 }
 /** Aktionen je Zeile der Sigcheck-Tabelle (Vertrag 16.5). */
 function sigActions(r, cell) {
   const ro = readOnly(), tt = ro ? lockTitle() : null, pfad = String(r.Pfad || ''), sha = String(r.Sha256 || '');
   const okHash = /^[0-9a-fA-F]{64}$/.test(sha), acc = String(r.Akzeptiert || ''), lokal = accLocal.has(pfad.toLowerCase());
-  if (!okHash) return h('div', { class: 'row-acts' }, acc ? [h('span', { class: 'chip OK', title: acc, text: 'akzeptiert' }), ' '] : null, h('span', { class: 'muted', text: 'Für diese Zeile neu scannen (der Bericht enthält keinen Hash).' }));
+  if (!okHash) return h('div', { class: 'row-acts' }, acc ? [h('span', { class: 'chip OK', title: acc, text: t('sig.akzeptiert') }), ' '] : null, h('span', { class: 'muted', text: t('sig.neuScannen') }));
   return h('div', { class: 'row-acts' },
-    h('button', { type: 'button', class: 'sm', disabled: ro, title: tt, text: 'Mit Defender prüfen', onclick: () => startDefenderDatei(pfad) }), ' ',
-    acc ? h('span', { class: 'chip OK', title: acc, text: 'akzeptiert' })
-      : lokal ? h('span', { class: 'chip OK', text: 'akzeptiert (ab nächstem Scan)' })
-      : h('button', { type: 'button', class: 'sm', disabled: ro, title: tt, text: 'Akzeptieren …', onclick: () => openAkzeptieren({ art: 'datei', pfad, sha256: sha, onDone: () => { accLocal.add(pfad.toLowerCase()); if (cell && cell.isConnected) cell.replaceChildren(sigActions(r, cell)); } }) }), ' ',
-    okHash ? h('a', { href: 'https://www.virustotal.com/gui/file/' + sha.toLowerCase(), target: '_blank', rel: 'noopener noreferrer', title: 'Öffnet deinen Browser; dabei geht nur der Hash an VirusTotal.', text: 'VirusTotal ↗' }) : null, ' ',
-    okHash ? h('button', { type: 'button', class: 'sm ghost', text: 'Hash kopieren', onclick: e => copyText(sha, e.currentTarget) }) : null);
+    h('button', { type: 'button', class: 'sm', disabled: ro, title: tt, text: t('sig.mitDefender'), onclick: () => startDefenderDatei(pfad) }), ' ',
+    acc ? h('span', { class: 'chip OK', title: acc, text: t('sig.akzeptiert') })
+      : lokal ? h('span', { class: 'chip OK', text: t('sig.akzeptiertSpaeter') })
+      : h('button', { type: 'button', class: 'sm', disabled: ro, title: tt, text: t('befund.akzText'), onclick: () => openAkzeptieren({ art: 'datei', pfad, sha256: sha, onDone: () => { accLocal.add(pfad.toLowerCase()); if (cell && cell.isConnected) cell.replaceChildren(sigActions(r, cell)); } }) }), ' ',
+    okHash ? h('a', { href: 'https://www.virustotal.com/gui/file/' + sha.toLowerCase(), target: '_blank', rel: 'noopener noreferrer', title: t('sig.vtTitel'), text: t('sig.vt') }) : null, ' ',
+    okHash ? h('button', { type: 'button', class: 'sm ghost', text: t('sig.hashKopieren'), onclick: e => copyText(sha, e.currentTarget) }) : null);
 }
 function noReport() {
-  return h('div', { class: 'card' }, h('h2', { text: 'Noch kein Bericht vorhanden' }), h('p', null, 'Starte unter ', h('a', { href: '#/scan', text: 'Neuer Scan' }), ' die erste Prüfung.'));
+  return h('div', { class: 'card' }, h('h2', { text: t('leer.keinBericht') }), h('p', null, tn('leer.starte', h('a', { href: '#/scan', text: t('menu.scan') }))));
 }
 
 // ---------------------------------------------------------------- Navigation und Kopfleiste
@@ -702,7 +719,7 @@ function badgeFor(id) {
   const list = S.findings.filter(f => viewOf(f) === id);
   const c = counts(list), n = c.CRIT + c.WARN + c.TIPP;
   if (!n) return null;
-  return h('span', { class: 'cnt ' + (c.CRIT ? 'c' : c.WARN ? 'w' : 't'), title: `${c.CRIT} kritisch, ${c.WARN} Warnungen, ${c.TIPP} Tipps`, text: String(n) });
+  return h('span', { class: 'cnt ' + (c.CRIT ? 'c' : c.WARN ? 'w' : 't'), title: t('badge.titel', c.CRIT, c.WARN, c.TIPP), text: String(n) });
 }
 // ---- Aufklappbares Menü (2.5, #65): Bereiche klappen Kategorien, Filter bzw. Werkzeuge auf; Zustand je Benutzer in localStorage
 function navLaden() {
@@ -729,8 +746,8 @@ function navKinder(n) {
   if (n.kinder === 'kategorien') {
     if (!S.report) return [{ key: n.id + '/leer', label: MENU_TEXTE.unter.keinBericht, view: n.id, leer: true }];
     const kats = [];
-    S.findings.forEach(f => { if (viewOf(f) === n.id && !kats.includes(f.Category)) kats.push(f.Category); });
-    const out = kats.map(k => ({ key: n.id + '/kat/' + k, label: k, view: n.id, ziel: { kat: k } }));
+    S.findings.forEach(f => { if (viewOf(f) === n.id && !kats.some(k => k.id === f.Category)) kats.push({ id: f.Category, name: catName(f) }); });
+    const out = kats.map(k => ({ key: n.id + '/kat/' + k.id, label: k.name, view: n.id, ziel: { kat: k.id } }));
     if (n.id === 'gaming' && GAMING_CHECKS.some(c => findingByCheck(c))) out.unshift({ key: 'gaming/check', label: MENU_TEXTE.unter.gamingCheck, view: 'gaming', ziel: { sel: '#gaming-check' } });
     return out;
   }
@@ -782,7 +799,7 @@ let navHalten = null;
 function navHaltenStopp() {
   if (!navHalten) return;
   clearInterval(navHalten.timer);
-  ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(t => window.removeEventListener(t, navHaltenStopp, true));
+  ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(ev => window.removeEventListener(ev, navHaltenStopp, true));
   navHalten = null;
 }
 /** Springt zum gemerkten Ziel. Werkzeuge laden nach: Das Ziel kann erst später entstehen (bis 30 Versuche à 150 ms) und durch
@@ -811,12 +828,12 @@ function navZielZeigen(versuch = 0) {
     const amEnde = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
     if (Math.abs(ist - soll) > 6 && !(amEnde && ist > soll)) navScrollZu(ziel);
   }, 120) };
-  ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(t => window.addEventListener(t, navHaltenStopp, true));
+  ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(ev => window.addEventListener(ev, navHaltenStopp, true));
 }
 let navUid = 0;
 function navEintrag(e) {
   const hat = !!(e.kinder && e.kinder.length), auf = hat && navIstAuf(e.key), subId = 'nv-sub-' + (++navUid);
-  const link = h('a', { href: e.href, class: 'nv-link' + (e.aktiv ? ' on' : '') + (e.leer ? ' leer' : ''), 'aria-current': e.aktiv ? (e.ebene ? 'location' : 'page') : null, onclick: e.onclick },
+  const link = h('a', { href: e.href, class: 'nv-link' + (e.aktiv ? ' on' : '') + (e.leer ? ' leer' : ''), 'aria-current': e.aktiv ? (e.ebene ? 'location' : 'page') : null, 'aria-label': e.aria || null, role: e.role || null, onclick: e.onclick },
     e.ic ? icon(e.ic) : null, h('span', { class: 'nv-label', text: e.label }), e.badge);
   const tog = hat ? h('button', { type: 'button', class: 'nv-tog', 'aria-expanded': auf ? 'true' : 'false', 'aria-controls': subId, 'data-label': e.label,
     'aria-label': (auf ? MENU_TEXTE.aria.zu : MENU_TEXTE.aria.auf).replace('{0}', () => e.label), onclick: () => navUmschalten(e.key) }, icon('chev')) : null;
@@ -829,6 +846,12 @@ function navUnter(k, ebene) {
   return { key: k.key, label: k.label, href: '#/' + k.view, aktiv, ebene, leer: k.leer, kinder: k.kinder ? k.kinder.map(x => navUnter(x, ebene + 1)) : null,
     onclick: ev => { ev.preventDefault(); navGehe(k); } };
 }
+/** Menüeintrag zum Umschalten der Sprache: bietet die jeweils andere Sprache an (Autonym) */
+function spracheEintrag() {
+  const ziel = LANG === 'de' ? t('menu.sprache.english') : t('menu.sprache.deutsch');
+  return navEintrag({ key: 'sprache', label: ziel, href: '#', ic: 'globe', aktiv: false, ebene: 0, kinder: null, aria: t('menu.sprache.aria', ziel), role: 'button',
+    onclick: ev => { ev.preventDefault(); switchLang(); } });
+}
 function renderNav() {
   const sess = S.session || {};
   const fokus = document.activeElement && document.activeElement.closest && document.activeElement.closest('#nav .nv-item');
@@ -836,6 +859,7 @@ function renderNav() {
   navUid = 0;
   $('#nav').replaceChildren(h('div', { class: 'navgroup' }, NAV.map(n => {
     if (n.group) return h('div', { class: 'navh', text: n.group });
+    if (n.sprache) return spracheEintrag();
     let b = null;
     if (n.badge) b = badgeFor(n.id);
     else if (n.id === 'berichte') b = S.reports.length ? h('span', { class: 'cnt n', text: String(S.reports.length) }) : null;
@@ -850,13 +874,12 @@ function renderNav() {
     const ziel = it && it.querySelector(fokusTog ? ':scope > .nv-row > .nv-tog' : ':scope > .nv-row > a');
     if (ziel) ziel.focus({ preventScroll: true });
   }
-  $('#side-foot').replaceChildren(h('span', { class: 'dot' }), `${sess.pc || ''}${sess.version ? ' · v' + sess.version : ''}${sess.admin ? ' · Admin' : ''}`);
+  $('#side-foot').replaceChildren(h('span', { class: 'dot' }), `${sess.pc || ''}${sess.version ? ' · v' + sess.version : ''}${sess.admin ? t('foot.admin') : ''}`);
   updateChrome();
 }
 /** Tastatur: Pfeil hoch/runter wandert durch die sichtbaren Einträge, rechts klappt auf bzw. geht zum ersten Unterpunkt, links klappt zu bzw. geht zum Oberpunkt */
 function initNav() {
   const nav = $('#nav');
-  nav.setAttribute('aria-label', MENU_TEXTE.aria.nav);
   nav.addEventListener('keydown', ev => {
     if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
     const item = ev.target.closest && ev.target.closest('.nv-item'); if (!item) return;
@@ -887,7 +910,7 @@ function initNav() {
 }
 function updateChrome() {
   const m = S.report && S.report.Meta;
-  $('#crumb').replaceChildren(...(m ? ['Bericht vom ', h('b', { text: fmtDate(m.Erstellt) }), ` · Profil ${m.Profil || '–'}`] : ['Noch kein Bericht vorhanden']));
+  $('#crumb').replaceChildren(...(m ? [t('kopf.berichtVom'), h('b', { text: fmtDate(m.Erstellt) }), t('kopf.profil', m.Profil || '–')] : [t('kopf.keinBerichtVorhanden')]));
   $('#ki-btn').disabled = !S.report;
   syncSearch();
   renderStatusReport();
@@ -908,18 +931,18 @@ function initTopbar() {
   gs.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (gs.value) { gs.value = ''; gs.dispatchEvent(new Event('input')); } gs.blur(); } });
   document.addEventListener('keydown', e => {
     if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || $('#modal').classList.contains('on')) return;
-    const t = e.target, tag = t && t.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+    const tg = e.target, tag = tg && tg.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (tg && tg.isContentEditable)) return;
     e.preventDefault(); gs.focus(); gs.select();
   });
   $('#ki-btn').addEventListener('click', e => { if (S.report) copyText(buildKi(), $('#ki-btn span')); });
 }
 
 // ---------------------------------------------------------------- Ansicht: Kategorien
-const FILTERS = [['all', 'Alle'], ['problem', 'Probleme'], ['CRIT', 'Kritisch'], ['WARN', 'Warnungen'], ['TIPP', 'Tipps'], ['INFO', 'Hinweise'], ['ACK', 'Akzeptiert'], ['OK', 'OK'], ['SKIP', 'Nicht geprüft']];
+const filters = () => [['all', t('filter.alle')], ['problem', t('filter.probleme')], ['CRIT', t('filter.crit')], ['WARN', t('filter.warn')], ['TIPP', t('filter.tipp')], ['INFO', t('filter.info')], ['ACK', t('filter.ack')], ['OK', t('filter.ok')], ['SKIP', t('filter.skip')]];
 function passes(f, st) {
   let ok = st.mode === 'all' || (st.mode === 'problem' ? isProblem(f) : f.Status === st.mode);
-  if (ok && st.term) ok = `${f.Check} ${f.Value} ${f.Recommendation} ${f.Category}`.toLowerCase().includes(st.term);
+  if (ok && st.term) ok = `${f.Check} ${f.CheckName || ''} ${f.Value} ${f.Recommendation} ${f.Category} ${f.CategoryName || ''}`.toLowerCase().includes(st.term);
   return ok;
 }
 function miniChips(list) {
@@ -929,25 +952,25 @@ function miniChips(list) {
 function catView(id, title, sub, pred, extra) {
   const fs = S.findings.filter(pred), st = uiF(id);
   const box = h('div');
-  const filtBtns = FILTERS.map(([m, l]) => h('button', { type: 'button', 'data-filter': m, class: st.mode === m ? 'active' : '', text: l, onclick: () => { st.mode = m; build(); } }));
-  const multi = h('button', { type: 'button', class: 'primary', text: 'Ausgewählte ausführen (0)', disabled: true, onclick: () => openRunDialog(S.actions.filter(a => S.sel.has(a.id))) });
+  const filtBtns = filters().map(([m, l]) => h('button', { type: 'button', 'data-filter': m, class: st.mode === m ? 'active' : '', text: l, onclick: () => { st.mode = m; build(); } }));
+  const multi = h('button', { type: 'button', class: 'primary', text: t('multi.knopf', 0), disabled: true, onclick: () => openRunDialog(S.actions.filter(a => S.sel.has(a.id))) });
   const hasActions = S.actions.length > 0;
-  const bar = h('div', { class: 'toolbar sticky' }, h('div', { class: 'filters', role: 'group', 'aria-label': 'Filter nach Status' }, filtBtns), hasActions ? h('div', { class: 'tools' }, multi) : null);
+  const bar = h('div', { class: 'toolbar sticky' }, h('div', { class: 'filters', role: 'group', 'aria-label': t('cv.filterAria') }, filtBtns), hasActions ? h('div', { class: 'tools' }, multi) : null);
   if (hasActions) { S.multiBtns = [multi]; }
   const mine = S.actions.filter(a => actionView(a) === id && !findingByCheck(norm(a.pruefung)));
   function build() {
     filtBtns.forEach(b => b.classList.toggle('active', b.dataset.filter === st.mode));
     const groups = [];
-    fs.forEach(f => { let g = groups.find(x => x.cat === f.Category); if (!g) groups.push(g = { cat: f.Category, all: [], vis: [] }); g.all.push(f); if (passes(f, st)) g.vis.push(f); });
+    fs.forEach(f => { let g = groups.find(x => x.cat === f.Category); if (!g) groups.push(g = { cat: f.Category, name: catName(f), all: [], vis: [] }); g.all.push(f); if (passes(f, st)) g.vis.push(f); });
     const nodes = [];
     groups.forEach(g => {
       if (!g.vis.length) return;
-      nodes.push(h('div', { class: 'section-title', 'data-kat': g.cat }, h('h3', null, g.cat, infoTip('', g.cat)), miniChips(g.all), h('span', { class: 'bar' })));
+      nodes.push(h('div', { class: 'section-title', 'data-kat': g.cat }, h('h3', null, g.name, infoTip('', g.cat)), miniChips(g.all), h('span', { class: 'bar' })));
       g.vis.forEach(f => nodes.push(findingRow(f)));
     });
-    if (!nodes.length && fs.length) nodes.push(h('div', { class: 'card muted', text: 'Keine Prüfung passt zu Filter und Suche.' }));
-    if (!fs.length && !mine.length) nodes.push(h('div', { class: 'card muted', text: 'Keine Prüfungen in diesem Bereich.' }));
-    if (mine.length && st.mode === 'all' && !st.term) nodes.push(h('div', { class: 'more' }, h('div', { class: 'section-title' }, h('h3', { text: 'Weitere Anpassungen' }), h('span', { class: 'bar' })), h('div', { class: 'card' }, mine.map(actionCard))));
+    if (!nodes.length && fs.length) nodes.push(h('div', { class: 'card muted', text: t('cv.keinePassend') }));
+    if (!fs.length && !mine.length) nodes.push(h('div', { class: 'card muted', text: t('cv.keine') }));
+    if (mine.length && st.mode === 'all' && !st.term) nodes.push(h('div', { class: 'more' }, h('div', { class: 'section-title' }, h('h3', { text: t('cv.weitere') }), h('span', { class: 'bar' })), h('div', { class: 'card' }, mine.map(actionCard))));
     box.replaceChildren(...nodes);
     updateMulti();
     if (S.ui.reveal) doReveal();
@@ -959,26 +982,26 @@ function catView(id, title, sub, pred, extra) {
 function gamingGrid() {
   const rows = GAMING_CHECKS.map(c => findingByCheck(c)).filter(Boolean);
   if (!rows.length) return null;
-  return h('div', { id: 'gaming-check' }, h('div', { class: 'section-title' }, h('h3', { text: 'Gaming-Check' }), h('span', { class: 'bar' })), h('div', { class: 'card' }, h('div', { class: 'gaming' }, rows.map(f =>
+  return h('div', { id: 'gaming-check' }, h('div', { class: 'section-title' }, h('h3', { text: t('menu.unter.gamingCheck') }), h('span', { class: 'bar' })), h('div', { class: 'card' }, h('div', { class: 'gaming' }, rows.map(f =>
     h('div', { class: 'g-item', style: `--c:${STATUS_COLOR[f.Status]}` },
       h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] }),
-      h('a', { href: '#/gaming', text: f.Check, onclick: e => { e.preventDefault(); reveal(f.Check); } }),
+      h('a', { href: '#/gaming', text: chkName(f), onclick: e => { e.preventDefault(); reveal(f.Check); } }),
       h('div', { class: 'v', text: f.Value }))))));
 }
 const V = {};
-V.sicherheit = () => catView('sicherheit', 'Sicherheit', 'Kategorien 1–10 des Berichts · Anpassungen mit Button lassen sich direkt und abgesichert umsetzen.', f => viewOf(f) === 'sicherheit');
-V.leistung = () => catView('leistung', 'Leistung', 'Hardware · Laufwerke & Speicherplatz · Energie · Auslastung', f => viewOf(f) === 'leistung');
-V.gaming = () => catView('gaming', 'Gaming', 'Gaming & Grafik und die spielerelevanten Prüfungen', f => viewOf(f) === 'gaming', gamingGrid);
-V.stabilitaet = () => catView('stabilitaet', 'Stabilität', 'Abstürze, Bluescreens, Treiberfehler und Startdauer', f => viewOf(f) === 'stabilitaet');
-V.alle = () => catView('alle', 'Alle Prüfungen', 'Alle Bereiche, gefiltert nach Status oder Suchbegriff', () => true);
+V.sicherheit = () => catView('sicherheit', t('menu.sicherheit'), t('v.sicherheit.sub'), f => viewOf(f) === 'sicherheit');
+V.leistung = () => catView('leistung', t('menu.leistung'), t('v.leistung.sub'), f => viewOf(f) === 'leistung');
+V.gaming = () => catView('gaming', t('menu.gaming'), t('v.gaming.sub'), f => viewOf(f) === 'gaming', gamingGrid);
+V.stabilitaet = () => catView('stabilitaet', t('menu.stabilitaet'), t('v.stabilitaet.sub'), f => viewOf(f) === 'stabilitaet');
+V.alle = () => catView('alle', t('menu.alle'), t('v.alle.sub'), () => true);
 
 // ---------------------------------------------------------------- Ansicht: Übersicht
 /** Zustandswert: 100 − 20·Kritisch − 5·Warnung − 1·Tipp (mindestens 0). */
 const scoreOf = c => Math.max(0, 100 - 20 * (c.CRIT || 0) - 5 * (c.WARN || 0) - (c.TIPP || 0));
 function scoreInfo(v) {
-  if (v >= 85) return { title: 'Gut in Form', c1: '#2aa198', c2: '#859900' };
-  if (v >= 60) return { title: 'Einige Punkte prüfen', c1: '#b58900', c2: '#e0b23a' };
-  return { title: 'Handlungsbedarf', c1: '#cb4b16', c2: '#dc322f' };
+  if (v >= 85) return { title: t('score.gut'), c1: '#2aa198', c2: '#859900' };
+  if (v >= 60) return { title: t('score.einige'), c1: '#b58900', c2: '#e0b23a' };
+  return { title: t('score.handlung'), c1: '#cb4b16', c2: '#dc322f' };
 }
 function chartNode(title, pts, prop, unit, better, color) {
   pts = pts.filter(p => p[prop] != null);
@@ -989,6 +1012,7 @@ function chartNode(title, pts, prop, unit, better, color) {
   const xy = pts.map((p, i) => ({ x: +(px + (w - 2 * px) * i / (pts.length - 1)).toFixed(1), y: +(py + (hh - 2 * py) * (1 - (p[prop] - min) / (max - min))).toFixed(1), v: p[prop], d: fmtShort(p.datum) }));
   const first = vals[0], last = vals[vals.length - 1];
   const trend = last === first ? 'gleich' : ((last < first) === (better === 'low') ? 'besser' : 'schlechter');
+  const trendText = trend === 'gleich' ? t('chart.gleich') : (trend === 'besser' ? t('chart.besser') : t('chart.schlechter'));
   const s = svg('svg', { viewBox: `0 0 ${w} ${hh}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': title });
   const line = xy.map(p => `${p.x},${p.y}`).join(' ');
   const gid = 'ga' + Math.random().toString(36).slice(2, 8);
@@ -997,9 +1021,9 @@ function chartNode(title, pts, prop, unit, better, color) {
   defs.append(lg); s.append(defs);
   s.append(svg('path', { class: 'area', d: `M${xy[0].x},${hh} L${line.replace(/ /g, ' L')} L${xy[xy.length - 1].x},${hh}Z`, fill: `url(#${gid})` }));
   s.append(svg('polyline', { points: line }));
-  xy.forEach(p => { const c = svg('circle', { cx: p.x, cy: p.y, r: 3 }); const t = svg('title'); t.textContent = `${p.d}: ${p.v} ${unit}`; c.append(t); s.append(c); });
+  xy.forEach(p => { const c = svg('circle', { cx: p.x, cy: p.y, r: 3 }); const ti = svg('title'); ti.textContent = `${p.d}: ${p.v} ${unit}`; c.append(ti); s.append(c); });
   return h('div', { class: 'chart', style: color ? `--c:${color}` : null },
-    h('div', { class: 'chart-head' }, h('span', { text: title }), h('span', { class: trend === 'gleich' ? 'muted' : (trend === 'besser' ? 'trend up' : 'trend down'), text: trend })),
+    h('div', { class: 'chart-head' }, h('span', { text: title }), h('span', { class: trend === 'gleich' ? 'muted' : (trend === 'besser' ? 'trend up' : 'trend down'), text: trendText })),
     h('div', { class: 'n', text: `${last}${unit ? ' ' + unit : ''}` }),
     s, h('div', { class: 'chart-foot' }, h('span', { text: xy[0].d }), h('span', { text: xy[xy.length - 1].d })));
 }
@@ -1007,7 +1031,7 @@ function historyPoint(r, created) {
   const F = r.Findings || [], D = r.Data || {};
   const boot = (D['Startdauer (letzte Messungen)'] || []).filter(Boolean).map(x => Number(x.HauptpfadSek)).filter(x => !isNaN(x));
   const rel = F.find(f => norm(f.Check) === 'Zuverlässigkeitsindex');
-  const mm = rel && /^([\d.,]+) von/.exec(rel.Value || '');
+  const mm = rel && /^([\d.,]+) (?:von|of)/.exec(rel.Value || '');
   const vol = (D['Laufwerke (Volumes)'] || []).find(v => v.Laufwerk === 'C:');
   return {
     datum: created,
@@ -1023,21 +1047,21 @@ async function fillCharts(box, token) {
   const quick = list.map(r => ({ datum: r.created, zustand: scoreOf(r.counts || {}), probleme: ((r.counts || {}).CRIT || 0) + ((r.counts || {}).WARN || 0), startSek: null, index: null, freiC: null }));
   const draw = pts => {
     if (token !== S.rv) return;
-    const nodes = [chartNode('Zustandswert', pts, 'zustand', 'von 100', 'high', '#2aa198'), chartNode('Probleme (Kritisch + Warnung)', pts, 'probleme', '', 'low', '#cb4b16'), chartNode('Startdauer bis Desktop', pts, 'startSek', 's', 'low', '#268bd2'),
-      chartNode('Zuverlässigkeitsindex', pts, 'index', 'von 10', 'high', '#6c71c4'), chartNode('Freier Platz auf C:', pts, 'freiC', '%', 'high', '#859900')].filter(Boolean);
-    box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'muted', text: 'Für einen Verlauf braucht es mindestens zwei Berichte.' })]));
+    const nodes = [chartNode(t('chart.zustand'), pts, 'zustand', t('chart.von100'), 'high', '#2aa198'), chartNode(t('chart.probleme'), pts, 'probleme', '', 'low', '#cb4b16'), chartNode(t('chart.start'), pts, 'startSek', 's', 'low', '#268bd2'),
+      chartNode(t('chart.index'), pts, 'index', t('chart.von10'), 'high', '#6c71c4'), chartNode(t('chart.freiC'), pts, 'freiC', '%', 'high', '#859900')].filter(Boolean);
+    box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'muted', text: t('chart.mindestens') })]));
   };
   draw(quick);
   if (list.length < 2) return;
   const full = await Promise.all(list.map(async (r, i) => { try { return historyPoint(await loadReportJson(r.name), r.created); } catch { return quick[i]; } }));
   draw(full);
 }
-function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+const jaNein = v => v ? t('allg.ja') : t('allg.nein');
 function heroText(c) {
-  const parts = [c.CRIT && plural(c.CRIT, 'kritischer Punkt', 'kritische Punkte'), c.WARN && plural(c.WARN, 'Warnung', 'Warnungen'), c.TIPP && plural(c.TIPP, 'lohnender Tipp', 'lohnende Tipps')].filter(Boolean);
-  if (!parts.length) return 'Keine offenen Punkte.';
+  const parts = [c.CRIT && (c.CRIT === 1 ? t('hero.krit1', c.CRIT) : t('hero.kritN', c.CRIT)), c.WARN && (c.WARN === 1 ? t('hero.warn1', c.WARN) : t('hero.warnN', c.WARN)), c.TIPP && (c.TIPP === 1 ? t('hero.tipp1', c.TIPP) : t('hero.tippN', c.TIPP))].filter(Boolean);
+  if (!parts.length) return t('hero.keine');
   const n = (c.CRIT || 0) + (c.WARN || 0) + (c.TIPP || 0);
-  return `${c.CRIT ? '' : 'Nichts Kritisches. '}${parts.length > 1 ? parts.slice(0, -1).join(', ') + ' und ' + parts[parts.length - 1] : parts[0]} ${n === 1 ? 'wartet' : 'warten'} auf dich.`;
+  return t('hero.satz', c.CRIT ? '' : t('hero.nichtsKritisches'), parts.length > 1 ? parts.slice(0, -1).join(', ') + t('hero.und') + parts[parts.length - 1] : parts[0], n === 1 ? t('hero.wartet') : t('hero.warten'));
 }
 function ringNode(score) {
   const C = 351.86, si = scoreInfo(score);
@@ -1048,7 +1072,7 @@ function ringNode(score) {
   const val = svg('circle', { class: 'val', cx: 66, cy: 66, r: 56, stroke: 'url(#gr)', 'stroke-width': 12, fill: 'none', 'stroke-linecap': 'round', 'stroke-dasharray': C, 'stroke-dashoffset': C });
   s.append(defs, svg('circle', { cx: 66, cy: 66, r: 56, stroke: '#ffffff12', 'stroke-width': 12, fill: 'none' }), val);
   requestAnimationFrame(() => requestAnimationFrame(() => val.setAttribute('stroke-dashoffset', String(+(C * (1 - score / 100)).toFixed(1)))));
-  return h('div', { class: 'ring', role: 'img', 'aria-label': `Zustandswert ${score} von 100` }, s, h('div', { class: 'v' }, h('div', null, h('b', { text: String(score) }), h('span', { text: 'von 100' }))));
+  return h('div', { class: 'ring', role: 'img', 'aria-label': t('ring.aria', score) }, s, h('div', { class: 'v' }, h('div', null, h('b', { text: String(score) }), h('span', { text: t('chart.von100') }))));
 }
 /** Zeile in „Nächste Schritte“ / „Lohnende Tipps“. */
 function stepRow(f, showLevels) {
@@ -1057,92 +1081,92 @@ function stepRow(f, showLevels) {
   const open = actionsFor(f).filter(a => a.zustand && a.zustand.aktiv === false && !(a.varianten && a.varianten.length));
   const go = e => { e.preventDefault(); reveal(f.Check); };
   let btn;
-  if (open.length === 1 && !locked()) btn = h('button', { type: 'button', class: 'sm primary', text: 'Ausführen', onclick: () => openRunDialog([open[0]]) });
-  else btn = h('button', { type: 'button', class: 'sm', text: (f.Steps && f.Steps.length) || f.Command ? 'So geht\'s' : 'Ansehen', onclick: go });
+  if (open.length === 1 && !locked()) btn = h('button', { type: 'button', class: 'sm primary', text: t('btn.ausfuehren'), onclick: () => openRunDialog([open[0]]) });
+  else btn = h('button', { type: 'button', class: 'sm', text: (f.Steps && f.Steps.length) || f.Command ? t('howto.summary') : t('step.ansehen'), onclick: go });
   return h('div', { class: 'row' }, h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] }),
-    h('div', null, h('div', { class: 't' }, h('a', { href: '#/' + viewOf(f), text: f.Check, onclick: go }), showLevels ? levelsNode(f.Benefit, f.Effort, f.Risk) : null),
+    h('div', null, h('div', { class: 't' }, h('a', { href: '#/' + viewOf(f), text: chkName(f), onclick: go }), showLevels ? levelsNode(f.Benefit, f.Effort, f.Risk) : null),
       h('div', { class: 'd', text: f.Recommendation || f.Value })), btn);
 }
 V.uebersicht = () => {
-  if (!S.report) return h('section', null, h('h1', { text: 'Übersicht' }), noReport());
+  if (!S.report) return h('section', null, h('h1', { text: t('menu.uebersicht') }), noReport());
   const m = S.report.Meta, c = counts(S.findings), score = scoreOf(c), si = scoreInfo(score);
-  const todo = S.findings.filter(isProblem).sort((a, b) => RANK[a.Status] - RANK[b.Status] || (a.Area === 'Sicherheit' ? 0 : 1) - (b.Area === 'Sicherheit' ? 0 : 1) || a.Category.localeCompare(b.Category, 'de'));
-  const tips = S.findings.filter(f => f.Status === 'TIPP').sort((a, b) => tipScore(b) - tipScore(a) || a.Area.localeCompare(b.Area, 'de') || a.Category.localeCompare(b.Category, 'de'));
-  const charts = h('div', { class: 'charts' }, h('p', { class: 'muted', text: 'Lädt …' }));
+  const todo = S.findings.filter(isProblem).sort((a, b) => RANK[a.Status] - RANK[b.Status] || (a.Area === 'Sicherheit' ? 0 : 1) - (b.Area === 'Sicherheit' ? 0 : 1) || cmpTxt(catName(a), catName(b)));
+  const tips = S.findings.filter(f => f.Status === 'TIPP').sort((a, b) => tipScore(b) - tipScore(a) || cmpTxt(areaName(a), areaName(b)) || cmpTxt(catName(a), catName(b)));
+  const charts = h('div', { class: 'charts' }, h('p', { class: 'muted', text: t('laedt') }));
   const hp = S.help && (S.help.Status || S.help.status);
   const ch = S.report.Changes;
   const token = S.rv;
   const toFilter = s => () => { S.ui.f.alle = { mode: s, term: '' }; if (location.hash === '#/alle') refreshView(); else location.hash = '#/alle'; };
-  const pill = (s, label, color) => h('button', { type: 'button', class: 'pill', style: `--c:${color}`, title: hp && hp[s] ? hp[s] : 'Nur diese anzeigen', onclick: toFilter(s) }, h('i'), `${c[s]} ${label}`);
-  const kpi = (s, label) => h('button', { type: 'button', class: 'kpi', style: `--c:${STATUS_COLOR[s]}`, title: hp && hp[s] ? hp[s] : 'Nur diese anzeigen', onclick: toFilter(s) }, h('b', { text: String(c[s]) }), h('span', null, h('i'), label));
+  const pill = (s, label, color) => h('button', { type: 'button', class: 'pill', style: `--c:${color}`, title: hp && hp[s] ? hp[s] : t('uebersicht.nurDiese'), onclick: toFilter(s) }, h('i'), `${c[s]} ${label}`);
+  const kpi = (s, label) => h('button', { type: 'button', class: 'kpi', style: `--c:${STATUS_COLOR[s]}`, title: hp && hp[s] ? hp[s] : t('uebersicht.nurDiese'), onclick: toFilter(s) }, h('b', { text: String(c[s]) }), h('span', null, h('i'), label));
   const root = h('section', null,
-    h('h1', { text: 'Übersicht' }),
-    h('p', { class: 'sub', text: `Was auf deinem PC gut läuft und was sich noch lohnt. · Bericht vom ${fmtDate(m.Erstellt)} · Adminrechte ${m.Admin ? 'ja' : 'nein'}${m.DauerSek != null ? ' · Dauer ' + m.DauerSek + ' s' : ''} · ${m.Computer || ''}` }),
+    h('h1', { text: t('menu.uebersicht') }),
+    h('p', { class: 'sub', text: t('uebersicht.sub', fmtDate(m.Erstellt), jaNein(m.Admin), m.DauerSek != null ? t('uebersicht.dauer', m.DauerSek) : '', m.Computer || '') }),
     reportBar(), safetyBanner(),
     h('div', { class: 'grid g-hero' },
       h('div', { class: 'card hero' }, ringNode(score),
         h('div', null, h('h3', { text: si.title }), h('p', { text: heroText(c) }),
-          h('div', { class: 'pills' }, pill('OK', 'OK', 'var(--green)'), pill('ACK', c.ACK === 1 ? 'akzeptiert' : 'akzeptiert', 'var(--cyan)'), pill('INFO', c.INFO === 1 ? 'Hinweis' : 'Hinweise', 'var(--blue)')),
-          h('div', { class: 'formula', text: 'Zustandswert = 100 − 20 · Kritisch − 5 · Warnung − 1 · Tipp' }))),
-      h('div', { class: 'card' }, h('h2', { text: 'Auf einen Blick' }),
-        h('div', { class: 'kpis' }, kpi('CRIT', 'Kritisch'), kpi('WARN', 'Warnungen'), kpi('TIPP', 'Tipps'), kpi('SKIP', 'Nicht geprüft')))),
+          h('div', { class: 'pills' }, pill('OK', t('status.ok'), 'var(--green)'), pill('ACK', t('uebersicht.akzeptiert'), 'var(--cyan)'), pill('INFO', c.INFO === 1 ? t('uebersicht.hinweis1') : t('uebersicht.hinweisN'), 'var(--blue)')),
+          h('div', { class: 'formula', text: t('uebersicht.formel') }))),
+      h('div', { class: 'card' }, h('h2', { text: t('uebersicht.aufEinenBlick') }),
+        h('div', { class: 'kpis' }, kpi('CRIT', t('menu.filter.crit')), kpi('WARN', t('menu.filter.warn')), kpi('TIPP', t('menu.filter.tipp')), kpi('SKIP', t('menu.filter.skip'))))),
     h('div', { class: 'grid g-2' },
-      h('div', { class: 'card' }, h('h2', null, 'Nächste Schritte', h('span', { class: 'hint', text: 'Kritisch und Warnungen' })),
-        todo.length ? [h('div', { class: 'list' }, todo.slice(0, 3).map(f => stepRow(f, false))), todo.length > 3 ? h('p', { class: 'note' }, `Insgesamt ${todo.length} Punkte mit Handlungsbedarf. `, h('a', { href: '#/alle', text: 'Alle anzeigen', onclick: () => { S.ui.f.alle = { mode: 'problem', term: '' }; } })) : null]
-          : h('p', { text: 'Kein Handlungsbedarf. 🎉' })),
-      h('div', { class: 'card' }, h('h2', null, 'Lohnende Tipps', h('span', { class: 'hint', text: 'sortiert nach Nutzen' })),
+      h('div', { class: 'card' }, h('h2', null, t('uebersicht.naechste'), h('span', { class: 'hint', text: t('uebersicht.naechsteHint') })),
+        todo.length ? [h('div', { class: 'list' }, todo.slice(0, 3).map(f => stepRow(f, false))), todo.length > 3 ? h('p', { class: 'note' }, t('uebersicht.insgesamtPunkte', todo.length) + ' ', h('a', { href: '#/alle', text: t('uebersicht.alleAnzeigen'), onclick: () => { S.ui.f.alle = { mode: 'problem', term: '' }; } })) : null]
+          : h('p', { text: t('uebersicht.keinHandlung') })),
+      h('div', { class: 'card' }, h('h2', null, t('uebersicht.tipps'), h('span', { class: 'hint', text: t('uebersicht.tippsHint') })),
         tips.length ? [h('div', { class: 'list' }, tips.slice(0, 5).map(f => stepRow(f, true))),
-          tips.length > 5 ? h('p', { class: 'note' }, `Insgesamt ${tips.length} Tipps. `, h('a', { href: '#/alle', text: 'Alle anzeigen', onclick: () => { S.ui.f.alle = { mode: 'TIPP', term: '' }; } })) : null]
-          : h('p', { class: 'muted', text: 'Keine Tipps.' }))),
-    h('div', { class: 'card' }, h('h2', null, 'Verlauf', h('span', { class: 'hint', text: 'letzte bis zu 12 Berichte · Punkte berühren für Datum und Wert' })), charts),
+          tips.length > 5 ? h('p', { class: 'note' }, t('uebersicht.insgesamtTipps', tips.length) + ' ', h('a', { href: '#/alle', text: t('uebersicht.alleAnzeigen'), onclick: () => { S.ui.f.alle = { mode: 'TIPP', term: '' }; } })) : null]
+          : h('p', { class: 'muted', text: t('uebersicht.keineTipps') }))),
+    h('div', { class: 'card' }, h('h2', null, t('uebersicht.verlauf'), h('span', { class: 'hint', text: t('uebersicht.verlaufHint') })), charts),
     ch ? changesCard(ch) : null,
-    hp ? h('details', { class: 'card' }, h('summary', { text: 'So liest du die Statuswerte' }), h('ul', null, STATUS.map(s => h('li', null, h('span', { class: 'chip ' + s, text: STATUS_NAME[s] }), ' ', hp[s] || '')))) : null);
+    hp ? h('details', { class: 'card' }, h('summary', { text: t('uebersicht.statusLesen') }), h('ul', null, STATUS.map(s => h('li', null, h('span', { class: 'chip ' + s, text: STATUS_NAME[s] }), ' ', hp[s] || '')))) : null);
   fillCharts(charts, token);
   return root;
 };
 function changesCard(ch) {
   const status = ch.Status || [], bestand = ch.Bestand || {};
   let prev = ch.Erstellt ? fmtDate(ch.Erstellt) : '';
-  return h('details', { class: 'card' }, h('summary', { text: 'Änderungen seit dem letzten Lauf' }),
-    h('p', { class: 'muted', text: `Verglichen mit dem Bericht vom ${prev}.${ch.AdminVorher === false ? ' Achtung: Der vorige Lauf hatte keine Adminrechte, ein Teil der Unterschiede kann daher stammen.' : ''}` }),
-    status.length ? [h('h3', { text: 'Geänderte Prüfergebnisse' }), tableFrom(status)] : null,
-    Object.keys(bestand).map(t => h('div', null, h('h3', { text: t }), h('ul', { class: 'chg' },
-      (bestand[t].Neu || []).map(x => h('li', { class: 'add', text: '➕ ' + x })), (bestand[t].Entfernt || []).map(x => h('li', { class: 'rem', text: '➖ ' + x }))))),
-    !status.length && !Object.keys(bestand).length ? h('p', { text: 'Keine Änderungen.' }) : null);
+  return h('details', { class: 'card' }, h('summary', { text: t('chg.summary') }),
+    h('p', { class: 'muted', text: t('chg.verglichen', prev, ch.AdminVorher === false ? t('chg.adminHinweis') : '') }),
+    status.length ? [h('h3', { text: t('chg.geaenderte') }), tableFrom(status)] : null,
+    Object.keys(bestand).map(tab => h('div', null, h('h3', { text: tblName(tab) }), h('ul', { class: 'chg' },
+      (bestand[tab].Neu || []).map(x => h('li', { class: 'add', text: '➕ ' + x })), (bestand[tab].Entfernt || []).map(x => h('li', { class: 'rem', text: '➖ ' + x }))))),
+    !status.length && !Object.keys(bestand).length ? h('p', { text: t('chg.keine') }) : null);
 }
 
 // ---------------------------------------------------------------- KI-Kopie (Anonymisierung wie Protect-Text in pc-check.ps1)
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function protect(text, ctx) {
   if (!text) return '';
-  let t = String(text);
-  if (ctx.pc) t = t.replace(new RegExp(reEsc(ctx.pc), 'gi'), '<PC>');
-  if (ctx.user && ctx.user.length >= 3) t = t.replace(new RegExp(reEsc(ctx.user), 'gi'), '<Benutzer>');
-  t = t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<E-Mail>')
+  let s = String(text);
+  if (ctx.pc) s = s.replace(new RegExp(reEsc(ctx.pc), 'gi'), '<PC>');
+  if (ctx.user && ctx.user.length >= 3) s = s.replace(new RegExp(reEsc(ctx.user), 'gi'), '<Benutzer>');
+  s = s.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<E-Mail>')
     .replace(/S-1-5-21-[\d-]+/gi, '<SID>')
     .replace(/\b([0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b/gi, '<MAC>')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<IP>')
     .replace(/\bfe80:[0-9a-f:%]*|\b[0-9a-f]{4}:[0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f:]+/gi, '<IPv6>')
     .replace(/(\\Users\\)[^\\\s"']+/gi, '$1<Benutzer>'); // zusätzlich zur PS-Fassung: Profilordner
-  return t;
+  return s;
 }
 function buildKi() {
   const m = S.report.Meta, sys = ((S.report.Data || {}).System || [])[0] || {};
   const ctx = { pc: m.Computer || (S.session && S.session.pc) || '', user: (S.session && (S.session.benutzer || S.session.user)) || ((S.journal || [])[0] || {}).benutzer || '' };
   const c = counts(S.findings), L = [];
-  L.push('Ich habe meinen Windows-PC mit dem Prüfscript Morpheus (pc-check) untersucht. Bitte erkläre mir die folgenden Befunde verständlich,');
-  L.push('bewerte, wie dringend sie sind, und sag mir Schritt für Schritt, was ich tun sollte. Frag nach, wenn dir Angaben fehlen.', '');
-  L.push(`System: ${sys.Edition || 'Windows'}, Version ${sys.Version || ''}; Morpheus ${m.Version || ''}; Adminrechte: ${m.Admin ? 'ja' : 'nein'}`);
-  L.push(`Nutzung: ${m.Profil || ''}`);
-  L.push(`Übersicht: ${c.CRIT} kritisch, ${c.WARN} Warnungen, ${c.TIPP} Tipps, ${c.ACK} akzeptiert, ${c.INFO} Hinweise, ${c.OK} OK`);
+  L.push(t('ki.zeile1'));
+  L.push(t('ki.zeile2'), '');
+  L.push(t('ki.system', sys.Edition || 'Windows', sys.Version || '', m.Version || '', jaNein(m.Admin)));
+  L.push(t('ki.nutzung', m.Profil || ''));
+  L.push(t('ki.uebersicht', c.CRIT, c.WARN, c.TIPP, c.ACK, c.INFO, c.OK));
   ['CRIT', 'WARN', 'TIPP', 'ACK', 'INFO'].forEach(s => {
     const list = S.findings.filter(f => f.Status === s);
     if (!list.length) return;
     L.push('', `== ${STATUS_NAME[s]} ==`);
     list.forEach(f => {
-      L.push(`- [${f.Area} / ${f.Category}] ${f.Check}: ${protect(f.Value, ctx)}`);
-      if (f.Recommendation) L.push(`  Empfehlung des Scripts: ${protect(f.Recommendation, ctx)}`);
-      if (s === 'ACK') L.push(`  Von mir bewusst akzeptiert: ${protect(f.Note, ctx)}`);
+      L.push(`- [${areaName(f)} / ${catName(f)}] ${chkName(f)}: ${protect(f.Value, ctx)}`);
+      if (f.Recommendation) L.push(t('ki.empfehlung', protect(f.Recommendation, ctx)));
+      if (s === 'ACK') L.push(t('ki.akzeptiert', protect(f.Note, ctx)));
     });
   });
   return L.join('\n');
@@ -1150,7 +1174,7 @@ function buildKi() {
 
 // ---------------------------------------------------------------- Ansicht: Checkliste
 V.checkliste = () => {
-  if (!S.report) return h('section', null, h('h1', { text: 'Meine Checkliste' }), noReport());
+  if (!S.report) return h('section', null, h('h1', { text: t('check.titel') }), noReport());
   const created = S.report.Meta.Erstellt;
   const groups = { open: [], fixed: [], pending: [], later: [] };
   Object.keys(S.checklist).forEach(c => {
@@ -1158,83 +1182,83 @@ V.checkliste = () => {
     const g = m.state === 'later' ? (still ? 'later' : 'fixed') : (!still ? 'fixed' : (m.report === created ? 'pending' : 'open'));
     groups[g].push({ c, f, d: m.date });
   });
-  const titles = { open: 'Als erledigt markiert, aber weiterhin gemeldet', fixed: 'Behoben (bestätigt durch diesen Bericht)', pending: 'Als erledigt markiert (der nächste Lauf bestätigt es)', later: 'Für später vorgemerkt' };
+  const titles = { open: t('check.gOpen'), fixed: t('check.gFixed'), pending: t('check.gPending'), later: t('check.gLater') };
   const body = ['open', 'fixed', 'pending', 'later'].filter(g => groups[g].length).map(g => h('div', null,
     h('h3', { class: g === 'open' ? 'rem' : (g === 'fixed' ? 'add' : ''), text: titles[g] }),
     h('ul', { class: 'checklist' }, groups[g].map(x => h('li', null,
-      x.f ? h('a', { href: '#/' + viewOf(x.f), text: x.c, onclick: e => { e.preventDefault(); reveal(x.c); } }) : x.c,
-      h('span', { class: 'muted', text: ` – markiert am ${x.d}` }))))));
+      x.f ? h('a', { href: '#/' + viewOf(x.f), text: chkName(x.f), onclick: e => { e.preventDefault(); reveal(x.c); } }) : x.c,
+      h('span', { class: 'muted', text: t('check.markiertAm', x.d) }))))));
   const any = body.length;
-  return h('section', null, h('h1', { text: 'Meine Checkliste' }), h('p', { class: 'sub', text: 'Bei Warnungen und Tipps kannst du „✔ erledigt“ oder „⏱ später“ anklicken. Der nächste Bericht zeigt, was wirklich behoben ist.' }), reportBar(),
-    h('div', { class: 'card' }, any ? body : h('p', { class: 'muted', text: 'Noch nichts markiert.' })),
-    any ? h('button', { type: 'button', class: 'danger', text: 'Markierungen löschen', onclick: () => dlgOpen('Markierungen löschen', h('p', { text: 'Alle Markierungen für diesen PC löschen?' }), [{ label: 'Abbrechen', onClick: dlgClose },
-      { label: 'Löschen', danger: true, onClick: () => { S.checklist = {}; api('/api/checklist', { method: 'POST', body: {} }).catch(e => toast(e.message)); dlgClose(); refreshView(); } }]) }) : null);
+  return h('section', null, h('h1', { text: t('check.titel') }), h('p', { class: 'sub', text: t('check.sub') }), reportBar(),
+    h('div', { class: 'card' }, any ? body : h('p', { class: 'muted', text: t('check.nichts') })),
+    any ? h('button', { type: 'button', class: 'danger', text: t('check.loeschen'), onclick: () => dlgOpen(t('check.loeschen'), h('p', { text: t('check.loeschenFrage') }), [{ label: t('btn.abbrechen'), onClick: dlgClose },
+      { label: t('btn.loeschen'), danger: true, onClick: () => { S.checklist = {}; api('/api/checklist', { method: 'POST', body: {} }).catch(e => toast(e.message)); dlgClose(); refreshView(); } }]) }) : null);
 };
 
 // ---------------------------------------------------------------- Ansicht: Änderungen
-const JSTAT = { begonnen: 'begonnen', erledigt: 'erledigt', fehlgeschlagen: 'fehlgeschlagen', 'fehlgeschlagen-zurueckgesetzt': 'fehlgeschlagen, zurückgesetzt', zurueckgenommen: 'zurückgenommen' };
+const jstat = s => ({ begonnen: t('jr.s.begonnen'), erledigt: t('jr.s.erledigt'), fehlgeschlagen: t('jr.s.fehlgeschlagen'), 'fehlgeschlagen-zurueckgesetzt': t('jr.s.zurueckgesetzt'), zurueckgenommen: t('jr.s.zurueckgenommen') })[s];
 /** Protokoll-Eintrag einer Wartung bzw. eines Programm-Updates (Abschnitt 18.8): kein Rückgängig, kein „vorher → nachher“. */
 function journalWartung(e) {
   const st = e.status, failed = String(st).startsWith('fehl');
   const color = failed ? 'var(--red)' : (st === 'erledigt' ? 'var(--cyan)' : (st === 'begonnen' ? 'var(--yellow)' : 'var(--b01)'));
-  const chip = st === 'erledigt' ? h('span', { class: 'chip OK', text: 'erledigt' })
-    : failed ? h('span', { class: 'chip CRIT', text: 'fehlgeschlagen' })
-      : st === 'abgebrochen' ? h('span', { class: 'chip INFO', text: 'abgebrochen' })
-        : st === 'begonnen' ? h('span', { class: 'chip WARN', text: 'begonnen (unterbrochen?)' })
+  const chip = st === 'erledigt' ? h('span', { class: 'chip OK', text: t('jr.s.erledigt') })
+    : failed ? h('span', { class: 'chip CRIT', text: t('jr.s.fehlgeschlagen') })
+      : st === 'abgebrochen' ? h('span', { class: 'chip INFO', text: t('jr.abgebrochen') })
+        : st === 'begonnen' ? h('span', { class: 'chip WARN', text: t('jr.begonnenUnterbr') })
           : h('span', { class: 'chip INFO', text: String(st || '') });
   const meta = [];
-  if (e.dauerSek != null) meta.push('Dauer ' + fmtDur(e.dauerSek));
-  if (e.exitCode != null) meta.push('Exit-Code ' + e.exitCode);
+  if (e.dauerSek != null) meta.push(t('jr.dauer', fmtDur(e.dauerSek)));
+  if (e.exitCode != null) meta.push(t('jr.exit', e.exitCode));
   return h('div', { class: 'ev', style: `--c:${color}` },
-    h('div', { class: 'h' }, h('b', { text: e.titel || e.aktion }), h('span', { class: 'chip INFO', text: 'Protokoll' }), h('span', { class: 'chip INFO', text: 'kein Rückgängig' }), chip,
+    h('div', { class: 'h' }, h('b', { text: e.titel || e.aktion }), h('span', { class: 'chip INFO', text: t('jr.protokoll') }), h('span', { class: 'chip INFO', text: t('jr.keinRueck') }), chip,
       h('span', { class: 'when', title: fmtDate(e.zeit), text: fmtWhen(e.zeit) })),
     h('div', { class: 'm' },
       e.befehl ? h('div', null, h('code', { text: e.befehl })) : null,
       meta.length ? h('div', { text: meta.join(' · ') }) : null,
-      e.ohnePunkt ? h('div', null, h('span', { class: 'chip WARN', text: 'ohne Wiederherstellungspunkt' }))
-        : (e.wiederherstellungspunkt && e.wiederherstellungspunkt.seq != null ? h('div', null, 'Wiederherstellungspunkt ', h('code', { text: '#' + e.wiederherstellungspunkt.seq })) : null),
+      e.ohnePunkt ? h('div', null, h('span', { class: 'chip WARN', text: t('jr.ohnePunkt') }))
+        : (e.wiederherstellungspunkt && e.wiederherstellungspunkt.seq != null ? h('div', null, tn('jr.punktNr', h('code', { text: '#' + e.wiederherstellungspunkt.seq }))) : null),
       e.meldung ? h('div', { class: 'note', text: e.meldung }) : null));
 }
 function journalEvent(e) {
   if (e.art === 'wartung' || e.art === 'update') return journalWartung(e);
   const undone = e.status === 'zurueckgenommen', failed = String(e.status).startsWith('fehl'), isUndo = e.art === 'rueckgaengig';
   const color = failed ? 'var(--red)' : undone ? 'var(--b01)' : isUndo ? 'var(--green)' : 'var(--cyan)';
-  const chip = failed ? h('span', { class: 'chip CRIT', text: JSTAT[e.status] || e.status })
-    : undone ? h('span', { class: 'chip INFO', text: 'zurückgenommen' })
-      : isUndo ? h('span', { class: 'chip ACK', text: 'Rücknahme' })
-        : h('span', { class: 'chip ' + (e.status === 'erledigt' ? 'OK' : 'WARN'), text: e.status === 'erledigt' ? 'aktiv' : (JSTAT[e.status] || e.status) });
+  const chip = failed ? h('span', { class: 'chip CRIT', text: jstat(e.status) || e.status })
+    : undone ? h('span', { class: 'chip INFO', text: t('jr.s.zurueckgenommen') })
+      : isUndo ? h('span', { class: 'chip ACK', text: t('jr.ruecknahme') })
+        : h('span', { class: 'chip ' + (e.status === 'erledigt' ? 'OK' : 'WARN'), text: e.status === 'erledigt' ? t('jr.aktiv') : (jstat(e.status) || e.status) });
   const canUndo = e.status === 'erledigt' && !isUndo;
   return h('div', { class: 'ev', style: `--c:${color}` },
-    h('div', { class: 'h' }, h('b', { style: undone ? 'color:var(--b1)' : null, text: (isUndo ? 'Rückgängig: ' : '') + (e.titel || e.aktion) }), chip,
+    h('div', { class: 'h' }, h('b', { style: undone ? 'color:var(--b1)' : null, text: isUndo ? t('jr.rueckTitel', e.titel || e.aktion) : (e.titel || e.aktion) }), chip,
       h('span', { class: 'when', title: fmtDate(e.zeit), text: fmtWhen(e.zeit) }),
-      canUndo ? h('button', { type: 'button', class: 'sm', disabled: readOnly(), title: readOnly() ? lockTitle() : null, onclick: () => openUndoDialog(e) }, icon('undo'), 'Rückgängig') : null),
+      canUndo ? h('button', { type: 'button', class: 'sm', disabled: readOnly(), title: readOnly() ? lockTitle() : null, onclick: () => openUndoDialog(e) }, icon('undo'), t('jr.rueckKnopf')) : null),
     h('div', { class: 'm' }, `${fmtState(e.vorher)} → ${fmtState(e.nachher)}`, e.variante ? ` (${e.variante})` : '',
-      e.wiederherstellungspunkt && e.wiederherstellungspunkt.seq != null ? [' · Wiederherstellungspunkt ', h('code', { text: '#' + e.wiederherstellungspunkt.seq })] : null,
+      e.wiederherstellungspunkt && e.wiederherstellungspunkt.seq != null ? tn('jr.punktNrMit', h('code', { text: '#' + e.wiederherstellungspunkt.seq })) : null,
       e.meldung ? h('div', { class: 'note', text: e.meldung }) : null));
 }
 V.aenderungen = () => {
-  const jbox = h('div', { class: 'card' }, h('h2', { text: 'Verlauf deiner Änderungen' }), h('p', { class: 'muted', text: 'Lädt …' }));
-  const rbox = h('div', { class: 'card' }, h('h2', { text: 'Wiederherstellungspunkte' }), h('p', { class: 'muted', text: 'Lädt …' }));
+  const jbox = h('div', { class: 'card' }, h('h2', { text: t('jr.verlauf') }), h('p', { class: 'muted', text: t('laedt') }));
+  const rbox = h('div', { class: 'card' }, h('h2', { text: t('jr.punkte') }), h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
   api('/api/journal').then(list => {
     if (token !== S.rv) return;
     S.journal = list || [];
     renderStatusReport();
-    jbox.replaceChildren(h('h2', { text: 'Verlauf deiner Änderungen' }), ...(S.journal.length
-      ? [h('div', { class: 'tl' }, S.journal.slice(0, 100).map(journalEvent)), S.journal.length > 100 ? h('p', { class: 'note', text: `… ${S.journal.length - 100} ältere Einträge nicht angezeigt.` }) : null]
-      : [h('p', { class: 'muted', text: 'Noch keine Änderungen durchgeführt.' })]).filter(Boolean));
-  }).catch(e => jbox.replaceChildren(h('h2', { text: 'Verlauf deiner Änderungen' }), h('p', { class: 'rem', text: e.message })));
+    jbox.replaceChildren(h('h2', { text: t('jr.verlauf') }), ...(S.journal.length
+      ? [h('div', { class: 'tl' }, S.journal.slice(0, 100).map(journalEvent)), S.journal.length > 100 ? h('p', { class: 'note', text: t('jr.aeltere', S.journal.length - 100) }) : null]
+      : [h('p', { class: 'muted', text: t('jr.keine') })]).filter(Boolean));
+  }).catch(e => jbox.replaceChildren(h('h2', { text: t('jr.verlauf') }), h('p', { class: 'rem', text: e.message })));
   api('/api/restorepoints').then(list => {
     if (token !== S.rv) return;
     S.points = list || [];
     renderStatusReport();
-    rbox.replaceChildren(h('h2', { text: 'Wiederherstellungspunkte' }), ...(list && list.length
+    rbox.replaceChildren(h('h2', { text: t('jr.punkte') }), ...(list && list.length
       ? [h('div', { class: 'list' }, list.map(p => h('div', { class: 'row rp' }, h('code', { text: '#' + p.seq }),
         h('div', null, h('div', { class: 't', style: 'font-weight:500', text: p.beschreibung }), h('div', { class: 'd', text: `${fmtWhen(p.zeit)}${p.typ ? ' · ' + p.typ : ''}` }))))),
-      h('p', { class: 'note' }, 'Alles zurück auf einen Punkt: ', h('code', { text: 'rstrui.exe' }), ' starten (Start → Ausführen). Das setzt auch Programme und Treiber zurück, die danach installiert wurden.')]
-      : [h('p', { class: 'muted', text: 'Keine Wiederherstellungspunkte gefunden.' })]));
-  }).catch(e => rbox.replaceChildren(h('h2', { text: 'Wiederherstellungspunkte' }), h('p', { class: 'rem', text: e.message })));
-  return h('section', null, h('h1', { text: 'Änderungen' }), h('p', { class: 'sub', text: 'Jede Änderung lässt sich einzeln zurücknehmen. Wiederherstellungspunkte sind das Netz darunter.' }),
+      h('p', { class: 'note' }, tn('jr.rstrui', h('code', { text: 'rstrui.exe' })))]
+      : [h('p', { class: 'muted', text: t('jr.keinePunkte') })]));
+  }).catch(e => rbox.replaceChildren(h('h2', { text: t('jr.punkte') }), h('p', { class: 'rem', text: e.message })));
+  return h('section', null, h('h1', { text: t('menu.aenderungen') }), h('p', { class: 'sub', text: t('jr.sub') }),
     safetyBanner(), dOrdHinweis(), h('div', { class: 'grid g-hero' }, jbox, rbox));
 };
 
@@ -1247,10 +1271,10 @@ async function origSrc(name) {
 }
 V.berichte = () => {
   const cmpBox = h('div'), origBox = h('div');
-  const cmpBtn = h('button', { type: 'button', class: 'primary', text: 'Vergleichen', onclick: doCompare });
+  const cmpBtn = h('button', { type: 'button', class: 'primary', text: t('rb.vergleichen'), onclick: doCompare });
   function sync() { cmpBtn.disabled = S.cmp.length !== 2; }
   async function doCompare() {
-    cmpBox.replaceChildren(h('p', { class: 'muted', text: 'Lädt …' }));
+    cmpBox.replaceChildren(h('p', { class: 'muted', text: t('laedt') }));
     try {
       const names = S.cmp.slice().sort(); // Dateiname enthält das Datum: A = älter
       const [A, B] = await Promise.all(names.map(loadReportJson));
@@ -1259,34 +1283,34 @@ V.berichte = () => {
       new Set([...a.keys(), ...b.keys()]).forEach(k => { const x = a.get(k), y = b.get(k); if (!x || !y || x.Status !== y.Status) rows.push({ k, x, y }); });
       rows.sort((p, q) => RANK[(p.y || p.x).Status] - RANK[(q.y || q.x).Status]);
       const bd = f => f ? h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] }) : h('span', { class: 'muted', text: '–' });
-      cmpBox.replaceChildren(h('div', { class: 'card' }, h('h3', { text: `Vergleich: ${fmtDate(A.Meta.Erstellt)} (A) und ${fmtDate(B.Meta.Erstellt)} (B)` }),
-        rows.length ? h('div', { class: 'tablewrap' }, h('table', null, h('thead', null, h('tr', null, ['Prüfung', 'Status A', 'Status B'].map(x => h('th', { text: x })))),
-          h('tbody', null, rows.map(r => h('tr', null, h('td', null, (r.y || r.x).Check, h('div', { class: 'cat-hint', text: (r.y || r.x).Category })), h('td', null, bd(r.x)), h('td', null, bd(r.y))))))) : h('p', { text: 'Keine Unterschiede im Status.' })));
+      cmpBox.replaceChildren(h('div', { class: 'card' }, h('h3', { text: t('rb.vergleichTitel', fmtDate(A.Meta.Erstellt), fmtDate(B.Meta.Erstellt)) }),
+        rows.length ? h('div', { class: 'tablewrap' }, h('table', null, h('thead', null, h('tr', null, [t('rb.pruefung'), t('rb.statusA'), t('rb.statusB')].map(x => h('th', { text: x })))),
+          h('tbody', null, rows.map(r => h('tr', null, h('td', null, chkName(r.y || r.x), h('div', { class: 'cat-hint', text: catName(r.y || r.x) })), h('td', null, bd(r.x)), h('td', null, bd(r.y))))))) : h('p', { text: t('rb.keineUnterschiede') })));
     } catch (e) { cmpBox.replaceChildren(h('p', { class: 'rem', text: e.message })); }
   }
   function showOrig(name) {
     if (S.origName === name) { S.origName = null; origBox.replaceChildren(); return; }
     S.origName = name;
     // sandbox ohne allow-same-origin und ohne allow-popups: der Bericht kann weder die API noch Fenster öffnen
-    const frame = h('iframe', { sandbox: 'allow-scripts', title: 'Original-HTML-Bericht', style: 'width:100%;height:78vh;border:1px solid var(--line);border-radius:6px;background:#fff' });
-    origBox.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'toolbar' }, h('b', { text: 'Original-HTML-Bericht' }), h('button', { type: 'button', text: 'Schließen', onclick: () => showOrig(name) })), frame));
+    const frame = h('iframe', { sandbox: 'allow-scripts', title: t('rb.originalHtml'), style: 'width:100%;height:78vh;border:1px solid var(--line);border-radius:6px;background:#fff' });
+    origBox.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'toolbar' }, h('b', { text: t('rb.originalHtml') }), h('button', { type: 'button', text: t('btn.schliessen'), onclick: () => showOrig(name) })), frame));
     origSrc(name).then(src => { frame.src = src; }, e => origBox.replaceChildren(h('p', { class: 'rem', text: e.message })));
   }
   const rows = S.reports.map(r => {
     const c = r.counts || {};
-    const cb = h('input', { type: 'checkbox', checked: S.cmp.includes(r.name), 'aria-label': 'Zum Vergleich auswählen',
+    const cb = h('input', { type: 'checkbox', checked: S.cmp.includes(r.name), 'aria-label': t('rb.zumVergleich'),
       onchange: e => { if (e.target.checked) { S.cmp.push(r.name); if (S.cmp.length > 2) S.cmp.shift(); } else S.cmp = S.cmp.filter(x => x !== r.name); refreshChecks(); sync(); } });
-    return { r, cb, tr: h('tr', null, h('td', null, cb), h('td', { text: fmtDate(r.created) + (r.name === S.cur ? ' (angezeigt)' : '') }), h('td', { text: r.version || '' }), h('td', { text: r.admin ? 'ja' : 'nein' }), h('td', { text: r.profil || '' }),
+    return { r, cb, tr: h('tr', null, h('td', null, cb), h('td', { text: fmtDate(r.created) + (r.name === S.cur ? t('rb.angezeigt') : '') }), h('td', { text: r.version || '' }), h('td', { text: jaNein(r.admin) }), h('td', { text: r.profil || '' }),
       h('td', { text: String(c.CRIT || 0) }), h('td', { text: String(c.WARN || 0) }), h('td', { text: String(c.TIPP || 0) }),
-      h('td', null, h('button', { type: 'button', text: 'Anzeigen', onclick: async () => { try { await showReport(r.name); location.hash = '#/uebersicht'; if (S.view === 'uebersicht') refreshView(); } catch (e) { toast(e.message); } } }), ' ',
-        h('button', { type: 'button', text: 'Original-HTML', onclick: () => showOrig(r.name) }))) };
+      h('td', null, h('button', { type: 'button', text: t('rb.anzeigen'), onclick: async () => { try { await showReport(r.name); location.hash = '#/uebersicht'; if (S.view === 'uebersicht') refreshView(); } catch (e) { toast(e.message); } } }), ' ',
+        h('button', { type: 'button', text: t('rb.originalKnopf'), onclick: () => showOrig(r.name) }))) };
   });
   function refreshChecks() { rows.forEach(x => { x.cb.checked = S.cmp.includes(x.r.name); }); }
   sync();
-  return h('section', null, h('h1', { text: 'Berichte' }), h('p', { class: 'sub', text: `${S.reports.length} Berichte · zwei beliebige lassen sich vergleichen` }), reportBar(),
-    h('div', { class: 'toolbar' }, cmpBtn, h('span', { class: 'note', text: 'Zwei Berichte ankreuzen, dann „Vergleichen“.' })),
+  return h('section', null, h('h1', { text: t('menu.berichte') }), h('p', { class: 'sub', text: t('rb.sub', S.reports.length) }), reportBar(),
+    h('div', { class: 'toolbar' }, cmpBtn, h('span', { class: 'note', text: t('rb.hinweis') })),
     S.reports.length ? h('div', { class: 'card' }, h('div', { class: 'tablewrap' }, h('table', null,
-      h('thead', null, h('tr', null, ['', 'Datum', 'Version', 'Admin', 'Profil', 'Krit.', 'Warn.', 'Tipps', ''].map(x => h('th', { text: x })))),
+      h('thead', null, h('tr', null, ['', t('rb.hDatum'), t('rb.hVersion'), t('rb.hAdmin'), t('rb.hProfil'), t('rb.hKrit'), t('rb.hWarn'), t('rb.hTipps'), ''].map(x => h('th', { text: x })))),
       h('tbody', null, rows.map(x => x.tr))))) : noReport(),
     cmpBox, origBox);
 };
@@ -1294,11 +1318,11 @@ V.berichte = () => {
 // ---------------------------------------------------------------- Ansicht: Scan
 V.scan = () => {
   const sc = S.scan;
-  const profil = h('select', { id: 'sc-profil', 'aria-label': 'Profil' }, [['Auto', 'Automatisch'], ['Gaming', 'Gaming'], ['Office', 'Office'], ['Laptop', 'Laptop']].map(([v, l]) => h('option', { value: v, text: l })));
-  const days = h('select', { id: 'sc-days', 'aria-label': 'Zeitraum' }, [7, 14, 30, 60, 90].map(d => h('option', { value: String(d), selected: d === 14, text: `${d} Tage` })));
+  const profil = h('select', { id: 'sc-profil', 'aria-label': t('scan.profilAria') }, [['Auto', t('scan.profilAuto')], ['Gaming', 'Gaming'], ['Office', 'Office'], ['Laptop', 'Laptop']].map(([v, l]) => h('option', { value: v, text: l })));
+  const days = h('select', { id: 'sc-days', 'aria-label': t('scan.zeitraumAria') }, [7, 14, 30, 60, 90].map(d => h('option', { value: String(d), selected: d === 14, text: t('scan.tage', d) })));
   const upd = h('input', { type: 'checkbox', checked: true }), wg = h('input', { type: 'checkbox', checked: true }), nsp = h('input', { type: 'checkbox' }), nsi = h('input', { type: 'checkbox' });
-  const log = h('pre', { class: 'log scanlog', id: 'scanlog', 'aria-live': 'polite', text: sc ? sc.lines.join('\n') : 'Bereit. Der Scan ändert nichts am System (ca. 2–5 Minuten).' });
-  const btn = h('button', { type: 'button', class: 'btn brand', text: 'Scan starten', disabled: !!(sc && sc.running) || readOnly(), title: readOnly() ? lockTitle() : null, onclick: startScan });
+  const log = h('pre', { class: 'log scanlog', id: 'scanlog', 'aria-live': 'polite', text: sc ? sc.lines.join('\n') : t('scan.bereit') });
+  const btn = h('button', { type: 'button', class: 'btn brand', text: t('scan.starten'), disabled: !!(sc && sc.running) || readOnly(), title: readOnly() ? lockTitle() : null, onclick: startScan });
   const msg = h('div', { id: 'scanmsg' });
   function startScan() {
     const d = parseInt(days.value, 10);
@@ -1310,10 +1334,10 @@ V.scan = () => {
   S.scanUi = { log, btn, msg };
   if (sc && sc.msg) msg.replaceChildren(sc.msg);
   log.scrollTop = log.scrollHeight;
-  return h('section', { class: 'noaccent' }, h('h1', { text: 'Neuer Scan' }), h('p', { class: 'sub', text: 'Der Scan ist rein lesend. Danach erscheint der neue Bericht automatisch als aktueller Bericht.' }),
+  return h('section', { class: 'noaccent' }, h('h1', { text: t('menu.scan') }), h('p', { class: 'sub', text: t('scan.sub') }),
     h('div', { class: 'card' }, h('div', { class: 'toolbar' },
-      h('label', null, 'Profil ', profil), h('label', null, 'Zeitraum ', days),
-      h('label', null, upd, ' Windows-Update-Suche'), h('label', null, wg, ' winget-Prüfung'), h('label', null, nsp, ' Speicherverbraucher nicht berechnen (spart 1–2 Minuten)'), h('label', null, nsi, ' Sysinternals-Prüfungen überspringen'), btn), log, msg));
+      h('label', null, t('scan.lblProfil') + ' ', profil), h('label', null, t('scan.lblZeitraum') + ' ', days),
+      h('label', null, upd, ' ' + t('scan.optUpdate')), h('label', null, wg, ' ' + t('scan.optWinget')), h('label', null, nsp, ' ' + t('scan.optSpeicher')), h('label', null, nsi, ' ' + t('scan.optSysinternals')), btn), log, msg));
 };
 async function runScan(body) {
   const ui = () => { const u = S.scanUi; return u && u.log.isConnected ? u : null; };
@@ -1326,9 +1350,9 @@ async function runScan(body) {
       await loadReports();
       if (S.reports.length) await showReport(S.reports[0].name);
       await loadSpeicher();
-      S.scan.msg = banner('info', 'doc', h('b', { text: 'Scan fertig. ' }), 'Der neue Bericht wird jetzt angezeigt. ', h('a', { href: '#/uebersicht', text: 'Zur Übersicht →' }));
-      toast('Scan fertig: neuer Bericht geladen');
-    } else S.scan.msg = h('p', { class: 'rem', text: (job.ergebnis && job.ergebnis.error) || 'Der Scan ist fehlgeschlagen.' });
+      S.scan.msg = banner('info', 'doc', h('b', { text: t('scan.fertig') }), t('scan.neuerBericht'), h('a', { href: '#/uebersicht', text: t('scan.zurUebersicht') }));
+      toast(t('scan.toastFertig'));
+    } else S.scan.msg = h('p', { class: 'rem', text: (job.ergebnis && job.ergebnis.error) || t('scan.fehlgeschlagen') });
   } catch (e) { S.scan.running = false; S.scan.msg = h('p', { class: 'rem', text: e.message }); }
   const u = ui();
   if (u) { u.btn.disabled = false; u.msg.replaceChildren(S.scan.msg); }
@@ -1340,7 +1364,7 @@ async function runScan(body) {
 /** Titel der Detailtabellen, die beim Scan in dieser Prüfung entstanden sind (DataChecks ab v2.1). */
 function tablesFor(check) {
   const dc = (S.report && S.report.DataChecks) || {};
-  return Object.keys(dc).filter(t => dc[t] === check && S.report.Data && S.report.Data[t] && S.report.Data[t].length);
+  return Object.keys(dc).filter(tb => dc[tb] === check && S.report.Data && S.report.Data[tb] && S.report.Data[tb].length);
 }
 /** Springt in den Anhang und klappt die genannten Tabellen auf. */
 function openRaw(titles) {
@@ -1348,17 +1372,18 @@ function openRaw(titles) {
   if (location.hash === '#/rohdaten') refreshView(); else location.hash = '#/rohdaten';
 }
 V.rohdaten = () => {
-  if (!S.report) return h('section', null, h('h1', { text: 'Rohdaten' }), noReport());
+  if (!S.report) return h('section', null, h('h1', { text: t('menu.rohdaten') }), noReport());
   const D = S.report.Data || {}, want = S.ui.rawOpen || [], dc = S.report.DataChecks || {};
   S.ui.rawOpen = null;
   let first = null;
-  const sec = h('section', null, h('h1', { text: 'Rohdaten' }), h('p', { class: 'sub', text: 'Die Detailtabellen hinter den Prüfungen. Zum Aufklappen anklicken.' }), reportBar(),
-    Object.keys(D).map(t => {
-      const rows = D[t] || [], body = h('div');
-      const d = h('details', { class: 'raw' }, h('summary', null, t, h('span', { class: 'muted', text: ` (${rows.length})` }),
-        dc[t] ? h('span', { class: 'muted', text: ` · Prüfung „${dc[t]}“` }) : null), body);
-      d.addEventListener('toggle', () => { if (d.open && !body.firstChild) body.append(tableFrom(rows, 300, t)); });
-      if (want.includes(t)) { d.open = true; body.append(tableFrom(rows, 300, t)); d.classList.add('flash'); if (!first) first = d; }
+  const checkLabel = id => { const f = findingByCheck(norm(id)); return f ? chkName(f) : id; };
+  const sec = h('section', null, h('h1', { text: t('menu.rohdaten') }), h('p', { class: 'sub', text: t('raw.sub') }), reportBar(),
+    Object.keys(D).map(id => {
+      const rows = D[id] || [], body = h('div');
+      const d = h('details', { class: 'raw' }, h('summary', null, tblName(id), h('span', { class: 'muted', text: ` (${rows.length})` }),
+        dc[id] ? h('span', { class: 'muted', text: t('raw.pruefung', checkLabel(dc[id])) }) : null), body);
+      d.addEventListener('toggle', () => { if (d.open && !body.firstChild) body.append(tableFrom(rows, 300, id)); });
+      if (want.includes(id)) { d.open = true; body.append(tableFrom(rows, 300, id)); d.classList.add('flash'); if (!first) first = d; }
       return d;
     }));
   if (first) setTimeout(() => first.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
@@ -1368,117 +1393,118 @@ V.einstellungen = () => {
   const m = (S.report && S.report.Meta) || {}, s = safety();
   const acc = S.findings.filter(f => f.Status === 'ACK');
   const akzBody = h('div'); loadAkzeptanz(akzBody);
-  return h('section', null, h('h1', { text: 'Einstellungen' }), h('p', { class: 'sub', text: 'Erst nur zur Ansicht. Profil und Zeitraum wählst du beim Scan.' }),
+  return h('section', null, h('h1', { text: t('menu.einstellungen') }), h('p', { class: 'sub', text: t('set.sub') }),
     h('div', { class: 'card' }, h('table', null, h('tbody', null,
-      h('tr', null, h('td', { text: 'Profil (letzter Bericht)' }), h('td', { text: m.Profil || '–' })),
-      h('tr', null, h('td', { text: 'Zeitraum Ereignisse' }), h('td', { text: m.EventDays != null ? `${m.EventDays} Tage` : '–' })),
-      h('tr', null, h('td', { text: 'Computerschutz' }), h('td', null, s.schutzAn === false ? h('span', { class: 'rem', text: 'aus' }) : h('span', { class: 'ok', text: `an${s.laufwerk ? ' (' + s.laufwerk + ')' : ''}` }), ' · 24-h-Sperre ', s.sperre24h ? h('span', { class: 'warn', text: 'aktiv' }) : h('span', { class: 'ok', text: 'aus' }))),
-      h('tr', null, h('td', { text: 'Letzter Wiederherstellungspunkt' }), h('td', { text: s.letzterPunkt ? fmtDate(s.letzterPunkt) : '–' })),
-      h('tr', null, h('td', { text: 'Morpheus-Version' }), h('td', { text: (S.session && S.session.version) || '' }))))),
-    h('h2', { text: 'Akzeptanzliste' }), dOrdHinweis(),
+      h('tr', null, h('td', { text: t('set.profil') }), h('td', { text: m.Profil || '–' })),
+      h('tr', null, h('td', { text: t('set.zeitraum') }), h('td', { text: m.EventDays != null ? t('scan.tage', m.EventDays) : '–' })),
+      h('tr', null, h('td', { text: t('set.schutz') }), h('td', null, s.schutzAn === false ? h('span', { class: 'rem', text: t('set.aus') }) : h('span', { class: 'ok', text: t('set.an') + (s.laufwerk ? ' (' + s.laufwerk + ')' : '') }), t('set.sperre24'), s.sperre24h ? h('span', { class: 'warn', text: t('set.aktiv') }) : h('span', { class: 'ok', text: t('set.aus') }))),
+      h('tr', null, h('td', { text: t('set.letzterPunkt') }), h('td', { text: s.letzterPunkt ? fmtDate(s.letzterPunkt) : '–' })),
+      h('tr', null, h('td', { text: t('set.version') }), h('td', { text: (S.session && S.session.version) || '' }))))),
+    h('h2', { text: t('set.akzListe') }), dOrdHinweis(),
     h('div', { class: 'card' }, akzBody),
-    h('h2', { text: `Akzeptierte Abweichungen (${acc.length})` }),
-    h('div', { class: 'card' }, acc.length ? acc.map(f => findingRow(f, { hint: true })) : h('p', { class: 'muted', text: 'Keine akzeptierten Abweichungen im angezeigten Bericht.' })));
+    h('h2', { text: t('set.akzAbw', acc.length) }),
+    h('div', { class: 'card' }, acc.length ? acc.map(f => findingRow(f, { hint: true })) : h('p', { class: 'muted', text: t('set.keineAkz') })));
 };
 
 // ---------------------------------------------------------------- Akzeptanzliste (Vertrag 16.4/16.5)
-const akzErr = e => e.status === 403 ? 'Im Windows-Dialog abgelehnt.' : (e.message || 'Das hat nicht geklappt.');
+const akzErr = e => e.status === 403 ? t('akz.abgelehnt') : (e.message || t('dord.nichtGeklappt'));
 function loadAkzeptanz(box) {
-  box.replaceChildren(h('p', { class: 'muted', text: 'Lade …' }));
+  box.replaceChildren(h('p', { class: 'muted', text: t('akz.lade') }));
   api('/api/akzeptanz').then(d => { if (box.isConnected) box.replaceChildren(akzTable(d || {}, box)); },
-    e => { if (box.isConnected) box.replaceChildren(h('p', { class: 'rem', text: 'Die Akzeptanzliste konnte nicht geladen werden: ' + e.message })); });
+    e => { if (box.isConnected) box.replaceChildren(h('p', { class: 'rem', text: t('akz.ladenFehler', e.message) })); });
 }
 function akzTable(d, box) {
   const regeln = d.regeln || [], ro = readOnly() || d.bearbeitbar === false;
-  const intro = h('p', { class: 'muted', text: 'Hier stehen alle Regeln, mit denen Befunde oder einzelne Dateien als „akzeptiert“ gelten. Änderungen wirken ab dem nächsten Scan.' });
-  if (!regeln.length) return h('div', null, intro, h('p', { class: 'muted', text: 'Keine Regeln.' }));
+  const intro = h('p', { class: 'muted', text: t('akz.intro') });
+  if (!regeln.length) return h('div', null, intro, h('p', { class: 'muted', text: t('akz.keine') }));
   const rows = regeln.map(r => h('tr', null,
     h('td', { text: r.check || '' }),
     h('td', { class: 'mono', text: r.datei || r.match || '' }),
     h('td', { text: r.reason || '' }),
-    h('td', null, r.until || 'unbegrenzt', r.abgelaufen ? [' ', h('span', { class: 'chip WARN', text: 'abgelaufen' })] : null),
-    h('td', { text: r.quelle === 'gui' ? 'GUI' : 'von Hand' }),
-    h('td', null, h('button', { type: 'button', class: 'sm', disabled: ro, title: ro ? lockTitle() : null, text: 'Zurücknehmen …', onclick: () => akzEntfernen(r, box) }))));
+    h('td', null, r.until || t('akz.unbegrenzt'), r.abgelaufen ? [' ', h('span', { class: 'chip WARN', text: t('akz.abgelaufen') })] : null),
+    h('td', { text: r.quelle === 'gui' ? 'GUI' : t('akz.vonHand') }),
+    h('td', null, h('button', { type: 'button', class: 'sm', disabled: ro, title: ro ? lockTitle() : null, text: t('akz.entfKnopfPunkte'), onclick: () => akzEntfernen(r, box) }))));
   return h('div', null, intro, h('div', { class: 'tbl-scroll' }, h('table', null,
-    h('thead', null, h('tr', null, ['Prüfung', 'Datei bzw. Muster', 'Begründung', 'Gilt bis', 'Quelle', ''].map(x => h('th', { text: x })))),
+    h('thead', null, h('tr', null, [t('rb.pruefung'), t('akz.hDatei'), t('akz.hBegruendung'), t('akz.hGiltBis'), t('akz.hQuelle'), ''].map(x => h('th', { text: x })))),
     h('tbody', null, rows))));
 }
 function akzEntfernen(r, box) {
-  dlgOpen('Regel zurücknehmen', [
-    h('p', null, 'Soll die Regel für „', h('b', { text: r.check || '' }), '“ zurückgenommen werden?'),
+  dlgOpen(t('akz.entfTitel'), [
+    h('p', null, tn('akz.entfFrage', h('b', { text: r.check || '' }))),
     r.datei ? h('p', { class: 'mono', text: r.datei }) : null,
-    h('p', { class: 'muted', text: 'Begründung: ' + (r.reason || '') }),
-    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung. Der Befund kommt beim nächsten Scan wieder.' })],
-  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Zurücknehmen', danger: true, onClick: async () => {
-    dlgOpen('Regel zurücknehmen', [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Läuft …', disabled: true }], { lock: true });
+    h('p', { class: 'muted', text: t('akz.begruendung', r.reason || '') }),
+    h('div', { class: 'note', text: t('akz.entfNote') })],
+  [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('akz.entfKnopf'), danger: true, onClick: async () => {
+    dlgOpen(t('akz.entfTitel'), [h('p', { text: t('win.bestaetigen') })], [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
     try {
       await api('/api/akzeptanz/' + encodeURIComponent(r.id) + '/entfernen', { method: 'POST', body: {} });
-      dlgClose(); toast('Regel zurückgenommen'); if (box.isConnected) loadAkzeptanz(box);
+      dlgClose(); toast(t('akz.zurueckgenommen')); if (box.isConnected) loadAkzeptanz(box);
     } catch (e) {
-      dlgOpen('Regel zurücknehmen', [h('p', { class: 'rem', text: akzErr(e) })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+      dlgOpen(t('akz.entfTitel'), [h('p', { class: 'rem', text: akzErr(e) })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
     }
   } }]);
 }
 const pad2 = n => String(n).padStart(2, '0');
 const ymd = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;   // lokales Datum
-/** Akzeptieren-Dialog. t = { art:'befund', check } oder { art:'datei', pfad, sha256, onDone } (nur für den angezeigten Bericht). */
-function openAkzeptieren(t) {
-  const datei = t.art === 'datei';
+/** Akzeptieren-Dialog. tg = { art:'befund', check } oder { art:'datei', pfad, sha256, onDone } (nur für den angezeigten Bericht). */
+function openAkzeptieren(tg) {
+  const datei = tg.art === 'datei';
   const today = new Date(), maxD = new Date(today.getFullYear() + 5, today.getMonth(), today.getDate());
   const minS = ymd(today), maxS = ymd(maxD);
-  const reason = h('textarea', { rows: 3, maxlength: 300, 'aria-label': 'Begründung', placeholder: 'Warum ist das in Ordnung? (3–300 Zeichen)', style: 'width:100%' });
+  const reason = h('textarea', { rows: 3, maxlength: 300, 'aria-label': t('akz.begrAria'), placeholder: t('akz.warum'), style: 'width:100%' });
   const count = h('span', { class: 'muted', text: '0 / 300' });
-  const bis = h('input', { type: 'date', 'aria-label': 'Gilt bis', min: minS, max: maxS });
+  const bis = h('input', { type: 'date', 'aria-label': t('akz.giltBisAria'), min: minS, max: maxS });
   const msg = h('p', { role: 'alert' });
-  const send = h('button', { type: 'button', class: 'primary', text: 'Akzeptieren' });
-  const close = h('button', { type: 'button', text: 'Abbrechen', onclick: dlgClose });
+  const send = h('button', { type: 'button', class: 'primary', text: t('akz.knopf') });
+  const close = h('button', { type: 'button', text: t('btn.abbrechen'), onclick: dlgClose });
   const clean = () => reason.value.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
   reason.addEventListener('input', () => { count.textContent = `${clean().length} / 300`; });
   const fail = text => { msg.className = 'rem'; msg.textContent = text; };
   send.onclick = async () => {
     if (Dlg.running) return;
     const begruendung = clean();
-    if (begruendung.length < 3 || begruendung.length > 300) { fail('Bitte eine Begründung mit 3 bis 300 Zeichen eingeben.'); reason.focus(); return; }
-    if (bis.value && (!/^\d{4}-\d{2}-\d{2}$/.test(bis.value) || bis.value < minS || bis.value > maxS)) { fail('„Gilt bis“ muss zwischen heute und höchstens 5 Jahren in der Zukunft liegen.'); bis.focus(); return; }
-    const body = datei ? { art: 'datei', bericht: S.cur + '.json', pfad: t.pfad, begruendung } : { art: 'befund', bericht: S.cur + '.json', check: t.check, begruendung };
+    if (begruendung.length < 3 || begruendung.length > 300) { fail(t('akz.errBegr')); reason.focus(); return; }
+    if (bis.value && (!/^\d{4}-\d{2}-\d{2}$/.test(bis.value) || bis.value < minS || bis.value > maxS)) { fail(t('akz.errBis')); bis.focus(); return; }
+    const body = datei ? { art: 'datei', bericht: S.cur + '.json', pfad: tg.pfad, begruendung } : { art: 'befund', bericht: S.cur + '.json', check: tg.check, begruendung };
     if (bis.value) body.bis = bis.value;
-    Dlg.running = true; send.disabled = true; close.disabled = true; reason.disabled = true; bis.disabled = true; send.textContent = 'Warte auf Windows …';
-    msg.className = 'note'; msg.textContent = 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …';
+    Dlg.running = true; send.disabled = true; close.disabled = true; reason.disabled = true; bis.disabled = true; send.textContent = t('akz.warteWindows');
+    msg.className = 'note'; msg.textContent = t('win.bestaetigen');
     try {
       await api('/api/akzeptanz', { method: 'POST', body });
       Dlg.running = false;
-      if (t.onDone) t.onDone();
-      dlgOpen('Akzeptiert', [h('p', { class: 'ok', text: 'Die Regel wurde gespeichert.' }), h('p', { text: 'Wirkt ab dem nächsten Scan. Bis dahin zeigt der Bericht den Befund weiter an.' })],
-        [{ label: 'Später', onClick: dlgClose }, { label: 'Neuer Scan', primary: true, onClick: () => { dlgClose(); location.hash = '#/scan'; } }]);
+      if (tg.onDone) tg.onDone();
+      dlgOpen(t('akz.okTitel'), [h('p', { class: 'ok', text: t('akz.gespeichert') }), h('p', { text: t('akz.wirktAb') })],
+        [{ label: t('dord.spaeter'), onClick: dlgClose }, { label: t('menu.scan'), primary: true, onClick: () => { dlgClose(); location.hash = '#/scan'; } }]);
     } catch (e) {
       Dlg.running = false;
-      fail(akzErr(e)); send.disabled = false; close.disabled = false; reason.disabled = false; bis.disabled = false; send.textContent = 'Akzeptieren';
+      fail(akzErr(e)); send.disabled = false; close.disabled = false; reason.disabled = false; bis.disabled = false; send.textContent = t('akz.knopf');
     }
   };
-  dlgOpen(datei ? 'Datei akzeptieren' : 'Befund akzeptieren', [
-    h('p', null, datei ? 'Datei: ' : 'Prüfung: ', h('b', { class: datei ? 'mono' : null, text: datei ? t.pfad : t.check })),
-    h('p', { class: 'muted', text: datei ? `Gilt nur für genau diese Datei (SHA256 ${t.sha256 || 'unbekannt'}). Ändert sie sich, kommt die Warnung zurück.` : 'Gilt, solange der Befund genau so lautet. Ändert er sich, kommt die Warnung zurück.' }),
-    datei ? null : h('p', { class: 'muted', text: 'Enthält der Befund Zahlen oder Tage (z. B. „vor 15 Tagen“), ändert er sich mit dem nächsten Scan und die Akzeptanz greift dann nicht mehr.' }),
-    h('label', null, 'Begründung (Pflicht) ', count, h('br'), reason),
-    h('label', null, 'Gilt bis (optional) ', bis),
-    msg, h('div', { class: 'note', text: 'Windows fragt danach in einem eigenen Fenster nach deiner Bestätigung.' })],
+  const fnd = datei ? null : findingByCheck(norm(tg.check));
+  dlgOpen(datei ? t('akz.titelDatei') : t('akz.titelBefund'), [
+    h('p', null, (datei ? t('akz.lblDatei') : t('akz.lblPruefung')) + ' ', h('b', { class: datei ? 'mono' : null, text: datei ? tg.pfad : (fnd ? chkName(fnd) : tg.check) })),
+    h('p', { class: 'muted', text: datei ? t('akz.gilltDatei', tg.sha256 || t('akz.unbekannt')) : t('akz.gilltBefund') }),
+    datei ? null : h('p', { class: 'muted', text: t('akz.zahlenHinweis') }),
+    h('label', null, t('akz.lblBegr') + ' ', count, h('br'), reason),
+    h('label', null, t('akz.lblBis') + ' ', bis),
+    msg, h('div', { class: 'note', text: t('akz.windowsFragtDanach') })],
   []);
   $('#dlg-buttons').replaceChildren(close, send); reason.focus();
 }
 // Defender-Einzelscan einer Datei aus der Sigcheck-Tabelle
 function startDefenderDatei(pfad) {
-  const title = 'Datei mit Defender prüfen';
+  const title = t('defd.titel');
   dlgOpen(title, [
-    h('p', null, 'Microsoft Defender prüft diese Datei auf Schadsoftware:'), h('p', { class: 'mono', text: pfad }),
-    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung. Defender prüft die Datei. Findet er etwas, wendet er seine üblichen Maßnahmen an (z. B. Quarantäne) – bei Treibern kann das Folgen haben. Morpheus zeigt das Ergebnis an.' })],
-  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Starten', primary: true, onClick: () => runDefenderDatei(pfad, title) }]);
+    h('p', null, t('defd.text')), h('p', { class: 'mono', text: pfad }),
+    h('div', { class: 'note', text: t('defd.note') })],
+  [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.starten'), primary: true, onClick: () => runDefenderDatei(pfad, title) }]);
 }
 async function runDefenderDatei(pfad, title) {
-  const jv = jobView([['Windows-Bestätigung', /bestätig/i], ['Datei prüfen', /prüf|scan/i], ['Funde lesen', /funde/i]]);
-  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  const jv = jobView([[t('def.step.win'), re(t('def.re.win'))], [t('def.step.pruefenDatei'), re(t('def.re.pruefenDatei'))], [t('def.step.funde'), re(t('def.re.fundeDatei'))]]);
+  dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let job = null, err = null;
   try {
-    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/defender/datei', { method: 'POST', body: { bericht: S.cur + '.json', pfad } });
     job = await followJob(r.jobId, jv.lines);
   } catch (e) { err = e; }
@@ -1486,56 +1512,56 @@ async function runDefenderDatei(pfad, title) {
   jv.finish(ok);
   const body = [...jv.nodes];
   if (err) body.push(h('p', { class: 'rem', text: err.message }));
-  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || t('run.fehlgeschlagen') }));
   else {
     const funde = [].concat((res && res.funde) || []).filter(Boolean);
-    body.push(h('h3', { text: 'Ergebnis' }), h('p', { class: 'mono', text: pfad }),
-      funde.length ? h('ul', { class: 'result' }, funde.map(f => h('li', null, h('b', { text: f.name || 'Unbekannter Fund' }), ' ', h('span', { class: 'muted', text: f.zeit ? fmtDate(f.zeit) : '' }), ' ', h('span', { class: f.erfolg === false ? 'rem' : 'warn', text: f.aktion || '' }), f.frueher ? [' ', h('span', { class: 'chip INFO', text: 'früher erkannt' })] : null, f.dateien ? h('div', { class: 'note', text: f.dateien }) : null)))
-        : h('p', { class: 'ok', text: 'Keine Funde.' }),
+    body.push(h('h3', { text: t('run.ergebnis') }), h('p', { class: 'mono', text: pfad }),
+      funde.length ? h('ul', { class: 'result' }, funde.map(f => h('li', null, h('b', { text: f.name || t('defd.unbekannt') }), ' ', h('span', { class: 'muted', text: f.zeit ? fmtDate(f.zeit) : '' }), ' ', h('span', { class: f.erfolg === false ? 'rem' : 'warn', text: f.aktion || '' }), f.frueher ? [' ', h('span', { class: 'chip INFO', text: t('defd.frueher') })] : null, f.dateien ? h('div', { class: 'note', text: f.dateien }) : null)))
+        : h('p', { class: 'ok', text: t('def.keineFunde') }),
       res && res.meldung ? h('p', { text: res.meldung }) : null);
   }
-  dlgOpen(title, body, [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  dlgOpen(title, body, [{ label: t('btn.fertig'), primary: true, onClick: dlgClose }]);
   Dlg.running = false;
 }
 
 // ---------------------------------------------------------------- Ansicht: Werkzeuge (Microsoft Defender)
-const ageText = n => n == null || isNaN(n) ? '' : (Number(n) === 0 ? 'heute' : Number(n) === 1 ? 'vor 1 Tag' : `vor ${n} Tagen`);
+const ageText = n => n == null || isNaN(n) ? '' : (Number(n) === 0 ? t('zeit.alterHeute') : Number(n) === 1 ? t('zeit.vorTag') : t('zeit.vorTagen', n));
 const fmtDur = s => s == null || isNaN(s) ? '' : (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`);
-const onOff = v => v === true || /^(true|an|ein)$/i.test(String(v)) ? ['an', 'ok'] : (v === false || /^(false|aus)$/i.test(String(v)) ? ['aus', 'rem'] : ['unbekannt', 'muted']);
+const onOff = v => v === true || /^(true|an|ein|on)$/i.test(String(v)) ? [t('set.an'), 'ok'] : (v === false || /^(false|aus|off)$/i.test(String(v)) ? [t('set.aus'), 'rem'] : [t('allg.unbekannt'), 'muted']);
 function defBody(d) {
   const st = d.stand || {}, running = !!d.laufend, lock = readOnly(), dis = lock || running;
-  const tt = lock ? lockTitle() : (running ? 'Es läuft schon eine Defender-Aufgabe.' : null);
+  const tt = lock ? lockTitle() : (running ? t('def.laeuftSchon') : null);
   const [rtText, rtCls] = onOff(st.echtzeit);
   const row = (label, ...kids) => h('tr', null, h('td', { class: 'muted', text: label }), h('td', null, ...kids));
-  const info = st.fehler ? h('p', { class: 'rem', text: 'Der Defender-Stand ist nicht lesbar: ' + st.fehler })
+  const info = st.fehler ? h('p', { class: 'rem', text: t('def.nichtLesbar', st.fehler) })
     : h('div', { class: 'tablewrap' }, h('table', null, h('tbody', null,
-      row('Signaturen', st.signaturen ? fmtDate(st.signaturen) : '–', st.signaturVersion ? ` · Version ${st.signaturVersion}` : '', st.signaturAlterTage != null ? h('span', { class: Number(st.signaturAlterTage) > 3 ? 'warn' : 'muted', text: ` · ${ageText(st.signaturAlterTage)}` }) : null),
-      row('Letzter Schnellscan', st.schnellscan ? fmtDate(st.schnellscan) : 'noch nie', st.schnellscan && st.schnellscanAlterTage != null ? h('span', { class: 'muted', text: ` · ${ageText(st.schnellscanAlterTage)}` }) : null),
-      row('Echtzeitschutz', h('span', { class: rtCls, text: rtText })),
-      st.modus ? row('Modus', String(st.modus)) : null)));
+      row(t('def.lblSignaturen'), st.signaturen ? fmtDate(st.signaturen) : '–', st.signaturVersion ? t('def.version', st.signaturVersion) : '', st.signaturAlterTage != null ? h('span', { class: Number(st.signaturAlterTage) > 3 ? 'warn' : 'muted', text: ' · ' + ageText(st.signaturAlterTage) }) : null),
+      row(t('def.lblSchnellscan'), st.schnellscan ? fmtDate(st.schnellscan) : t('def.nochNie'), st.schnellscan && st.schnellscanAlterTage != null ? h('span', { class: 'muted', text: ' · ' + ageText(st.schnellscanAlterTage) }) : null),
+      row(t('def.lblEchtzeit'), h('span', { class: rtCls, text: rtText })),
+      st.modus ? row(t('def.lblModus'), String(st.modus)) : null)));
   return [info,
-    running ? h('p', { class: 'warn', text: 'Es läuft schon eine Defender-Aufgabe. Warte, bis sie fertig ist.' }) : null,
+    running ? h('p', { class: 'warn', text: t('def.laeuftWarte') }) : null,
     h('div', { class: 'toolbar' },
-      h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: 'Signaturen aktualisieren', onclick: () => startDefender('signaturen') }),
-      h('button', { type: 'button', class: '', disabled: dis, title: tt, text: 'Schnellscan starten', onclick: () => startDefender('schnellscan') }),
-      h('button', { type: 'button', class: 'danger', disabled: dis, title: tt, text: 'Offline-Scan …', onclick: startOffline }),
-      running ? h('button', { type: 'button', class: 'sm ghost', text: 'Anzeige aktualisieren', onclick: refreshView }) : null),
-    h('p', { class: 'note', text: 'Funde zeigt Morpheus nur an. Quarantäne und Entfernen machst du in Windows-Sicherheit (Viren- & Bedrohungsschutz > Schutzverlauf). Einen Vollscan startet Morpheus nicht: Er dauert Stunden und läuft besser über Windows-Sicherheit.' })];
+      h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: t('def.signaturenAkt'), onclick: () => startDefender('signaturen') }),
+      h('button', { type: 'button', class: '', disabled: dis, title: tt, text: t('def.schnellscanStart'), onclick: () => startDefender('schnellscan') }),
+      h('button', { type: 'button', class: 'danger', disabled: dis, title: tt, text: t('def.offline'), onclick: startOffline }),
+      running ? h('button', { type: 'button', class: 'sm ghost', text: t('btn.anzeigeAkt'), onclick: refreshView }) : null),
+    h('p', { class: 'note', text: t('def.funde') })];
 }
 V.werkzeuge = () => {
-  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const body = h('div', null, h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
   api('/api/defender').then(d => {
     if (token !== S.rv) return;
     body.replaceChildren(...defBody(d || {}).filter(Boolean));
     const o = d && d.offline;
     if (o && o.status === 'countdown' && !$('#modal').classList.contains('on')) openCountdown(o);
-  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Der Defender-Stand konnte nicht geladen werden: ' + e.message })); });
-  return h('section', null, h('h1', { text: 'Werkzeuge' }), h('p', { class: 'sub', text: 'Kleine Helfer für den PC. Sie starten nur, wenn du es auslöst, und fragen vorher in Windows nach.' }),
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('def.ladenFehler', e.message) })); });
+  return h('section', null, h('h1', { text: t('menu.werkzeuge') }), h('p', { class: 'sub', text: t('wz.sub') }),
     readOnly() ? safetyBanner() : null,
     // Reihenfolge (2.4): Wartung & Reparatur zuerst
     wartungCard(),
-    h('div', { class: 'card', id: 'def-card' }, h('h2', { text: 'Microsoft Defender' }), body),
+    h('div', { class: 'card', id: 'def-card' }, h('h2', { text: t('menu.unter.defender') }), body),
     updCard(),
     sysCard(),
     spOrdnerCard());
@@ -1556,27 +1582,27 @@ function spOrdnerCard() {
     if (token !== S.rv) return;
     const busy = !!S.spoJob, dis = ro || busy;
     const list = S.spOrdner;
-    const kids = [h('h2', { text: 'Spiele-Ordner' }),
-      h('p', { class: 'note', text: 'Findet Morpheus eine Spielebibliothek nicht, trag den Ordner hier ein. Gemeint ist ein Ordner, in dem jeder Unterordner ein Spiel ist, z. B. F:\\Games. Pfad im Explorer aus der Adressleiste kopieren und einfügen.' })];
+    const kids = [h('h2', { text: t('spo.titel') }),
+      h('p', { class: 'note', text: t('spo.note') })];
     if (!list) {
-      kids.push(S.spoMsg && S.spoMsg.err ? h('p', { class: 'rem', text: S.spoMsg.err }) : h('p', { class: 'muted', text: 'Lädt …' }));
+      kids.push(S.spoMsg && S.spoMsg.err ? h('p', { class: 'rem', text: S.spoMsg.err }) : h('p', { class: 'muted', text: t('laedt') }));
     } else {
       list.forEach((e, i) => {
         kids.push(h('div', { class: 'spo-row' },
-          h('select', { 'aria-label': 'Plattform', disabled: dis, title: tt, onchange: ev => { e.plattform = ev.target.value; } },
-            SP_PLATT.map(p => h('option', { value: p, text: p, selected: p === e.plattform }))),
-          h('input', { type: 'text', 'aria-label': 'Ordnerpfad', placeholder: 'z. B. G:\\Games', spellcheck: 'false', autocomplete: 'off', maxlength: '260', value: e.pfad || '', disabled: dis, title: tt, oninput: ev => { e.pfad = ev.target.value; } }),
-          h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: 'Entfernen', onclick: () => { list.splice(i, 1); draw(); } })));
+          h('select', { 'aria-label': t('spo.plattformAria'), disabled: dis, title: tt, onchange: ev => { e.plattform = ev.target.value; } },
+            SP_PLATT.map(p => h('option', { value: p, text: tk('spo.platt.' + p, p), selected: p === e.plattform }))),
+          h('input', { type: 'text', 'aria-label': t('spo.pfadAria'), placeholder: t('spo.platzhalter'), spellcheck: 'false', autocomplete: 'off', maxlength: '260', value: e.pfad || '', disabled: dis, title: tt, oninput: ev => { e.pfad = ev.target.value; } }),
+          h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: t('btn.entfernen'), onclick: () => { list.splice(i, 1); draw(); } })));
       });
-      if (!list.length) kids.push(h('p', { class: 'muted', text: 'Noch keine eigenen Ordner eingetragen.' }));
+      if (!list.length) kids.push(h('p', { class: 'muted', text: t('spo.keine') }));
       kids.push(h('div', { class: 'toolbar' },
-        h('button', { type: 'button', class: '', disabled: dis || list.length >= 50, title: tt, text: 'Ordner hinzufügen', onclick: () => { list.push({ plattform: 'Andere', pfad: '' }); draw(); } }),
-        h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: 'Speichern', onclick: save })));
+        h('button', { type: 'button', class: '', disabled: dis || list.length >= 50, title: tt, text: t('spo.hinzu'), onclick: () => { list.push({ plattform: 'Andere', pfad: '' }); draw(); } }),
+        h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: t('btn.speichern'), onclick: save })));
       const m = S.spoMsg;
       if (m && m.err) kids.push(h('p', { class: 'rem', role: 'alert', text: m.err }));
       if (m && m.saved) kids.push(h('div', { class: 'toolbar' },
-        h('span', { class: 'note', text: 'Gespeichert. Die Spiele erscheinen nach dem nächsten Neuberechnen bzw. Scan.' }),
-        h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: 'Jetzt neu berechnen', onclick: recalc })));
+        h('span', { class: 'note', text: t('spo.gespeichert') }),
+        h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: t('spo.neuBerechnen'), onclick: recalc })));
       if (busy) kids.push(h('div', { class: 'note', 'aria-live': 'polite', text: S.spoJob.line }));
     }
     card.replaceChildren(...kids);
@@ -1593,10 +1619,10 @@ function spOrdnerCard() {
   };
   const recalc = async () => {
     if (ro || S.spoJob || S.spJob) return;
-    S.spoJob = { line: 'Wird gestartet …' }; draw();
+    S.spoJob = { line: t('spo.startet') }; draw();
     try {
       await startSpeicherRefresh(l => { if (S.spoJob) { S.spoJob.line = l; draw(); } });
-      toast('Speicherverbraucher neu berechnet');
+      toast(t('spo.toastNeu'));
     } catch (e) { toast(e.message); }
     S.spoJob = null; draw();
   };
@@ -1606,7 +1632,7 @@ function spOrdnerCard() {
     api('/api/spielordner').then(d => {
       S.spOrdner = (Array.isArray(d) ? d : []).map(e => ({ plattform: e.plattform, pfad: e.pfad }));
       draw();
-    }, e => { S.spoMsg = { err: 'Die Spiele-Ordner konnten nicht geladen werden: ' + e.message }; draw(); });
+    }, e => { S.spoMsg = { err: t('spo.ladenFehler', e.message) }; draw(); });
   }
   if (S.ui.focusSpOrdner) {
     S.ui.focusSpOrdner = false;
@@ -1616,10 +1642,8 @@ function spOrdnerCard() {
 }
 
 // ---------------------------------------------------------------- Sysinternals (Abschnitt 15)
-const SYS_INFO = { autorunsc: 'Zeigt alle Autostarts: Dienste, Treiber, Aufgaben, Anmeldung.', sigcheck: 'Prüft Signaturen von Systemdateien.' };
-const SYS_TITLE = 'Sysinternals (Microsoft)';
 function sysCard() {
-  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const body = h('div', null, h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
   const load = () => api('/api/sysinternals').then(d => {
     if (token !== S.rv) return;
@@ -1629,73 +1653,73 @@ function sysCard() {
     if (S.sys.laufend && !S.sys.fehler) {
       followJob(S.sys.laufend, l => { if (token === S.rv && l.length) prog.textContent = l[l.length - 1]; }).then(() => { if (token === S.rv) load(); }, () => { /* Anzeige bleibt */ });
     }
-  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Der Sysinternals-Stand konnte nicht geladen werden: ' + e.message })); });
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('sys.ladenFehler', e.message) })); });
   load();
-  return h('div', { class: 'card', id: 'sys-card' }, h('h2', { text: SYS_TITLE }), body);
+  return h('div', { class: 'card', id: 'sys-card' }, h('h2', { text: t('sys.titel') }), body);
 }
 function sysBody(d, prog) {
-  if (d.fehler) return [h('p', { class: 'rem', text: 'Der Sysinternals-Stand ist nicht lesbar: ' + d.fehler })];
+  if (d.fehler) return [h('p', { class: 'rem', text: t('sys.nichtLesbar', d.fehler) })];
   const ro = readOnly(), running = !!d.laufend, dis = ro || running;
-  const tt = ro ? lockTitle() : (running ? 'Es läuft schon ein Sysinternals-Vorgang.' : null);
+  const tt = ro ? lockTitle() : (running ? t('sys.laeuftSchon') : null);
   const ws = Array.isArray(d.werkzeuge) ? d.werkzeuge : [];
   const da = ws.some(w => w.vorhanden);
   const z = d.zustimmung || {};
   const state = w => {
-    if (w.vorhanden && w.geprueft) return h('span', { class: 'ok', text: `✓ Signiert von ${w.signierer || 'Microsoft Corporation'}${w.version ? ' · Version ' + w.version : ''}${w.geladen ? ' · geladen am ' + fmtDate(w.geladen) : ''}` });
-    if (w.vorhanden) return h('span', { class: 'rem', text: '✗ ' + (w.grund || 'Die Prüfung ist fehlgeschlagen.') });
-    return h('span', { class: 'muted', text: 'nicht eingerichtet' });
+    if (w.vorhanden && w.geprueft) return h('span', { class: 'ok', text: t('sys.signiertVon', w.signierer || 'Microsoft Corporation', w.version ? t('sys.version', w.version) : '', w.geladen ? t('sys.geladenAm', fmtDate(w.geladen)) : '') });
+    if (w.vorhanden) return h('span', { class: 'rem', text: '✗ ' + (w.grund || t('sys.pruefungFehl')) });
+    return h('span', { class: 'muted', text: t('sys.nichtEingerichtet') });
   };
   const row = w => h('tr', null,
-    h('td', null, h('b', { text: w.titel || w.name }), h('div', { class: 'note', text: SYS_INFO[w.name] || '' })),
+    h('td', null, h('b', { text: w.titel || w.name }), h('div', { class: 'note', text: tk('sys.info.' + w.name, '') })),
     h('td', null, state(w)));
   return [
-    h('p', { class: 'note', text: 'Kostenlose Werkzeuge von Microsoft. Morpheus lädt sie nur auf deinen Klick und prüft vor jedem Start die Microsoft-Signatur.' }),
-    ws.length ? h('div', { class: 'tablewrap' }, h('table', null, h('tbody', null, ws.map(row)))) : h('p', { class: 'muted', text: 'Keine Angaben zu den Werkzeugen.' }),
-    h('p', { class: z.akzeptiert ? 'note' : 'muted', text: z.akzeptiert ? `Lizenz angenommen am ${z.zeit ? fmtDate(z.zeit) : '?'}${z.benutzer ? ' (' + z.benutzer + ')' : ''}.` : 'Lizenz noch nicht angenommen.' }),
-    running ? h('p', { class: 'warn', text: 'Es läuft schon ein Sysinternals-Vorgang. Warte, bis er fertig ist.' }) : null,
+    h('p', { class: 'note', text: t('sys.kostenlos') }),
+    ws.length ? h('div', { class: 'tablewrap' }, h('table', null, h('tbody', null, ws.map(row)))) : h('p', { class: 'muted', text: t('sys.keineAngaben') }),
+    h('p', { class: z.akzeptiert ? 'note' : 'muted', text: z.akzeptiert ? t('sys.lizenzAngenommen', z.zeit ? fmtDate(z.zeit) : '?', z.benutzer ? ' (' + z.benutzer + ')' : '') : t('sys.lizenzNein') }),
+    running ? h('p', { class: 'warn', text: t('sys.laeuftWarte') }) : null,
     running ? prog : null,
     ro ? h('p', { class: 'note', text: lockTitle() }) : null,
     h('div', { class: 'toolbar' },
-      h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: da ? 'Neu herunterladen …' : 'Herunterladen …', onclick: () => sysInstallDlg(d) }),
-      da ? h('button', { type: 'button', class: '', text: 'Lizenztext', onclick: () => sysEulaDlg(ws) }) : null,
-      (da || z.akzeptiert) ? h('button', { type: 'button', class: 'danger', disabled: dis, title: tt, text: da ? 'Entfernen …' : 'Zustimmung zurücknehmen …', onclick: () => sysRemoveDlg() }) : null,
-      running ? h('button', { type: 'button', class: 'sm ghost', text: 'Anzeige aktualisieren', onclick: refreshView }) : null),
-    h('p', { class: 'note', text: 'Die Ergebnisse erscheinen nach dem nächsten Scan unter Sicherheit (Autostart & Persistenz, Systemhärtung).' })];
+      h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: da ? t('sys.neuLaden') : t('sys.laden'), onclick: () => sysInstallDlg(d) }),
+      da ? h('button', { type: 'button', class: '', text: t('sys.lizenztext'), onclick: () => sysEulaDlg(ws) }) : null,
+      (da || z.akzeptiert) ? h('button', { type: 'button', class: 'danger', disabled: dis, title: tt, text: da ? t('sys.entfernen') : t('sys.zustimmungZurueck'), onclick: () => sysRemoveDlg() }) : null,
+      running ? h('button', { type: 'button', class: 'sm ghost', text: t('btn.anzeigeAkt'), onclick: refreshView }) : null),
+    h('p', { class: 'note', text: t('sys.ergebnisse') })];
 }
 /** Fehlertext für 403/409 verständlich machen. */
 function sysErr(e) {
-  if (e && e.status === 403) return 'Abgelehnt: ' + e.message;
-  if (e && e.status === 409) return 'Es läuft schon ein Sysinternals-Vorgang. ' + e.message;
-  return (e && e.message) || 'Der Vorgang ist fehlgeschlagen.';
+  if (e && e.status === 403) return t('err.abgelehnt', e.message);
+  if (e && e.status === 409) return t('sys.err409', e.message);
+  return (e && e.message) || t('run.fehlgeschlagen');
 }
 function sysInstallDlg(d) {
   const url = /^https:\/\//.test(String(d.lizenzUrl || '')) ? d.lizenzUrl : 'https://learn.microsoft.com/sysinternals/license-terms';
   const ordner = d.ordner || 'C:\\ProgramData\\Morpheus\\tools';
   const da = (d.werkzeuge || []).some(w => w.vorhanden);
-  const title = da ? 'Sysinternals neu herunterladen' : 'Sysinternals herunterladen';
+  const title = da ? t('sys.dlTitelNeu') : t('sys.dlTitel');
   let wb = null;
   const chk = h('input', { type: 'checkbox', id: 'sys-ok', onchange: () => { if (wb) wb.disabled = !chk.checked; } });
   dlgOpen(title, [
-    h('p', { text: 'Morpheus lädt Autoruns und Sigcheck herunter. Das passiert:' }),
+    h('p', { text: t('sys.dlText') }),
     h('ul', null,
-      h('li', { text: 'Quelle: download.sysinternals.com (Microsoft), zusammen ca. 4 MB.' }),
-      h('li', { text: `Ablage: ${ordner} (nur Administratoren dürfen dort schreiben).` }),
-      h('li', { text: 'Vor jedem Start prüft Morpheus die Microsoft-Signatur der Programme. Ein Abgleich mit VirusTotal findet nicht statt.' }),
-      h('li', { text: 'Außer der Download-Anfrage an Microsoft verlassen keine Daten deinen PC.' })),
-    h('h3', { text: 'Lizenz in Kürze' }),
-    h('p', { text: 'Die Werkzeuge sind kostenlos. Du nutzt sie nach den Sysinternals-Lizenzbedingungen von Microsoft. Du darfst die Programme nicht weitergeben oder verkaufen, und es gibt keine Gewähr.' }),
-    h('p', null, h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: 'Lizenzbedingungen lesen' })),
-    h('label', { class: 'chk' }, chk, 'Ich habe die Sysinternals-Lizenzbedingungen gelesen und nehme sie an.'),
-    h('div', { class: 'note', text: 'Windows fragt danach in einem eigenen Fenster nach deiner Bestätigung.' })],
-  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Herunterladen', primary: true, disabled: true, onClick: () => runSysInstall(title) }]);
+      h('li', { text: t('sys.dlL1') }),
+      h('li', { text: t('sys.dlL2', ordner) }),
+      h('li', { text: t('sys.dlL3') }),
+      h('li', { text: t('sys.dlL4') })),
+    h('h3', { text: t('sys.lizKurz') }),
+    h('p', { text: t('sys.lizText') }),
+    h('p', null, h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: t('sys.lizLesen') })),
+    h('label', { class: 'chk' }, chk, t('sys.lizChk')),
+    h('div', { class: 'note', text: t('akz.windowsFragtDanach') })],
+  [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('sys.dlKnopf'), primary: true, disabled: true, onClick: () => runSysInstall(title) }]);
   wb = $('#dlg-buttons').lastElementChild;
 }
 async function runSysInstall(title) {
-  const jv = jobView([['Windows-Bestätigung', /bestätig/i], ['Autoruns laden und prüfen', /autoruns/i], ['Sigcheck laden und prüfen', /sigcheck/i]]);
-  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  const jv = jobView([[t('def.step.win'), re(t('def.re.win'))], [t('sys.step.autoruns'), /autoruns/i], [t('sys.step.sigcheck'), /sigcheck/i]]);
+  dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let job = null, err = null;
   try {
-    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/sysinternals/install', { method: 'POST', body: { eulaAkzeptiert: true } });
     job = await followJob(r.jobId, jv.lines);
   } catch (e) { err = e; }
@@ -1703,49 +1727,49 @@ async function runSysInstall(title) {
   jv.finish(ok);
   const body = [...jv.nodes];
   if (err) body.push(h('p', { class: 'rem', text: sysErr(err) }));
-  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || (job && job.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || (job && job.error) || t('run.fehlgeschlagen') }));
   else if (res) body.push(sysResult(res));
-  dlgOpen(title, body, [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  dlgOpen(title, body, [{ label: t('btn.fertig'), primary: true, onClick: dlgClose }]);
   Dlg.running = false;
   if (S.view === 'werkzeuge') refreshView();
 }
 function sysResult(res) {
   const ws = [].concat(res.werkzeuge || []).filter(Boolean);
-  return h('div', null, h('h3', { text: 'Ergebnis' }),
+  return h('div', null, h('h3', { text: t('run.ergebnis') }),
     ws.length ? h('ul', { class: 'result' }, ws.map(w => h('li', null, h('b', { text: w.titel || w.name }), ' ',
-      w.vorhanden && w.geprueft ? h('span', { class: 'ok', text: `Signiert von ${w.signierer || 'Microsoft Corporation'}${w.version ? ' · Version ' + w.version : ''}` }) : h('span', { class: 'rem', text: w.grund || 'nicht eingerichtet' })))) : null,
+      w.vorhanden && w.geprueft ? h('span', { class: 'ok', text: t('sys.signiertKurz', w.signierer || 'Microsoft Corporation', w.version ? t('sys.version', w.version) : '') }) : h('span', { class: 'rem', text: w.grund || t('sys.nichtEingerichtet') })))) : null,
     res.meldung ? h('p', { text: res.meldung }) : null);
 }
 async function sysEulaDlg(ws) {
   const names = ws.map(w => ({ name: w.name, titel: w.titel || w.name })).filter(w => w.name);
-  const pre = h('pre', { class: 'log eula', tabindex: '0', 'aria-live': 'polite', text: 'Lädt …' });
+  const pre = h('pre', { class: 'log eula', tabindex: '0', 'aria-live': 'polite', text: t('laedt') });
   const tabs = h('div', { class: 'toolbar' });
   const show = async n => {
     [...tabs.children].forEach((b, i) => b.classList.toggle('primary', names[i].name === n.name));
-    pre.textContent = 'Lädt …';
+    pre.textContent = t('laedt');
     try {
       const r = await api('/api/sysinternals/eula?name=' + encodeURIComponent(n.name));
-      pre.textContent = r && typeof r.text === 'string' && r.text ? r.text : 'Lizenztext nicht vorhanden (wird beim Herunterladen mitgeliefert).';
+      pre.textContent = r && typeof r.text === 'string' && r.text ? r.text : t('sys.eulaFehlt');
     } catch (e) { pre.textContent = e.message; }
   };
   names.forEach(n => tabs.append(h('button', { type: 'button', class: 'sm', text: n.titel, onclick: () => show(n) })));
-  dlgOpen('Sysinternals-Lizenztext', [tabs, pre], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
-  if (names.length) show(names[0]); else pre.textContent = 'Lizenztext nicht vorhanden (wird beim Herunterladen mitgeliefert).';
+  dlgOpen(t('sys.eulaTitel'), [tabs, pre], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
+  if (names.length) show(names[0]); else pre.textContent = t('sys.eulaFehlt');
 }
 function sysRemoveDlg() {
-  dlgOpen('Sysinternals entfernen', [
-    h('p', { text: 'Die Werkzeuge werden gelöscht und die Lizenz-Zustimmung zurückgenommen. Die Sysinternals-Prüfungen im Scan werden dann übersprungen.' }),
-    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung.' })],
-  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Entfernen', danger: true, onClick: goSysRemove }]);
+  dlgOpen(t('sys.rmTitel'), [
+    h('p', { text: t('sys.rmText') }),
+    h('div', { class: 'note', text: t('sys.rmNote') })],
+  [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.entfernen'), danger: true, onClick: goSysRemove }]);
 }
 async function goSysRemove() {
-  const title = 'Sysinternals entfernen';
-  dlgOpen(title, [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Wartet auf Windows …', disabled: true }], { lock: true });
+  const title = t('sys.rmTitel');
+  dlgOpen(title, [h('p', { text: t('win.bestaetigen') })], [{ label: t('btn.wartet'), disabled: true }], { lock: true });
   try {
     await api('/api/sysinternals/entfernen', { method: 'POST' });
-    dlgOpen(title, [h('p', { class: 'ok', text: 'Die Werkzeuge wurden entfernt und die Lizenz-Zustimmung zurückgenommen.' })], [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+    dlgOpen(title, [h('p', { class: 'ok', text: t('sys.rmFertig') })], [{ label: t('btn.fertig'), primary: true, onClick: dlgClose }]);
   } catch (e) {
-    dlgOpen(title, [h('p', { class: 'rem', text: sysErr(e) })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    dlgOpen(title, [h('p', { class: 'rem', text: sysErr(e) })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
   }
   Dlg.running = false;
   if (S.view === 'werkzeuge') refreshView();
@@ -1753,18 +1777,18 @@ async function goSysRemove() {
 
 // Defender-Aufgabe (Signaturen, Schnellscan): Bestätigung in der GUI, dann Windows-Bestätigung, dann Job
 function startDefender(art) {
-  const sig = art === 'signaturen', title = sig ? 'Signaturen aktualisieren' : 'Schnellscan starten';
+  const sig = art === 'signaturen', title = sig ? t('def.signaturenAkt') : t('def.schnellscanStart');
   dlgOpen(title, [
-    h('p', { text: sig ? 'Microsoft Defender lädt die neuesten Virensignaturen und installiert sie. Das dauert meist weniger als eine Minute.' : 'Microsoft Defender prüft die wichtigsten Bereiche deines PCs auf Schadsoftware. Das dauert einige Minuten; du kannst den PC dabei weiter benutzen.' }),
-    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung. Morpheus ändert keine Einstellungen; findet Defender etwas, wendet er seine üblichen Maßnahmen an (z. B. Quarantäne).' })],
-  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Starten', primary: true, onClick: () => runDefender(art, title) }]);
+    h('p', { text: sig ? t('def.dlgSig') : t('def.dlgScan') }),
+    h('div', { class: 'note', text: t('def.dlgNote') })],
+  [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.starten'), primary: true, onClick: () => runDefender(art, title) }]);
 }
 async function runDefender(art, title) {
-  const jv = jobView([['Windows-Bestätigung', /bestätig/i], ['Stand lesen', /stand vorher/i], [art === 'signaturen' ? 'Signaturen aktualisieren' : 'Schnellscan', /signaturen werden|schnellscan läuft/i], ['Stand prüfen', /stand nachher/i], ['Funde lesen', /funde seit/i]]);
-  dlgOpen(title, jv.nodes, [{ label: 'Läuft …', disabled: true }], { lock: true });
+  const jv = jobView([[t('def.step.win'), re(t('def.re.win'))], [t('def.step.standLesen'), re(t('def.re.standVorher'))], [art === 'signaturen' ? t('def.signaturenAkt') : t('def.step.schnellscan'), re(t('def.re.laeuft'))], [t('def.step.standPruefen'), re(t('def.re.standNachher'))], [t('def.step.funde'), re(t('def.re.fundeSeit'))]]);
+  dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let job = null, err = null;
   try {
-    jv.lines(['Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …']);
+    jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/defender/run', { method: 'POST', body: { art } });
     job = await followJob(r.jobId, jv.lines);
   } catch (e) { err = e; }
@@ -1772,57 +1796,57 @@ async function runDefender(art, title) {
   jv.finish(ok);
   const body = [...jv.nodes];
   if (err) body.push(h('p', { class: 'rem', text: err.message }));
-  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (!ok) body.push(h('p', { class: 'rem', text: (res && res.error) || t('run.fehlgeschlagen') }));
   else if (res) body.push(defResult(res));
-  dlgOpen(title, body, [{ label: 'Fertig', primary: true, onClick: dlgClose }]);
+  dlgOpen(title, body, [{ label: t('btn.fertig'), primary: true, onClick: dlgClose }]);
   Dlg.running = false;
   if (S.view === 'werkzeuge') refreshView();
 }
 function defResult(res) {
   const v = res.vorher || {}, n = res.nachher || {}, funde = [].concat(res.funde || []).filter(Boolean);
-  const cell = (st, k) => st.fehler ? 'nicht lesbar' : (k === 'signaturVersion' ? (st[k] || '–') : (st[k] ? fmtDate(st[k]) : (k === 'schnellscan' ? 'noch nie' : '–')));
+  const cell = (st, k) => st.fehler ? t('def.nichtLesbarZelle') : (k === 'signaturVersion' ? (st[k] || '–') : (st[k] ? fmtDate(st[k]) : (k === 'schnellscan' ? t('def.nochNie') : '–')));
   const row = (label, k) => h('tr', null, h('td', { text: label }), h('td', { text: cell(v, k) }), h('td', { text: cell(n, k) }));
-  return h('div', null, h('h3', { text: 'Ergebnis' }),
-    h('div', { class: 'tablewrap' }, h('table', null, h('thead', null, h('tr', null, ['', 'Vorher', 'Nachher'].map(x => h('th', { text: x })))),
-      h('tbody', null, row('Signaturen vom', 'signaturen'), row('Signaturversion', 'signaturVersion'), row('Letzter Schnellscan', 'schnellscan')))),
-    h('h3', { text: 'Funde' }),
-    funde.length ? h('ul', { class: 'result' }, funde.map(f => h('li', null, h('b', { text: f.name || 'Unbekannter Fund' }), ' ', h('span', { class: 'muted', text: f.zeit ? fmtDate(f.zeit) : '' }), ' ', h('span', { class: f.erfolg === false ? 'rem' : 'warn', text: f.aktion || '' }),
-      f.dateien ? h('div', { class: 'note', text: f.dateien }) : null))) : h('p', { class: 'ok', text: 'Keine Funde.' }),
+  return h('div', null, h('h3', { text: t('run.ergebnis') }),
+    h('div', { class: 'tablewrap' }, h('table', null, h('thead', null, h('tr', null, ['', t('def.hVorher'), t('def.hNachher')].map(x => h('th', { text: x })))),
+      h('tbody', null, row(t('def.lblSignaturenVom'), 'signaturen'), row(t('def.lblSigVersion'), 'signaturVersion'), row(t('def.lblSchnellscan'), 'schnellscan')))),
+    h('h3', { text: t('def.fundeTitel') }),
+    funde.length ? h('ul', { class: 'result' }, funde.map(f => h('li', null, h('b', { text: f.name || t('defd.unbekannt') }), ' ', h('span', { class: 'muted', text: f.zeit ? fmtDate(f.zeit) : '' }), ' ', h('span', { class: f.erfolg === false ? 'rem' : 'warn', text: f.aktion || '' }),
+      f.dateien ? h('div', { class: 'note', text: f.dateien }) : null))) : h('p', { class: 'ok', text: t('def.keineFunde') }),
     res.meldung ? h('p', { text: res.meldung }) : null,
-    res.dauerSek != null ? h('div', { class: 'note', text: 'Dauer: ' + fmtDur(res.dauerSek) }) : null);
+    res.dauerSek != null ? h('div', { class: 'note', text: t('def.dauer', fmtDur(res.dauerSek)) }) : null);
 }
 
 // Offline-Scan: Warnung mit Häkchen, Windows-Bestätigung, dann Countdown (läuft im Server; die GUI zeigt nur an und meldet sich jede Sekunde)
 function startOffline() {
   let wb = null;
   const chk = h('input', { type: 'checkbox', id: 'off-ok', onchange: () => { if (wb) wb.disabled = !chk.checked; } });
-  dlgOpen('Microsoft Defender Offline-Scan', [
-    h('p', { class: 'warn', text: 'Der PC startet sofort neu (nach 15 Sekunden Countdown). Der Scan dauert ca. 15 Minuten, danach startet Windows normal. Vorher alle Dateien speichern und Programme schließen.' }),
-    h('label', { class: 'chk' }, chk, 'Ich habe alles gespeichert und verstanden, dass der PC neu startet.')],
-  [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Weiter', danger: true, disabled: true, onClick: goOffline }]);
+  dlgOpen(t('off.titel'), [
+    h('p', { class: 'warn', text: t('off.warn') }),
+    h('label', { class: 'chk' }, chk, t('off.chk'))],
+  [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.weiter'), danger: true, disabled: true, onClick: goOffline }]);
   wb = $('#dlg-buttons').lastElementChild;
 }
 async function goOffline() {
-  const title = 'Microsoft Defender Offline-Scan';
-  dlgOpen(title, [h('p', { text: 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …' })], [{ label: 'Wartet auf Windows …', disabled: true }], { lock: true });
+  const title = t('off.titel');
+  dlgOpen(title, [h('p', { text: t('win.bestaetigen') })], [{ label: t('btn.wartet'), disabled: true }], { lock: true });
   try {
     const st = await api('/api/defender/offline', { method: 'POST', body: { bestaetigt: true } });
     openCountdown(st);
   } catch (e) {
-    dlgOpen(title, [h('p', { class: 'rem', text: e.message })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    dlgOpen(title, [h('p', { class: 'rem', text: e.message })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
   }
 }
 function openCountdown(st0) {
-  const title = 'Microsoft Defender Offline-Scan';
+  const title = t('off.titel');
   const ctl = { alive: true, done: false, busy: false, fails: 0 };
   const num = h('div', { class: 'cd-num', 'aria-hidden': 'true' }), txt = h('p', { class: 'cd-txt', role: 'timer', 'aria-live': 'off' }), msg = h('p', { class: 'note' });
-  const setRest = r => { const n = Math.max(0, Math.round(Number(r) || 0)); num.textContent = String(n); txt.textContent = `Der PC startet in ${n} ${n === 1 ? 'Sekunde' : 'Sekunden'} neu.`; };
+  const setRest = r => { const n = Math.max(0, Math.round(Number(r) || 0)); num.textContent = String(n); txt.textContent = n === 1 ? t('off.restEins', n) : t('off.restN', n); };
   const btns = () => [...$('#dlg-buttons').children];
   const finish = s => {
     if (ctl.done) return; ctl.done = ctl.alive = false;
     const started = s.status === 'gestartet';
-    dlgOpen(title, [h('p', { class: s.status === 'fehler' ? 'rem' : (started ? 'warn' : ''), text: started ? 'Der PC startet jetzt neu …' : (s.meldung || (s.status === 'abgebrochen' ? 'Der Offline-Scan wurde abgebrochen. Es passiert nichts.' : 'Der Countdown ist beendet.')) }), started && s.meldung ? h('p', { class: 'note', text: s.meldung }) : null],
-      [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    dlgOpen(title, [h('p', { class: s.status === 'fehler' ? 'rem' : (started ? 'warn' : ''), text: started ? t('off.startetJetzt') : (s.meldung || (s.status === 'abgebrochen' ? t('off.abgebrochen') : t('off.beendet'))) }), started && s.meldung ? h('p', { class: 'note', text: s.meldung }) : null],
+      [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
   };
   const act = async path => {
     if (ctl.busy || ctl.done) return;
@@ -1835,8 +1859,8 @@ function openCountdown(st0) {
   };
   const cancel = () => act('abbrechen'), now = () => act('jetzt');
   setRest(st0.rest);
-  dlgOpen(title, [h('p', { class: 'warn', text: 'Speichere alles und schließe deine Programme.' }), num, txt, msg],
-    [{ label: 'Abbrechen', primary: true, onClick: cancel }, { label: 'Jetzt neu starten', danger: true, onClick: now }], { onEsc: cancel, onClose: () => { ctl.alive = false; } });
+  dlgOpen(title, [h('p', { class: 'warn', text: t('off.speichere') }), num, txt, msg],
+    [{ label: t('btn.abbrechen'), primary: true, onClick: cancel }, { label: t('off.jetzt'), danger: true, onClick: now }], { onEsc: cancel, onClose: () => { ctl.alive = false; } });
   (async () => {   // genau eine Abfrage pro Sekunde, nie überlappend
     while (ctl.alive) {
       const t0 = Date.now();
@@ -1847,7 +1871,7 @@ function openCountdown(st0) {
         if (s.status === 'countdown') { if (!ctl.busy) msg.textContent = ''; setRest(s.rest); } else { finish(s); break; }
       } catch (e) {
         if (e.status === 401) break;
-        if (++ctl.fails >= 2 && !ctl.busy) msg.textContent = 'Keine Verbindung zu Morpheus. Der Server bricht den Countdown selbst ab, wenn er dich nicht mehr erreicht.';
+        if (++ctl.fails >= 2 && !ctl.busy) msg.textContent = t('off.keineVerbindung');
       }
       await sleep(Math.max(0, 1000 - (Date.now() - t0)));
     }
@@ -1855,38 +1879,35 @@ function openCountdown(st0) {
 }
 
 // ---------------------------------------------------------------- Wartung & Reparatur, Programme aktualisieren (Abschnitt 18)
-const WT_KLASSE = { diagnose: ['INFO', 'liest nur'], wartung: ['OK', 'harmlos'], reparatur: ['WARN', 'nicht umkehrbar'] };
-const WT_ERG = { ok: ['OK', 'in Ordnung'], repariert: ['OK', 'repariert'], reparierbar: ['WARN', 'reparierbar'], problem: ['WARN', 'Problem'], fehler: ['CRIT', 'Fehler'], unbekannt: ['INFO', 'nicht eindeutig'] };
-const WT_STATUS = { erledigt: 'Erledigt', fehlgeschlagen: 'Fehlgeschlagen', abgebrochen: 'Abgebrochen', zeitueberschreitung: 'Zeitlimit überschritten' };
-const WT_PAKET = { aktualisiert: ['OK', 'aktualisiert'], 'kein-update': ['OK', 'kein Update nötig'], neustart: ['WARN', 'Neustart nötig'], 'laeuft-noch': ['WARN', 'Programm läuft noch'], fehlgeschlagen: ['CRIT', 'fehlgeschlagen'], abgebrochen: ['INFO', 'abgebrochen'] };
+let WT_KLASSE = {}, WT_ERG = {}, WT_STATUS = {}, WT_PAKET = {};   // [Status-Farbe, Anzeigetext]; gefüllt von buildTexts()
+const UPD_KAT = { 'Programm': 'upd.kat.programm', 'Id gekürzt': 'upd.kat.idGekuerzt', 'Spiel/Launcher': 'upd.kat.spielLauncher', 'aktualisiert sich selbst': 'upd.kat.selbst' };   // winget-Kategorien (Kennung -> Textschlüssel)
 const WT_GRUPPEN_OHNE = ['Wiederherstellung', 'Programme'];
 const WT_PUNKT_ID = 'wiederherstellung.punkt', WT_WINGET_ID = 'winget.upgrade';
-const WT_WIN_TEXT = 'Bitte im Windows-Fenster „Morpheus – Änderung bestätigen“ mit „Ja“ bestätigen …';
 const WT = new Map();          // jobId -> Verfolger eines laufenden Wartungs- bzw. Update-Jobs (bleibt auch ohne Dialog aktiv)
 const WT_SEARCH = new Map();   // jobId -> Verfolger einer Update-Suche
 S.wt = { tools: [], sel: new Set(), report: null, scrollReport: false };
 
 const klasseChip = k => { const c = WT_KLASSE[k] || ['INFO', String(k || '')]; return h('span', { class: 'chip ' + c[0], text: c[1] }); };
 const wtChip = (tab, key, fallback) => { const c = tab[key]; return h('span', { class: 'chip ' + (c ? c[0] : 'INFO'), text: c ? c[1] : (fallback || String(key || '')) }); };
-const wtErr = e => e && e.status === 403 ? 'Abgelehnt: ' + e.message : ((e && e.message) || 'Der Vorgang ist fehlgeschlagen.');
+const wtErr = e => e && e.status === 403 ? t('err.abgelehnt', e.message) : ((e && e.message) || t('run.fehlgeschlagen'));
 /** Werkzeug aus dem zuletzt geladenen Katalog (mit Rückfall für winget und den Wiederherstellungspunkt). */
 function wtTool(id) {
   const w = (S.wt.tools || []).find(x => x.id === id);
   if (w) return w;
-  if (id === WT_WINGET_ID) return { id, titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', punkt: true, abbruch: 'nach-paket', befehl: 'winget upgrade --id <Paket-Id> --exact --source winget --silent' };
-  if (id === WT_PUNKT_ID) return { id, titel: 'Wiederherstellungspunkt anlegen', erklaerung: 'Legt jetzt einen Wiederherstellungspunkt an und prüft ihn.', klasse: 'wartung', punkt: false, abbruch: 'nein', dauer: 'etwa eine Minute', befehl: "Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS" };
-  return { id, titel: String(id || 'Wartung'), klasse: 'wartung', punkt: false, abbruch: 'nein' };
+  if (id === WT_WINGET_ID) return { id, titel: t('wt.winget.titel'), klasse: 'reparatur', punkt: true, abbruch: 'nach-paket', befehl: 'winget upgrade --id <Paket-Id> --exact --source winget --silent' };
+  if (id === WT_PUNKT_ID) return { id, titel: t('wt.punkt.titel'), erklaerung: t('wt.punkt.erkl'), klasse: 'wartung', punkt: false, abbruch: 'nein', dauer: t('wt.punkt.dauer'), befehl: "Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS" };
+  return { id, titel: String(id || t('wt.fallbackTitel')), klasse: 'wartung', punkt: false, abbruch: 'nein' };
 }
 function wtCfg(id, abbruch) {
   const w = wtTool(id), winget = id === WT_WINGET_ID;
-  return { w, title: winget ? 'Programme aktualisieren' : w.titel, winget, punkt: !!w.punkt || winget || id === WT_PUNKT_ID, abbruch: abbruch || w.abbruch || 'nein' };
+  return { w, title: winget ? t('menu.unter.updates') : w.titel, winget, punkt: !!w.punkt || winget || id === WT_PUNKT_ID, abbruch: abbruch || w.abbruch || 'nein' };
 }
 function wtSteps(cfg) {
-  const st = [['Windows-Bestätigung', /bestätig/i]];
-  if (cfg.punkt) st.push(['Wiederherstellungspunkt anlegen und prüfen', /wiederherstellungspunkt/i]);
-  if (cfg.w.id !== WT_PUNKT_ID) st.push([cfg.winget ? 'Programme werden aktualisiert' : 'Werkzeug läuft', /^\[[^\]]*\] (Starte:|Paket \d)/]);
+  const st = [[t('def.step.win'), re(t('def.re.win'))]];
+  if (cfg.punkt) st.push([t('wt.step.punkt'), re(t('wt.re.punkt'))]);
+  if (cfg.w.id !== WT_PUNKT_ID) st.push([cfg.winget ? t('wt.step.winget') : t('wt.step.laeuft'), new RegExp(t('wt.re.start'))]);
   // winget: nur die Abschlusszeile „<ok> von <n> Programmen erledigt …“ (jedes Paket meldet auch „Ergebnis: <Name>: …“)
-  st.push(['Ergebnis', cfg.winget ? /Ergebnis: \d+ von \d+/ : /Ergebnis:/]);
+  st.push([t('wt.step.ergebnis'), new RegExp(cfg.winget ? t('wt.re.ergebnisWinget') : t('wt.re.ergebnis'))]);
   return st;
 }
 const wtBefehl = (w, lw) => String(w.befehl || '').replace(/<LW>/g, lw || '<LW>');
@@ -1896,7 +1917,7 @@ function wtCtl(jobId, cfg) {
   let c = WT.get(jobId);
   if (c) return c;
   c = { jobId, cfg, jv: jobView(wtSteps(cfg)), bg: true, done: false, cancelling: false, job: null, err: null };
-  c.jv.lines(['Windows-Bestätigung erteilt, der Auftrag läuft.']);
+  c.jv.lines([t('wt.erteilt')]);
   WT.set(jobId, c);
   followJob(jobId, c.jv.lines).then(j => { c.job = j; }, e => { c.err = e; }).then(() => wtDone(c));
   return c;
@@ -1905,9 +1926,9 @@ function wtShow(c) {
   c.bg = false;
   if (c.done) { wtResultDlg(c); return; }
   const btns = [];
-  if (c.cfg.abbruch !== 'nein') btns.push({ label: c.cancelling ? 'Abbruch angefordert …' : (c.cfg.winget ? 'Nach dem aktuellen Programm aufhören' : 'Abbrechen'), disabled: c.cancelling, onClick: ev => wtCancel(c, ev.currentTarget) });
-  btns.push({ label: 'Im Hintergrund weiterlaufen lassen', onClick: () => wtBackground(c) });
-  dlgOpen(c.cfg.title, [...c.jv.nodes, c.cfg.abbruch === 'nein' ? h('div', { class: 'note', text: 'Dieses Werkzeug lässt sich nicht sicher abbrechen. Du kannst das Fenster im Hintergrund weiterlaufen lassen.' }) : null], btns, { lock: true });
+  if (c.cfg.abbruch !== 'nein') btns.push({ label: c.cancelling ? t('wt.abbruchAngefordert') : (c.cfg.winget ? t('wt.nachAktuellem') : t('btn.abbrechen')), disabled: c.cancelling, onClick: ev => wtCancel(c, ev.currentTarget) });
+  btns.push({ label: t('wt.hintergrund'), onClick: () => wtBackground(c) });
+  dlgOpen(c.cfg.title, [...c.jv.nodes, c.cfg.abbruch === 'nein' ? h('div', { class: 'note', text: t('wt.nichtAbbrechbar') }) : null], btns, { lock: true });
 }
 function wtBackground(c) {
   c.bg = true; dlgClose();
@@ -1915,11 +1936,11 @@ function wtBackground(c) {
 }
 async function wtCancel(c, btn) {
   if (c.cancelling) return;
-  c.cancelling = true; btn.disabled = true; btn.textContent = 'Abbruch angefordert …';
+  c.cancelling = true; btn.disabled = true; btn.textContent = t('wt.abbruchAngefordert');
   try {
     const r = await api('/api/wartung/abbrechen', { method: 'POST', body: { jobId: c.jobId } });
     if (r && r.meldung) toast(r.meldung);
-  } catch (e) { c.cancelling = false; btn.disabled = false; btn.textContent = c.cfg.winget ? 'Nach dem aktuellen Programm aufhören' : 'Abbrechen'; toast(e.message); }
+  } catch (e) { c.cancelling = false; btn.disabled = false; btn.textContent = c.cfg.winget ? t('wt.nachAktuellem') : t('btn.abbrechen'); toast(e.message); }
 }
 function wtDone(c) {
   c.done = true; WT.delete(c.jobId);
@@ -1933,19 +1954,19 @@ function wtDone(c) {
   }
   if (c.bg) {
     const pf = res && res.status === 'punkt-fehlt';
-    const st = c.err ? c.err.message : (res && res.status ? (WT_STATUS[res.status] || (pf ? 'kein Wiederherstellungspunkt, nichts gestartet. Unter „Werkzeuge“ kannst du bewusst ohne Punkt starten.' : res.status)) : (c.job && c.job.status === 'failed' ? 'fehlgeschlagen' : 'fertig'));
-    toast(`${c.cfg.title}: ${st}`);
+    const st = c.err ? c.err.message : (res && res.status ? (WT_STATUS[res.status] || (pf ? t('wt.punktFehltToast') : res.status)) : (c.job && c.job.status === 'failed' ? t('jr.s.fehlgeschlagen') : t('wt.fertig')));
+    toast(t('wt.toast', c.cfg.title, st));
   } else wtResultDlg(c);
   if (S.view === 'werkzeuge') refreshView();
 }
 
 /** Start: Windows-Bestätigung abwarten, dann dem Job im Dialog folgen. post(ohnePunkt) liefert { jobId }. */
 async function wtRun(cfg, post, ohnePunkt) {
-  dlgOpen(cfg.title, [h('p', { text: WT_WIN_TEXT }), h('div', { class: 'note', text: 'Danach beginnt die Arbeit; dieses Fenster zeigt den Ablauf.' })], [{ label: 'Wartet auf Windows …', disabled: true }], { lock: true });
+  dlgOpen(cfg.title, [h('p', { text: t('win.bestaetigen') }), h('div', { class: 'note', text: t('wt.danachArbeit') })], [{ label: t('btn.wartet'), disabled: true }], { lock: true });
   let r;
   try { r = await post(!!ohnePunkt); }
   catch (e) {
-    dlgOpen(cfg.title, [h('p', { class: 'rem', text: wtErr(e) })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+    dlgOpen(cfg.title, [h('p', { class: 'rem', text: wtErr(e) })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
     if (S.view === 'werkzeuge') refreshView();
     return;
   }
@@ -1962,35 +1983,35 @@ function wtStartDlg(w, lw) {
   const cfg = wtCfg(w.id), cmd = wtBefehl(w, lw);
   const body = [
     w.erklaerung ? h('p', { text: w.erklaerung }) : null,
-    h('p', null, klasseChip(w.klasse), w.dauer ? [' ', h('span', { class: 'wt-dur', text: 'Dauer: ' + w.dauer })] : null, lw ? [' ', h('span', { class: 'wt-dur', text: 'Laufwerk: ' + lw })] : null),
-    cmdBlock(cmd, true, /^Checkpoint-Computer/.test(cmd) ? 'PowerShell · Administrator' : 'Eingabeaufforderung · Administrator'),
-    w.klasse === 'reparatur' ? h('div', { class: 'wt-box', role: 'note' }, h('b', { text: 'Nicht umkehrbar: ' }), 'kein Rückgängig unter „Änderungen“. Vorher wird ein Wiederherstellungspunkt angelegt und geprüft.') : null,
-    w.internet ? h('p', { class: 'note', text: 'Braucht eine Internetverbindung (Windows Update).' }) : null,
+    h('p', null, klasseChip(w.klasse), w.dauer ? [' ', h('span', { class: 'wt-dur', text: t('wt.dauer', w.dauer) })] : null, lw ? [' ', h('span', { class: 'wt-dur', text: t('wt.laufwerk', lw) })] : null),
+    cmdBlock(cmd, true, /^Checkpoint-Computer/.test(cmd) ? t('cmd.psAdmin') : t('cmd.cmdAdmin')),
+    w.klasse === 'reparatur' ? h('div', { class: 'wt-box', role: 'note' }, h('b', { text: t('wt.nichtUmkehrbar') }), t('wt.nichtUmkehrbarText')) : null,
+    w.internet ? h('p', { class: 'note', text: t('wt.internetNote') }) : null,
     w.hinweis ? h('p', { class: 'note', text: w.hinweis }) : null,
-    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung.' })];
-  dlgOpen(w.titel, body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Starten', primary: true, onClick: () => wtRun(cfg, wtPostStart(w, lw)) }]);
+    h('div', { class: 'note', text: t('win.fragtVorher') })];
+  dlgOpen(w.titel, body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.starten'), primary: true, onClick: () => wtRun(cfg, wtPostStart(w, lw)) }]);
 }
 
 function wtResultNodes(res, cfg) {
-  const z = res.zusammenfassung || {}, kids = [h('h3', { text: 'Ergebnis' })];
+  const z = res.zusammenfassung || {}, kids = [h('h3', { text: t('run.ergebnis') })];
   kids.push(h('p', { class: 'wt-res' }, h('b', { text: WT_STATUS[res.status] || res.status || '' }), z.ergebnis ? [' ', wtChip(WT_ERG, z.ergebnis)] : null,
-    res.ohnePunkt ? [' ', h('span', { class: 'chip WARN', text: 'ohne Wiederherstellungspunkt' })] : null));
+    res.ohnePunkt ? [' ', h('span', { class: 'chip WARN', text: t('jr.ohnePunkt') })] : null));
   if (z.text) kids.push(h('p', { text: z.text }));
-  if (z.empfehlung) kids.push(h('p', null, h('b', { text: 'Empfehlung: ' }), z.empfehlung));
+  if (z.empfehlung) kids.push(h('p', null, h('b', { text: t('wt.empfehlung') }), z.empfehlung));
   const det = [].concat(z.details || []).filter(Boolean);
   if (det.length) kids.push(h('ul', { class: 'explain' }, det.map(x => h('li', { text: String(x) }))));
   const pk = [].concat(res.pakete || []).filter(Boolean);
   if (pk.length) kids.push(h('div', { class: 'tbl-scroll wt-upd' }, h('table', null,
-    h('thead', null, h('tr', null, ['Programm', 'von', 'auf', 'Ergebnis'].map(x => h('th', { text: x })))),
+    h('thead', null, h('tr', null, [t('wt.hProgramm'), t('wt.hVon'), t('wt.hAuf'), t('run.ergebnis')].map(x => h('th', { text: x })))),
     h('tbody', null, pk.map(p => h('tr', null, h('td', { text: p.name || p.id }), h('td', { text: p.von || '' }), h('td', { text: p.auf || '' }),
       h('td', null, wtChip(WT_PAKET, p.status), p.text ? h('div', { class: 'note', text: p.text }) : null)))))));
   const meta = [];
-  if (res.dauerSek != null) meta.push('Dauer ' + fmtDur(res.dauerSek));
-  if (res.exitCode != null) meta.push('Exit-Code ' + res.exitCode);
+  if (res.dauerSek != null) meta.push(t('jr.dauer', fmtDur(res.dauerSek)));
+  if (res.exitCode != null) meta.push(t('jr.exit', res.exitCode));
   if (meta.length) kids.push(h('p', { class: 'note', text: meta.join(' · ') }));
-  if (res.punkt && res.punkt.seq != null) kids.push(h('p', { class: 'note' }, 'Wiederherstellungspunkt ', h('code', { text: '#' + res.punkt.seq }), res.punkt.zeit ? ` (${fmtDate(res.punkt.zeit)})` : ''));
+  if (res.punkt && res.punkt.seq != null) kids.push(h('p', { class: 'note' }, tn('jr.punktNr', h('code', { text: '#' + res.punkt.seq })), res.punkt.zeit ? ` (${fmtDate(res.punkt.zeit)})` : ''));
   if (res.meldung) kids.push(h('p', { class: 'note wt-msg', text: res.meldung }));
-  if (res.status !== 'punkt-fehlt') kids.push(h('p', { class: 'note', text: 'Steht unter „Änderungen“ im Protokoll (kein Rückgängig).' }));
+  if (res.status !== 'punkt-fehlt') kids.push(h('p', { class: 'note', text: t('wt.imProtokoll') }));
   return kids;
 }
 function wtResultDlg(c) {
@@ -2000,14 +2021,14 @@ function wtResultDlg(c) {
   c.jv.finish(ok);
   const body = [...c.jv.nodes];
   if (err) body.push(h('p', { class: 'rem', text: err.message }));
-  else if (!res || res.error || !res.status) body.push(h('p', { class: 'rem', text: (res && res.error) || 'Der Vorgang ist fehlgeschlagen.' }));
+  else if (!res || res.error || !res.status) body.push(h('p', { class: 'rem', text: (res && res.error) || t('run.fehlgeschlagen') }));
   else body.push(...wtResultNodes(res, cfg));
   // 2.5 (#67, G3): winget lief ohne Adminrechte
-  if (res && res.benutzerkontext) body.push(h('p', null, h('span', { class: 'chip OK', text: 'ohne Adminrechte' }), ' winget lief im Benutzerkontext. Programme, die Adminrechte brauchen, haben selbst über Windows gefragt.'));
+  if (res && res.benutzerkontext) body.push(h('p', null, h('span', { class: 'chip OK', text: t('wt.ohneAdmin') }), ' ' + t('wt.benutzerkontext')));
   const btns = [];
-  if (res && res.bericht) btns.push({ label: 'Bericht öffnen', onClick: () => wtOpenReport(res.bericht) });
-  if (cfg.winget) btns.push({ label: 'Erneut suchen', onClick: () => { dlgClose(); updSuchen(); } });
-  btns.push({ label: 'Fertig', primary: true, onClick: dlgClose });
+  if (res && res.bericht) btns.push({ label: t('wt.berichtOeffnen'), onClick: () => wtOpenReport(res.bericht) });
+  if (cfg.winget) btns.push({ label: t('wt.erneutSuchen'), onClick: () => { dlgClose(); updSuchen(); } });
+  btns.push({ label: t('btn.fertig'), primary: true, onClick: dlgClose });
   dlgOpen(cfg.title, body, btns);
   Dlg.running = false;
 }
@@ -2018,12 +2039,12 @@ function wtPunktFehlt(c, res) {
   const ids = cfg.ids || S.wt.punktIds;
   const post = cfg.post || (cfg.winget ? (ids && ids.length ? wtPostWinget(ids) : null) : wtPostStart(cfg.w, null));
   dlgOpen(cfg.title, [
-    h('p', { class: 'rem', text: 'Es wurde nichts gestartet: Windows hat keinen Wiederherstellungspunkt angelegt.' }),
+    h('p', { class: 'rem', text: t('wt.pf.nichts') }),
     h('p', { class: 'wt-msg', text: res.meldung || '' }),
-    post ? h('label', { class: 'chk' }, chk, 'Ich habe verstanden: ohne Wiederherstellungspunkt gibt es kein Netz. Trotzdem starten.') : null],
-  [{ label: 'Schließen', primary: true, onClick: dlgClose }, post ? { label: 'Ohne Wiederherstellungspunkt starten', danger: true, disabled: true, onClick: () => wtRun(cfg, post, true) } : null].filter(Boolean));
+    post ? h('label', { class: 'chk' }, chk, t('wt.pf.chk')) : null],
+  [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }, post ? { label: t('wt.pf.knopf'), danger: true, disabled: true, onClick: () => wtRun(cfg, post, true) } : null].filter(Boolean));
   wb = $('#dlg-buttons').lastElementChild;
-  if (!post || wb.textContent !== 'Ohne Wiederherstellungspunkt starten') wb = null;
+  if (!post || wb.textContent !== t('wt.pf.knopf')) wb = null;
 }
 
 // ---- Berichte (Energie, Akku, Schlafstudie)
@@ -2037,9 +2058,9 @@ function wtViewer(box, list) {
   if (!name) return;
   const b = list.find(x => x.name === name), titel = b ? b.titel : name;
   // sandbox ohne allow-same-origin und ohne allow-popups: der Bericht erreicht weder die API noch öffnet er Fenster
-  const frame = h('iframe', { class: 'wt-frame', sandbox: 'allow-scripts', title: 'Bericht: ' + titel });
+  const frame = h('iframe', { class: 'wt-frame', sandbox: 'allow-scripts', title: t('wt.berichtTitel', titel) });
   box.append(h('div', { class: 'wt-report', id: 'wt-report' }, h('div', { class: 'toolbar' }, h('b', { text: titel }),
-    h('button', { type: 'button', text: 'Schließen', onclick: () => { S.wt.report = null; wtViewer(box, list); } })), frame));
+    h('button', { type: 'button', text: t('btn.schliessen'), onclick: () => { S.wt.report = null; wtViewer(box, list); } })), frame));
   wtReportSrc(name).then(src => { frame.src = src; }, e => { if (frame.isConnected) frame.replaceWith(h('p', { class: 'rem', text: e.message })); });
 }
 function wtOpenReport(name) {
@@ -2055,57 +2076,57 @@ function wtRow(w, d, dis, tt) {
   let sel = null, noLw = null;
   if (w.parameter === 'laufwerk' || w.parameter === 'ssd') {
     const opts = laufw.filter(l => w.parameter === 'laufwerk' || l.ssd === true);
-    if (opts.length) sel = h('select', { 'aria-label': 'Laufwerk für ' + w.titel }, opts.map(l => h('option', { value: l.laufwerk, text: l.bezeichnung ? `${l.laufwerk} ${l.bezeichnung}` : l.laufwerk })));
-    else noLw = w.parameter === 'ssd' ? 'Keine SSD gefunden. TRIM gibt es nur für SSDs.' : 'Keine festen Laufwerke gefunden.';
+    if (opts.length) sel = h('select', { 'aria-label': t('wt.laufwerkFuer', w.titel) }, opts.map(l => h('option', { value: l.laufwerk, text: l.bezeichnung ? `${l.laufwerk} ${l.bezeichnung}` : l.laufwerk })));
+    else noLw = w.parameter === 'ssd' ? t('wt.keineSsd') : t('wt.keineLw');
   }
   const off = dis || !!noLw;
   const step = w.gruppe === 'Systemdateien' && w.schritt ? `${w.schritt}. ` : '';
-  let cb = cmdBlock(wtBefehl(w, sel ? sel.value : null), true, 'Eingabeaufforderung · Administrator');
-  if (sel) sel.addEventListener('change', () => { const n = cmdBlock(wtBefehl(w, sel.value), true, 'Eingabeaufforderung · Administrator'); cb.replaceWith(n); cb = n; });
-  const meta = [w.dauer ? 'Dauer: ' + w.dauer : null, w.internet ? 'braucht Internet' : null].filter(Boolean).join(' · ');
+  let cb = cmdBlock(wtBefehl(w, sel ? sel.value : null), true, t('cmd.cmdAdmin'));
+  if (sel) sel.addEventListener('change', () => { const n = cmdBlock(wtBefehl(w, sel.value), true, t('cmd.cmdAdmin')); cb.replaceWith(n); cb = n; });
+  const meta = [w.dauer ? t('wt.dauer', w.dauer) : null, w.internet ? t('wt.brauchtInternet') : null].filter(Boolean).join(' · ');
   return h('div', { class: 'wt-row', 'data-id': w.id },
     h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: step + w.titel }), klasseChip(w.klasse)),
     w.erklaerung ? h('p', { class: 'wt-expl', text: w.erklaerung }) : null,
     meta ? h('p', { class: 'wt-meta', text: meta }) : null,
     w.hinweis ? h('p', { class: 'wt-meta', text: w.hinweis }) : null,
     noLw ? h('p', { class: 'wt-meta', text: noLw }) : null,
-    (d.punktFehlt || []).includes(w.id) ? h('p', { class: 'wt-meta', text: 'Der letzte Start brach ab, weil kein Wiederherstellungspunkt entstand. Beim erneuten Start kannst du das bewusst übergehen.' }) : null,
-    (d.punktFehlt || []).includes(w.id) && !dis ? h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm', text: 'Ohne Wiederherstellungspunkt starten …',
-      onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(w.id), post: wtPostStart(w, sel ? sel.value : null) } }, { meldung: 'Beim letzten Start entstand kein Wiederherstellungspunkt.' }) })) : null,
-    help ? h('details', { class: 'cmd' }, h('summary', { text: 'ⓘ Mehr' }),
-      h('div', { class: 'wt-help' }, help.Was ? h('p', null, h('b', { text: 'Was passiert? ' }), help.Was) : null, help.Wann ? h('p', null, h('b', { text: 'Wann sinnvoll? ' }), help.Wann) : null, help.Hinweis ? h('p', null, h('b', { text: 'Hinweis: ' }), help.Hinweis) : null)) : null,
-    h('details', { class: 'cmd' }, h('summary', { text: 'Befehl zeigen' }), cb),
-    h('div', { class: 'wt-acts' }, sel, h('button', { type: 'button', class: 'sm' + (w.klasse === 'reparatur' ? '' : ' primary'), disabled: off, title: off ? (noLw && !dis ? noLw : tt) : null, text: 'Starten …', onclick: () => wtStartDlg(w, sel ? sel.value : null) })));
+    (d.punktFehlt || []).includes(w.id) ? h('p', { class: 'wt-meta', text: t('wt.pf.letzter') }) : null,
+    (d.punktFehlt || []).includes(w.id) && !dis ? h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm', text: t('wt.pf.knopfPunkte'),
+      onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(w.id), post: wtPostStart(w, sel ? sel.value : null) } }, { meldung: t('wt.pf.meldung') }) })) : null,
+    help ? h('details', { class: 'cmd' }, h('summary', { text: t('wt.mehr') }),
+      h('div', { class: 'wt-help' }, help.Was ? h('p', null, h('b', { text: t('wt.h.was') }), help.Was) : null, help.Wann ? h('p', null, h('b', { text: t('wt.h.wann') }), help.Wann) : null, help.Hinweis ? h('p', null, h('b', { text: t('wt.h.hinweis') }), help.Hinweis) : null)) : null,
+    h('details', { class: 'cmd' }, h('summary', { text: t('wt.befehlZeigen') }), cb),
+    h('div', { class: 'wt-acts' }, sel, h('button', { type: 'button', class: 'sm' + (w.klasse === 'reparatur' ? '' : ' primary'), disabled: off, title: off ? (noLw && !dis ? noLw : tt) : null, text: t('wt.startenPunkte'), onclick: () => wtStartDlg(w, sel ? sel.value : null) })));
 }
 function wtRestore(d, dis, tt) {
   const sf = d.safety || safety(), w = wtTool(WT_PUNKT_ID);
   const off = dis || sf.schutzAn === false;
   const state = h('div', { class: 'wt-state' },
-    h('span', null, 'Computerschutz ', sf.schutzAn === false ? h('span', { class: 'chip CRIT', text: 'aus' }) : (sf.schutzAn === true ? h('span', { class: 'chip OK', text: 'an' }) : h('span', { class: 'chip INFO', text: 'unbekannt' }))),
-    h('span', null, '24-Stunden-Sperre ', sf.sperre24h ? h('span', { class: 'chip WARN', text: 'aktiv' }) : h('span', { class: 'chip OK', text: 'nein' })),
-    sf.speicherKlein ? h('span', null, 'Speicher ', h('span', { class: 'chip WARN', text: 'zu klein' }), sf.speicherMax ? ` (erlaubt: ${sf.speicherMax})` : '') : null,
-    h('span', null, 'Letzter Punkt: ', h('b', { text: sf.letzterPunkt ? fmtDate(sf.letzterPunkt) : '–' })));
-  return h('div', { class: 'wt-group', id: 'wt-punkt' }, h('h3', { text: 'Wiederherstellungspunkt' }),
-    h('p', { class: 'wt-expl', text: 'Vor jeder nicht umkehrbaren Reparatur legt Morpheus selbst einen Wiederherstellungspunkt an. Hier kannst du einen von Hand anlegen.' }),
+    h('span', null, t('wt.r.schutz') + ' ', sf.schutzAn === false ? h('span', { class: 'chip CRIT', text: t('set.aus') }) : (sf.schutzAn === true ? h('span', { class: 'chip OK', text: t('set.an') }) : h('span', { class: 'chip INFO', text: t('allg.unbekannt') }))),
+    h('span', null, t('wt.r.sperre') + ' ', sf.sperre24h ? h('span', { class: 'chip WARN', text: t('set.aktiv') }) : h('span', { class: 'chip OK', text: t('allg.nein') })),
+    sf.speicherKlein ? h('span', null, t('wt.r.speicher') + ' ', h('span', { class: 'chip WARN', text: t('wt.r.zuKlein') }), sf.speicherMax ? t('wt.r.erlaubt', sf.speicherMax) : '') : null,
+    h('span', null, t('wt.r.letzter') + ' ', h('b', { text: sf.letzterPunkt ? fmtDate(sf.letzterPunkt) : '–' })));
+  return h('div', { class: 'wt-group', id: 'wt-punkt' }, h('h3', { text: t('menu.werkzeug.punkt') }),
+    h('p', { class: 'wt-expl', text: t('wt.r.expl') }),
     state,
-    sf.schutzAn === false ? h('div', null, h('p', { class: 'wt-meta', text: 'Der Computerschutz ist aus. Schalte ihn ein (Administrator-PowerShell), danach die Seite neu laden:' }), sf.befehlSchutz ? cmdBlock(sf.befehlSchutz) : null) : null,
-    sf.sperre24h ? h('div', null, h('p', { class: 'wt-meta', text: 'Windows legt innerhalb von 24 Stunden keinen weiteren Wiederherstellungspunkt an. Den Mindestabstand hebst du einmalig mit diesem Befehl auf (Administrator-PowerShell):' }), sf.befehl ? cmdBlock(sf.befehl) : null,
-      h('p', { class: 'wt-meta', text: 'Mehr dazu: README, Abschnitt „24-Stunden-Sperre“.' })) : null,
-    h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', disabled: off, title: off ? (dis ? tt : 'Der Computerschutz ist aus: ohne ihn lässt sich kein Wiederherstellungspunkt anlegen.') : null, text: 'Wiederherstellungspunkt jetzt anlegen', onclick: () => wtStartDlg(w, null) })));
+    sf.schutzAn === false ? h('div', null, h('p', { class: 'wt-meta', text: t('wt.r.schutzAus') }), sf.befehlSchutz ? cmdBlock(sf.befehlSchutz) : null) : null,
+    sf.sperre24h ? h('div', null, h('p', { class: 'wt-meta', text: t('wt.r.sperreText') }), sf.befehl ? cmdBlock(sf.befehl) : null,
+      h('p', { class: 'wt-meta', text: t('wt.r.mehr') })) : null,
+    h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', disabled: off, title: off ? (dis ? tt : t('wt.r.btnTitel')) : null, text: t('wt.r.anlegen'), onclick: () => wtStartDlg(w, null) })));
 }
 function wtBody(d, upd) {
   S.wt.tools = Array.isArray(d.werkzeuge) ? d.werkzeuge : [];
   const ro = readOnly(), run = d.laufend || null, suche = !!(upd && upd.suche);
   const dis = ro || !!run || suche;
   const cfgRun = run ? wtCfg(run.werkzeug, run.abbruch) : null;
-  const tt = ro ? lockTitle() : (run ? `Es läuft schon: ${cfgRun.title}. Warte, bis es fertig ist.` : (suche ? 'Es läuft gerade eine Update-Suche.' : null));
-  const kids = [h('p', { class: 'wt-expl', text: 'Windows-Bordmittel, die Morpheus für dich startet. Jedes Werkzeug zeigt vorher den genauen Befehl und fragt in Windows nach.' }),
-    h('div', { class: 'wt-legend', role: 'list', 'aria-label': 'Legende' },
-      h('span', { role: 'listitem' }, klasseChip('diagnose'), ' ändert nichts'), h('span', { role: 'listitem' }, klasseChip('wartung'), ' kleine, unkritische Änderung'), h('span', { role: 'listitem' }, klasseChip('reparatur'), ' kein Rückgängig unter „Änderungen“'))];
+  const tt = ro ? lockTitle() : (run ? t('wt.tt.laeuft', cfgRun.title) : (suche ? t('wt.tt.suche') : null));
+  const kids = [h('p', { class: 'wt-expl', text: t('wt.expl') }),
+    h('div', { class: 'wt-legend', role: 'list', 'aria-label': t('wt.legende') },
+      h('span', { role: 'listitem' }, klasseChip('diagnose'), ' ' + t('wt.leg.diagnose')), h('span', { role: 'listitem' }, klasseChip('wartung'), ' ' + t('wt.leg.wartung')), h('span', { role: 'listitem' }, klasseChip('reparatur'), ' ' + t('wt.leg.reparatur')))];
   if (ro) kids.push(h('p', { class: 'wt-meta', text: lockTitle() }));
   if (run) {
     const c = wtCtl(run.jobId, cfgRun);
-    kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: `Läuft: ${cfgRun.title} …` }), h('button', { type: 'button', class: 'sm', text: 'Anzeigen', onclick: () => wtShow(c) })));
+    kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: t('wt.laeuftTitel', cfgRun.title) }), h('button', { type: 'button', class: 'sm', text: t('rb.anzeigen'), onclick: () => wtShow(c) })));
   }
   kids.push(wtRestore(d, dis, tt));
   const groups = [];
@@ -2114,31 +2135,31 @@ function wtBody(d, upd) {
   const viewer = h('div'), repBtns = [];
   groups.forEach(g => {
     g.list.sort((a, b) => (a.schritt || 0) - (b.schritt || 0));
-    const gk = [h('h3', { text: g.name })];
-    if (g.name === 'Systemdateien') gk.push(h('p', { class: 'wt-expl', text: 'Reihenfolge 1 bis 4: Erst prüfen (1, 2), bei Befund den Komponentenspeicher reparieren (3), danach die Systemdateien (4). SFC repariert aus dem Komponentenspeicher, den DISM vorher in Ordnung bringt.' }));
-    if (g.name === 'Komponentenspeicher') gk.push(h('p', { class: 'wt-expl', text: 'Den Ordner WinSxS nie von Hand löschen. Morpheus verwendet kein /ResetBase, damit Updates deinstallierbar bleiben.' }));
+    const gk = [h('h3', { text: tk('wt.gruppe.' + g.name, g.name) })];
+    if (g.name === 'Systemdateien') gk.push(h('p', { class: 'wt-expl', text: t('wt.g.systemdateien') }));
+    if (g.name === 'Komponentenspeicher') gk.push(h('p', { class: 'wt-expl', text: t('wt.g.komponentenspeicher') }));
     gk.push(h('div', { class: 'wt-list' }, g.list.map(w => wtRow(w, d, dis, tt))));
     if (g.name === 'Diagnose') gk.push(h('div', { class: 'wt-row', 'data-id': 'perfmon.rel' },
-      h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: 'Zuverlässigkeitsverlauf' }), klasseChip('diagnose')),
-      h('p', { class: 'wt-expl', text: 'Zeigt in Windows, wann Programme oder das System abgestürzt sind.' }),
-      h('p', { class: 'wt-meta', text: 'Öffnet sich ohne Adminrechte; klappt das nicht: Win + R, perfmon /rel' }),
-      h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: 'Zuverlässigkeitsverlauf öffnen', onclick: wtZuverlaessigkeit }))));
+      h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: t('menu.werkzeug.zuverlaessigkeit') }), klasseChip('diagnose')),
+      h('p', { class: 'wt-expl', text: t('wt.rel.expl') }),
+      h('p', { class: 'wt-meta', text: t('wt.rel.meta') }),
+      h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: t('wt.rel.oeffnen'), onclick: wtZuverlaessigkeit }))));
     if (g.name === 'Energieberichte') {
-      gk.push(h('h3', { class: 'wt-sub', text: 'Erstellte Berichte' }));
+      gk.push(h('h3', { class: 'wt-sub', text: t('wt.berichte') }));
       gk.push(berichte.length ? h('div', { class: 'wt-reps' }, berichte.map(b => {
         const btn = h('button', { type: 'button', class: 'sm', onclick: () => {
           S.wt.report = S.wt.report === b.name ? null : b.name; S.wt.scrollReport = !!S.wt.report;
           wtViewer(viewer, berichte); repBtns.forEach(x => x()); wtScrollReport();
         } });
-        const upd = () => { btn.textContent = S.wt.report === b.name ? 'Schließen' : 'Öffnen'; };
+        const upd = () => { btn.textContent = S.wt.report === b.name ? t('btn.schliessen') : t('wt.oeffnen'); };
         upd(); repBtns.push(upd);
         return h('div', { class: 'wt-rep' }, h('b', { text: b.titel || b.name }), h('span', { class: 'wt-meta', text: b.zeit ? fmtDate(b.zeit) : '' }), btn);
-      })) : h('p', { class: 'wt-meta', text: 'Noch keine Berichte erstellt.' }));
+      })) : h('p', { class: 'wt-meta', text: t('wt.keineBerichte') }));
       gk.push(viewer);
     }
     kids.push(h('div', { class: 'wt-group' }, gk));
   });
-  if (!groups.length) kids.push(h('p', { class: 'muted', text: 'Der Server hat keine Werkzeuge gemeldet.' }));
+  if (!groups.length) kids.push(h('p', { class: 'muted', text: t('wt.keineWerkzeuge') }));
   wtViewer(viewer, berichte);
   wtScrollReport();
   return kids;
@@ -2151,17 +2172,17 @@ function wtScrollReport() {
 async function wtZuverlaessigkeit() {
   try {
     const r = await api('/api/wartung/zuverlaessigkeit', { method: 'POST' });
-    toast((r && r.meldung) || (r && r.ok === false ? 'Das hat nicht geklappt. Win + R, dann perfmon /rel' : 'Zuverlässigkeitsverlauf wird geöffnet'));
-  } catch (e) { toast(e.message + ' Alternativ: Win + R, perfmon /rel'); }
+    toast((r && r.meldung) || (r && r.ok === false ? t('wt.rel.fehl') : t('wt.rel.wirdGeoeffnet')));
+  } catch (e) { toast(t('wt.rel.alternativ', e.message)); }
 }
 function wartungCard() {
-  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const body = h('div', null, h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
   Promise.all([api('/api/wartung'), api('/api/updates').catch(() => null)]).then(([d, upd]) => {
     if (token !== S.rv) return;
     body.replaceChildren(...wtBody(d || {}, upd).filter(Boolean));
-  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Wartung & Reparatur konnte nicht geladen werden: ' + e.message })); });
-  return h('div', { class: 'card', id: 'wartung-card' }, h('h2', { text: 'Wartung & Reparatur' }), body);
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('wt.ladenFehler', e.message) })); });
+  return h('div', { class: 'card', id: 'wartung-card' }, h('h2', { text: t('menu.unter.wartung') }), body);
 }
 
 // ---- Karte „Programme aktualisieren (winget)“
@@ -2171,16 +2192,16 @@ function updSuchen() {
 function updFollowSearch(jobId, bg) {
   let c = WT_SEARCH.get(jobId);
   if (c) return c;
-  const title = 'Nach Programm-Updates suchen';
+  const title = t('upd.suchTitel');
   c = { jobId, bg, log: h('pre', { class: 'log', 'aria-live': 'polite', text: '' }) };
   WT_SEARCH.set(jobId, c);
   followJob(jobId, l => { c.log.append(document.createTextNode(l.join('\n') + '\n')); c.log.scrollTop = c.log.scrollHeight; })
     .then(j => ({ j }), e => ({ e }))
     .then(r => {
       WT_SEARCH.delete(jobId);
-      const msg = r.e ? r.e.message : (r.j && r.j.status === 'failed' ? ((r.j.ergebnis && r.j.ergebnis.error) || 'Die Suche ist fehlgeschlagen.') : null);
-      if (c.bg) toast(msg || 'Update-Suche fertig');
-      else if (msg) dlgOpen(title, [c.log, h('p', { class: 'rem', text: msg })], [{ label: 'Schließen', primary: true, onClick: dlgClose }]);
+      const msg = r.e ? r.e.message : (r.j && r.j.status === 'failed' ? ((r.j.ergebnis && r.j.ergebnis.error) || t('upd.suchFehl')) : null);
+      if (c.bg) toast(msg || t('upd.toastFertig'));
+      else if (msg) dlgOpen(title, [c.log, h('p', { class: 'rem', text: msg })], [{ label: t('btn.schliessen'), primary: true, onClick: dlgClose }]);
       else dlgClose();
       if (S.view === 'werkzeuge') refreshView();
     });
@@ -2188,80 +2209,81 @@ function updFollowSearch(jobId, bg) {
 }
 function updShowSearch(c) {
   c.bg = false;
-  dlgOpen('Nach Programm-Updates suchen', [h('p', { class: 'note', text: 'winget fragt die Paketquellen ab. Das dauert meist ein bis zwei Minuten. Es wird nichts installiert.' }), c.log],
-    [{ label: 'Im Hintergrund weiterlaufen lassen', onClick: () => { c.bg = true; dlgClose(); if (S.view === 'werkzeuge') refreshView(); } }], { lock: true });
+  dlgOpen(t('upd.suchTitel'), [h('p', { class: 'note', text: t('upd.suchNote') }), c.log],
+    [{ label: t('wt.hintergrund'), onClick: () => { c.bg = true; dlgClose(); if (S.view === 'werkzeuge') refreshView(); } }], { lock: true });
 }
 function updInstallDlg(items) {
   const ids = items.map(x => x.id);
   const cfg = { ...wtCfg(WT_WINGET_ID), ids };
   const body = [
-    h('p', { text: items.length === 1 ? 'Dieses Programm wird mit winget aktualisiert:' : `Diese ${items.length} Programme werden mit winget aktualisiert:` }),
+    h('p', { text: items.length === 1 ? t('upd.dlg1') : t('upd.dlgN', items.length) }),
     h('ul', { class: 'wt-pk' }, items.map(x => h('li', null, h('b', { text: x.name || x.id }), h('span', { class: 'muted', text: ` ${x.installiert || '?'} → ${x.verfuegbar || '?'}` })))),
-    h('p', null, h('span', { class: 'chip WARN', text: 'nicht umkehrbar' })),
-    h('p', { text: 'Programm-Updates lassen sich nicht über „Änderungen“ zurücknehmen. Vorher wird ein Wiederherstellungspunkt angelegt.' }),
-    h('p', { text: 'Bitte die Programme vorher schließen.' }),
-    h('p', { class: 'note', text: 'winget lädt aus den Herstellerquellen und nimmt die Lizenzbedingungen der Pakete an.' }),
-    h('div', { class: 'note', text: 'Windows fragt vorher in einem eigenen Fenster nach deiner Bestätigung.' })];
+    h('p', null, h('span', { class: 'chip WARN', text: t('wt.k.reparatur') })),
+    h('p', { text: t('upd.dlgNicht') }),
+    h('p', { text: t('upd.dlgSchliessen') }),
+    h('p', { class: 'note', text: t('upd.dlgLizenz') }),
+    h('div', { class: 'note', text: t('win.fragtVorher') })];
   const post = wtPostWinget(ids);
-  dlgOpen('Programme aktualisieren', body, [{ label: 'Abbrechen', onClick: dlgClose }, { label: 'Aktualisieren', primary: true, onClick: () => wtRun(cfg, post) }]);
+  dlgOpen(t('menu.unter.updates'), body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('upd.knopf'), primary: true, onClick: () => wtRun(cfg, post) }]);
 }
 function updBody(d) {
   const ro = readOnly(), run = d.laufend || null, search = d.suche || null;
   const fremd = d.wartungLaeuft && d.wartungLaeuft !== WT_WINGET_ID;
   const dis = ro || !!run || !!search || !!fremd;
-  const tt = ro ? lockTitle() : (fremd ? 'Es läuft gerade ein Wartungswerkzeug.' : (run ? 'Es läuft schon eine Wartung bzw. ein Programm-Update.' : (search ? 'Die Suche läuft noch.' : null)));
+  const tt = ro ? lockTitle() : (fremd ? t('upd.tt.fremd') : (run ? t('upd.tt.laeuft') : (search ? t('upd.tt.suche') : null)));
   if (d.punktFehlt === false) S.wt.punktIds = null;
   const pIds = d.punktFehlt === true && Array.isArray(S.wt.punktIds) && S.wt.punktIds.length ? S.wt.punktIds : null;
   const liste = Array.isArray(d.liste) ? d.liste : [];
   const prog = liste.filter(x => x.kategorie === 'Programm');
   const sel = S.wt.sel;
   [...sel].forEach(id => { if (!prog.some(x => x.id === id)) sel.delete(id); });
-  const kids = [h('p', { class: 'wt-expl', text: 'Aktualisiert Programme über winget, das Paketsystem von Windows. Spiele und Launcher sowie Programme, die sich selbst aktualisieren, fasst Morpheus nicht an.' })];
-  kids.push(h('p', { class: 'wt-meta', text: d.stand ? `Stand der Suche: ${fmtDate(d.stand)}` : 'Noch nicht gesucht.' }));
+  const kids = [h('p', { class: 'wt-expl', text: t('upd.expl') })];
+  kids.push(h('p', { class: 'wt-meta', text: d.stand ? t('upd.stand', fmtDate(d.stand)) : t('upd.nochNicht') }));
   if (d.fehler) kids.push(h('p', { class: 'rem', text: String(d.fehler) }));
   if (ro) kids.push(h('p', { class: 'wt-meta', text: lockTitle() }));
-  if (run) { const c = wtCtl(run, wtCfg(WT_WINGET_ID)); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: 'Läuft: Programme aktualisieren …' }), h('button', { type: 'button', class: 'sm', text: 'Anzeigen', onclick: () => wtShow(c) }))); }
-  if (search) { const c = updFollowSearch(search, true); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: 'Die Suche nach Updates läuft …' }), h('button', { type: 'button', class: 'sm', text: 'Anzeigen', onclick: () => updShowSearch(c) }))); }
-  const punktBtn = pIds ? h('button', { type: 'button', class: 'sm', text: 'Ohne Wiederherstellungspunkt starten …', disabled: dis, title: dis ? tt : null,
-    onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(WT_WINGET_ID), ids: pIds } }, { meldung: 'Beim letzten Start entstand kein Wiederherstellungspunkt.' }) }) : null;
-  if (d.punktFehlt === true) kids.push(h('div', { class: 'wt-meta' }, h('span', { class: 'chip WARN', text: 'Wiederherstellungspunkt fehlte' }),
-    ' Der letzte Start brach ab, weil kein Wiederherstellungspunkt entstand. ', pIds ? punktBtn : 'Wähle beim erneuten Start dieselben Programme; dann kannst du das bewusst übergehen.'));
-  const goBtn = h('button', { type: 'button', class: 'sm primary', disabled: true, text: 'Ausgewählte aktualisieren …', onclick: () => { if (sel.size > 30) { toast('Bitte höchstens 30 Programme auf einmal auswählen.'); return; } updInstallDlg(prog.filter(x => sel.has(x.id))); } });
+  if (run) { const c = wtCtl(run, wtCfg(WT_WINGET_ID)); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: t('upd.laeuft') }), h('button', { type: 'button', class: 'sm', text: t('rb.anzeigen'), onclick: () => wtShow(c) }))); }
+  if (search) { const c = updFollowSearch(search, true); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: t('upd.sucheLaeuft') }), h('button', { type: 'button', class: 'sm', text: t('rb.anzeigen'), onclick: () => updShowSearch(c) }))); }
+  const punktBtn = pIds ? h('button', { type: 'button', class: 'sm', text: t('wt.pf.knopfPunkte'), disabled: dis, title: dis ? tt : null,
+    onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(WT_WINGET_ID), ids: pIds } }, { meldung: t('wt.pf.meldung') }) }) : null;
+  if (d.punktFehlt === true) kids.push(h('div', { class: 'wt-meta' }, h('span', { class: 'chip WARN', text: t('upd.punktFehlte') }),
+    ' ' + t('upd.punktText') + ' ', pIds ? punktBtn : t('upd.waehleGleiche')));
+  const goBtn = h('button', { type: 'button', class: 'sm primary', disabled: true, text: t('upd.goKnopf'), onclick: () => { if (sel.size > 30) { toast(t('upd.max30')); return; } updInstallDlg(prog.filter(x => sel.has(x.id))); } });
   const boxes = [];
-  const all = h('input', { type: 'checkbox', id: 'upd-all', disabled: dis || !prog.length, 'aria-label': 'Alle auswählen', onchange: e => { prog.forEach(x => { if (e.target.checked) sel.add(x.id); else sel.delete(x.id); }); boxes.forEach(b => { b.checked = e.target.checked; }); sync(); } });
+  const all = h('input', { type: 'checkbox', id: 'upd-all', disabled: dis || !prog.length, 'aria-label': t('upd.alleAria'), onchange: e => { prog.forEach(x => { if (e.target.checked) sel.add(x.id); else sel.delete(x.id); }); boxes.forEach(b => { b.checked = e.target.checked; }); sync(); } });
   function sync() {
     goBtn.disabled = dis || !sel.size;
     goBtn.title = dis ? tt : null;
-    goBtn.textContent = sel.size ? `Ausgewählte aktualisieren … (${sel.size})` : 'Ausgewählte aktualisieren …';
+    goBtn.textContent = sel.size ? t('upd.goKnopfN', sel.size) : t('upd.goKnopf');
     all.checked = prog.length > 0 && sel.size === prog.length;
   }
   kids.push(h('div', { class: 'toolbar' },
-    h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: d.stand ? 'Erneut suchen' : 'Nach Updates suchen', onclick: updSuchen }),
-    prog.length ? h('label', null, all, ' Alle auswählen') : null, prog.length ? goBtn : null));
+    h('button', { type: 'button', class: 'primary', disabled: dis, title: tt, text: d.stand ? t('wt.erneutSuchen') : t('upd.suchen'), onclick: updSuchen }),
+    prog.length ? h('label', null, all, ' ' + t('upd.alle')) : null, prog.length ? goBtn : null));
   if (liste.length) {
     kids.push(h('div', { class: 'tbl-scroll wt-upd' }, h('table', null,
-      h('thead', null, h('tr', null, [h('th', { text: '' }), ...['Name', 'Installiert', 'Verfügbar', 'Kategorie'].map(x => h('th', { text: x }))])),
+      h('thead', null, h('tr', null, [h('th', { text: '' }), ...[t('upd.hName'), t('upd.hInst'), t('upd.hVerf'), t('upd.hKat')].map(x => h('th', { text: x }))])),
       h('tbody', null, liste.map(x => {
         const can = x.kategorie === 'Programm';
-        const gekuerzt = x.kategorie === 'Id gekürzt', hint = gekuerzt ? 'Die Id ist gekürzt; bitte über winget selbst aktualisieren.' : null;
-        const cb = h('input', { type: 'checkbox', checked: can && sel.has(x.id), disabled: !can || dis, title: can ? null : (hint || `Nicht auswählbar: ${x.kategorie || 'unbekannte Kategorie'}`), 'aria-label': `${x.name || x.id} auswählen`,
+        const gekuerzt = x.kategorie === 'Id gekürzt', hint = gekuerzt ? t('upd.idGekuerzt') : null;
+        const katName = x.kategorie ? tk(UPD_KAT[x.kategorie], x.kategorie) : '';
+        const cb = h('input', { type: 'checkbox', checked: can && sel.has(x.id), disabled: !can || dis, title: can ? null : (hint || t('upd.nichtAuswaehlbar', katName || t('upd.unbekanntKat'))), 'aria-label': t('karte.auswaehlen', x.name || x.id),
           onchange: e => { if (e.target.checked) sel.add(x.id); else sel.delete(x.id); sync(); } });
         if (can) boxes.push(cb);
-        return h('tr', { class: can ? null : 'dim' }, h('td', null, cb), h('td', null, x.name || x.id, h('div', { class: 'note', text: x.id })), h('td', { text: x.installiert || '' }), h('td', { text: x.verfuegbar || '' }), h('td', null, x.kategorie || '', hint ? h('div', { class: 'note', text: hint }) : null));
+        return h('tr', { class: can ? null : 'dim' }, h('td', null, cb), h('td', null, x.name || x.id, h('div', { class: 'note', text: x.id })), h('td', { text: x.installiert || '' }), h('td', { text: x.verfuegbar || '' }), h('td', null, katName, hint ? h('div', { class: 'note', text: hint }) : null));
       })))));
-    kids.push(h('p', { class: 'wt-meta', text: 'Graue Zeilen aktualisiert Morpheus nicht; als Grund steht die Kategorie dahinter.' }));
-  } else if (d.stand && !d.fehler) kids.push(h('p', { class: 'ok', text: 'Keine Programm-Updates gefunden.' }));
+    kids.push(h('p', { class: 'wt-meta', text: t('upd.grau') }));
+  } else if (d.stand && !d.fehler) kids.push(h('p', { class: 'ok', text: t('upd.keine') }));
   sync();
   return kids;
 }
 function updCard() {
-  const body = h('div', null, h('p', { class: 'muted', text: 'Lädt …' }));
+  const body = h('div', null, h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
   api('/api/updates').then(d => {
     if (token !== S.rv) return;
     body.replaceChildren(...updBody(d || {}).filter(Boolean));
-  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: 'Die Update-Liste konnte nicht geladen werden: ' + e.message })); });
-  return h('div', { class: 'card', id: 'upd-card' }, h('h2', { text: 'Programme aktualisieren (winget)' }), body);
+  }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('upd.ladenFehler', e.message) })); });
+  return h('div', { class: 'card', id: 'upd-card' }, h('h2', { text: t('upd.titel') }), body);
 }
 
 // ---------------------------------------------------------------- Rechte Statusleiste
@@ -2293,58 +2315,59 @@ function renderStatusLive() {
   if (L.state === 'unsupported') { box.replaceChildren(); return; }
   const d = L.data;
   if (!d || d.stand == null) {
-    box.replaceChildren(h('div', { class: 'st-sec', text: 'Live' }),
-      scCard('CPU · RAM · GPU', L.state === 'error' ? 'nicht erreichbar' : 'live', L.state !== 'error', h('p', { class: 'wait', text: L.state === 'error' ? 'Messwerte sind gerade nicht erreichbar.' : 'wird gemessen …' })));
+    box.replaceChildren(h('div', { class: 'st-sec', text: t('st.live') }),
+      scCard(t('st.cpuRamGpu'), L.state === 'error' ? t('st.nichtErreichbar') : t('st.liveKlein'), L.state !== 'error', h('p', { class: 'wait', text: L.state === 'error' ? t('st.messwerteNicht') : t('st.gemessen') })));
     return;
   }
-  const src = L.state === 'error' ? 'veraltet' : 'live', isLive = L.state !== 'error', v = d.verlauf || {};
-  const cards = [h('div', { class: 'st-sec', text: 'Live' })];
+  const src = L.state === 'error' ? t('st.veraltet') : t('st.liveKlein'), isLive = L.state !== 'error', v = d.verlauf || {};
+  const cards = [h('div', { class: 'st-sec', text: t('st.live') })];
   // 1. CPU · RAM · GPU
   const g = d.gpu, ram = d.ram || {};
-  const temp = g && g.temp != null ? h('span', { class: 'chip ' + (g.temp >= 88 ? 'CRIT' : g.temp >= 80 ? 'Y' : ''), title: 'GPU-Temperatur', text: `${dec(g.temp, 0)} °C` }) : null;
-  cards.push(scCard('CPU · RAM · GPU', src, isLive,
+  const temp = g && g.temp != null ? h('span', { class: 'chip ' + (g.temp >= 88 ? 'CRIT' : g.temp >= 80 ? 'Y' : ''), title: t('st.gpuTemp'), text: `${dec(g.temp, 0)} °C` }) : null;
+  cards.push(scCard(t('st.cpuRamGpu'), src, isLive,
     mrow('CPU', d.cpu, v.cpu, null),
-    mrow('RAM', ram.usedPct, v.ram, ram.usedGB != null && ram.totalGB != null ? `${dec(ram.usedGB, 1)} von ${dec(ram.totalGB, 0)} GB` : null),
-    mrow('GPU', g ? g.util : null, v.gpu, g ? [g.name || 'GPU', g.memUsedPct != null ? ` · VRAM ${dec(g.memUsedPct, 0)} %` : '', ' ', temp] : 'keine GPU erkannt')));
+    mrow('RAM', ram.usedPct, v.ram, ram.usedGB != null && ram.totalGB != null ? t('st.ramVon', dec(ram.usedGB, 1), dec(ram.totalGB, 0)) : null),
+    mrow('GPU', g ? g.util : null, v.gpu, g ? [g.name || 'GPU', g.memUsedPct != null ? t('st.vram', dec(g.memUsedPct, 0)) : '', ' ', temp] : t('st.keineGpu'))));
   // 2. Laufwerke
   const drives = (d.drives || []).filter(Boolean);
   if (drives.length) {
-    cards.push(scCard('Laufwerke', src, isLive, drives.map(x => {
+    cards.push(scCard(t('st.laufwerke'), src, isLive, drives.map(x => {
       const free = x.freePct != null ? Number(x.freePct) : (x.sizeGB ? x.freeGB / x.sizeGB * 100 : null);
       const tone = free == null ? 'grey' : free < 10 ? 'red' : free < 20 ? 'yellow' : 'green';
       const letter = spLetter(x.letter);
-      return h('div', { class: 'drow g-' + tone, 'data-letter': letter, tabindex: '0', role: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': S.spPop && S.spPop.letter === letter ? 'true' : 'false', title: 'Größte Speicherverbraucher anzeigen',
+      return h('div', { class: 'drow g-' + tone, 'data-letter': letter, tabindex: '0', role: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': S.spPop && S.spPop.letter === letter ? 'true' : 'false', title: t('st.spTitel'),
         onmouseenter: () => spHover(letter), onmouseleave: spLeave, onclick: () => spClick(letter, false),
         onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); spClick(letter, true); } } },
         h('div', { class: 'l1' }, h('i', { class: 'adot' }), h('b', { text: x.letter || '?' }), x.label ? h('span', { class: 'lab', text: x.label }) : null, x.type ? h('span', { class: 'chip type', text: x.type }) : null,
-          h('span', { class: 'pct', text: free == null ? '–' : `${dec(100 - free, 0)} % belegt` })),
+          h('span', { class: 'pct', text: free == null ? '–' : t('st.belegt', dec(100 - free, 0)) })),
         h('div', { class: 'meter' }, h('i', { style: `width:${free == null ? 0 : clampPct(100 - free)}%` })),
-        h('div', { class: 'l2', text: x.freeGB != null && x.sizeGB != null ? `${dec(x.freeGB, 0)} GB frei von ${dec(x.sizeGB, 0)} GB` : 'Größe unbekannt' }));
+        h('div', { class: 'l2', text: x.freeGB != null && x.sizeGB != null ? t('st.freiVon', dec(x.freeGB, 0), dec(x.sizeGB, 0)) : t('st.groesseUnbekannt') }));
     })));
   }
   // 3. Netzwerk
   const n = d.net;
-  cards.push(scCard('Netzwerk', src, isLive, n
-    ? [h('div', { class: 'kv' }, h('span', { class: 'muted', text: 'Adapter' }), h('b', { text: n.adapter || '–' })), h('div', { class: 'kv' }, h('span', { class: 'muted', text: 'Link' }), h('b', { text: fmtLink(n.linkMbps) })),
-      h('div', { class: 'kv' }, h('span', { class: 'muted', text: '↓ Empfang' }), h('b', { text: fmtRate(n.rxKBs) })), h('div', { class: 'kv' }, h('span', { class: 'muted', text: '↑ Senden' }), h('b', { text: fmtRate(n.txKBs) }))]
-    : h('p', { class: 'wait', text: 'Keine aktive Verbindung.' })));
+  cards.push(scCard(t('st.netzwerk'), src, isLive, n
+    ? [h('div', { class: 'kv' }, h('span', { class: 'muted', text: t('st.adapter') }), h('b', { text: n.adapter || '–' })), h('div', { class: 'kv' }, h('span', { class: 'muted', text: t('st.link') }), h('b', { text: fmtLink(n.linkMbps) })),
+      h('div', { class: 'kv' }, h('span', { class: 'muted', text: t('st.empfang') }), h('b', { text: fmtRate(n.rxKBs) })), h('div', { class: 'kv' }, h('span', { class: 'muted', text: t('st.senden') }), h('b', { text: fmtRate(n.txKBs) }))]
+    : h('p', { class: 'wait', text: t('st.keineVerbindung') })));
   // 4. Top-Prozesse
   const top = (d.top || []).filter(Boolean).slice(0, 3);
-  cards.push(scCard('Top-Prozesse', src, isLive, top.length
+  cards.push(scCard(t('st.topProzesse'), src, isLive, top.length
     ? top.map(p => h('div', { class: 'pr' }, h('span', { class: 'nm', title: p.name, text: p.name }), h('b', { text: p.cpu == null ? '–' : dec(p.cpu, 1) + ' %' })))
-    : h('p', { class: 'wait', text: 'Keine Daten.' })));
+    : h('p', { class: 'wait', text: t('st.keineDaten') })));
   box.replaceChildren(...cards);
   if (S.spPop) { syncSpRows(); placeSpPop(); }   // das offene Speicher-Fenster liegt außerhalb dieser Karten und bleibt stehen
 }
 
-const PROT = [
-  ['Defender', f => /^(Microsoft )?Defender: Status$/.test(f.Check)],
-  ['Firewall', f => /^Firewall/.test(f.Check) && /Profile|Status/.test(f.Check)],
-  ['Windows Update', f => f.Check === 'Windows Update: ausstehend'],
-  ['Secure Boot', f => f.Check === 'Secure Boot'],
-  ['TPM', f => f.Check === 'TPM'],
-  ['BitLocker', f => f.Check === 'BitLocker'],
-  ['Kernisolierung', f => /^Kernisolierung/.test(f.Check)],
+// Schutz-Ampeln: Name der Anzeige und Erkennung über die feste Prüfungskennung
+const PROT = () => [
+  [t('st.prot.defender'), f => /^(Microsoft )?Defender: Status$/.test(f.Check)],
+  [t('st.prot.firewall'), f => /^Firewall/.test(f.Check) && /Profile|Status/.test(f.Check)],
+  [t('st.prot.windowsUpdate'), f => f.Check === 'Windows Update: ausstehend'],
+  [t('st.prot.secureBoot'), f => f.Check === 'Secure Boot'],
+  [t('st.prot.tpm'), f => f.Check === 'TPM'],
+  [t('st.prot.bitlocker'), f => f.Check === 'BitLocker'],
+  [t('st.prot.kernisolierung'), f => /^Kernisolierung/.test(f.Check)],
 ];
 const RISKY_PORTS = new Set([3389, 445, 139, 5985, 5986, 22, 23]);
 const SYS_PROCS = new Set(['system', 'svchost', 'lsass', 'wininit', 'services', 'spoolsv', 'smss', 'csrss', 'winlogon', 'lsm', 'dns', 'wuauserv', 'dwm', 'fontdrvhost', 'idle']);
@@ -2352,7 +2375,7 @@ const dataTable = name => { const D = (S.report && S.report.Data) || {}, k = Obj
 const findBy = pred => S.findings.find(pred);
 function portCard(src) {
   const rows = dataTable('Offene Netzwerkports (nicht nur lokal)');
-  if (!rows) return scCard('Offene Ports', src, false, h('p', { class: 'wait', text: 'Keine Portdaten im Bericht.' }));
+  if (!rows) return scCard(t('st.offenePorts'), src, false, h('p', { class: 'wait', text: t('st.keinePortdaten') }));
   const seen = new Map();
   rows.filter(Boolean).forEach(r => {
     const port = Number(r.Port), key = `${r.Protokoll}/${port}`;
@@ -2362,57 +2385,58 @@ function portCard(src) {
   });
   const list = [...seen.values()], ord = { red: 0, yellow: 1, green: 2 };
   list.sort((a, b) => ord[a.tone] - ord[b.tone] || a.port - b.port);
-  const cnt = t => list.filter(x => x.tone === t).length;
-  return scCard('Offene Ports', src, false,
-    h('div', { class: 'kv' }, h('span', { class: 'muted', text: 'von außen erreichbar' }), h('b', { text: String(list.length) })),
-    list.length ? [h('div', { class: 'kv' }, h('span', { class: 'muted', text: 'riskant · fremd · System' }), h('b', { text: `${cnt('red')} · ${cnt('yellow')} · ${cnt('green')}` })),
-      list.slice(0, 5).map(p => h('div', { class: 'port g-' + p.tone }, h('i', { class: 'adot' }), h('code', { text: String(p.port) }), h('span', { class: 'nm', title: `${p.proto} · ${p.proc || 'System'}`, text: `${p.proc || 'System'} · ${p.proto}` }))),
-      list.length > 5 ? h('div', { class: 'note', text: `… und ${list.length - 5} weitere` }) : null] : h('p', { class: 'wait', text: 'Keine offenen Ports gefunden.' }));
+  const cnt = tn_ => list.filter(x => x.tone === tn_).length;
+  return scCard(t('st.offenePorts'), src, false,
+    h('div', { class: 'kv' }, h('span', { class: 'muted', text: t('st.vonAussen') }), h('b', { text: String(list.length) })),
+    list.length ? [h('div', { class: 'kv' }, h('span', { class: 'muted', text: t('st.riskantFremd') }), h('b', { text: `${cnt('red')} · ${cnt('yellow')} · ${cnt('green')}` })),
+      list.slice(0, 5).map(p => h('div', { class: 'port g-' + p.tone }, h('i', { class: 'adot' }), h('code', { text: String(p.port) }), h('span', { class: 'nm', title: `${p.proto} · ${p.proc || t('st.system')}`, text: `${p.proc || t('st.system')} · ${p.proto}` }))),
+      list.length > 5 ? h('div', { class: 'note', text: t('st.undWeitere', list.length - 5) }) : null] : h('p', { class: 'wait', text: t('st.keinePorts') }));
 }
 function stabilityCard(src) {
-  const tile = (label, tone, valNode, f) => h(f ? 'button' : 'div', { type: f ? 'button' : null, class: 'tile g-' + tone, onclick: f ? () => reveal(f.Check) : null, title: f ? 'Zum Befund' : null },
+  const tile = (label, tone, valNode, f) => h(f ? 'button' : 'div', { type: f ? 'button' : null, class: 'tile g-' + tone, onclick: f ? () => reveal(f.Check) : null, title: f ? t('st.zumBefund') : null },
     h('div', { class: 'tl2' }, h('i', { class: 'adot' }), label), h('b', null, valNode));
   const fRel = findBy(f => f.Check === 'Zuverlässigkeitsindex'), fCrash = findBy(f => f.Check === 'Abstürze und unerwartete Neustarts');
   const fApp = findBy(f => f.Check === 'Programmabstürze'), fBoot = findBy(f => f.Check === 'Startdauer');
-  const rel = fRel && /([\d.,]+)\s*von\s*(\d+)/.exec(fRel.Value || ''), relN = rel ? Number(rel[1].replace(',', '.')) : null;
-  const bs = fCrash && (/(\d+)\s*Bluescreens?/i.exec(fCrash.Value || '') ? Number(/(\d+)\s*Bluescreens?/i.exec(fCrash.Value)[1]) : (/^Keine/i.test(fCrash.Value || '') ? 0 : null));
-  const am = fApp && (/^(\d+)/.exec(fApp.Value || '') ? Number(/^(\d+)/.exec(fApp.Value)[1]) : (/^Keine/i.test(fApp.Value || '') ? 0 : null));
+  const reBs = /(\d+)\s*(?:Bluescreens?|blue ?screens?|BSODs?)/i, reKeine = /^(?:Keine|No)\b/i;
+  const rel = fRel && /([\d.,]+)\s*(?:von|of)\s*(\d+)/.exec(fRel.Value || ''), relN = rel ? Number(rel[1].replace(',', '.')) : null;
+  const bs = fCrash && (reBs.exec(fCrash.Value || '') ? Number(reBs.exec(fCrash.Value)[1]) : (reKeine.test(fCrash.Value || '') ? 0 : null));
+  const am = fApp && (/^(\d+)/.exec(fApp.Value || '') ? Number(/^(\d+)/.exec(fApp.Value)[1]) : (reKeine.test(fApp.Value || '') ? 0 : null));
   const bootRows = (dataTable('Startdauer (letzte Messungen)') || []).filter(Boolean).map(x => Number(x.HauptpfadSek)).filter(x => !isNaN(x));
   const boot = bootRows.length ? bootRows.reduce((a, b) => a + b, 0) / bootRows.length : null;
   const dash = h('span', { class: 'muted', text: '–' });
-  return scCard('Stabilität', src, false, h('div', { class: 'tiles' },
-    tile('Zuverlässigkeit', relN == null ? 'grey' : relN >= 8 ? 'green' : relN >= 6 ? 'yellow' : 'orange', relN == null ? dash : [dec(relN, relN % 1 ? 1 : 0), h('small', { text: ` / ${rel[2]}` })], fRel),
-    tile('Bluescreens', bs == null ? 'grey' : bs === 0 ? 'green' : 'red', bs == null ? dash : String(bs), fCrash),
-    tile('App-Abstürze', am == null ? 'grey' : am === 0 ? 'green' : am <= 5 ? 'yellow' : 'orange', am == null ? dash : String(am), fApp),
-    tile('Startdauer', boot == null ? 'grey' : boot <= 30 ? 'green' : boot <= 60 ? 'yellow' : 'orange', boot == null ? dash : [dec(boot, 0), h('small', { text: ' s' })], fBoot)));
+  return scCard(t('menu.stabilitaet'), src, false, h('div', { class: 'tiles' },
+    tile(t('st.t.zuverlaessigkeit'), relN == null ? 'grey' : relN >= 8 ? 'green' : relN >= 6 ? 'yellow' : 'orange', relN == null ? dash : [dec(relN, relN % 1 ? 1 : 0), h('small', { text: ` / ${rel[2]}` })], fRel),
+    tile(t('st.t.bluescreens'), bs == null ? 'grey' : bs === 0 ? 'green' : 'red', bs == null ? dash : String(bs), fCrash),
+    tile(t('st.t.appAbstuerze'), am == null ? 'grey' : am === 0 ? 'green' : am <= 5 ? 'yellow' : 'orange', am == null ? dash : String(am), fApp),
+    tile(t('st.t.startdauer'), boot == null ? 'grey' : boot <= 30 ? 'green' : boot <= 60 ? 'yellow' : 'orange', boot == null ? dash : [dec(boot, 0), h('small', { text: ' s' })], fBoot)));
 }
 function safetyCard() {
   const s = safety(), sess = !!S.session;
   const pt = S.points && S.points[0] ? S.points[0].zeit : s.letzterPunkt;
   const undoable = S.journal ? S.journal.filter(e => e.status === 'erledigt' && e.art !== 'rueckgaengig').length : null;
   const row = (tone, label, val) => h('div', { class: 'pr g-' + tone }, h('i', { class: 'adot' }), h('span', { class: 'nm', text: label }), h('b', { text: val }));
-  return scCard('Absicherung', 'Sitzung', false,
-    row(!sess || s.schutzAn == null ? 'grey' : s.schutzAn ? 'green' : 'red', 'Computerschutz', !sess || s.schutzAn == null ? '–' : s.schutzAn ? `an${s.laufwerk ? ' (' + s.laufwerk + ')' : ''}` : 'aus'),
-    row(s.sperre24h == null ? 'grey' : s.sperre24h ? 'yellow' : 'green', '24-h-Sperre', s.sperre24h == null ? '–' : s.sperre24h ? 'aktiv' : 'aus'),
-    row(pt ? 'green' : 'grey', 'Letzter Punkt', pt ? fmtAgo(pt) : '–'),
-    row(undoable == null ? 'grey' : 'cyan', 'Rücknehmbar', undoable == null ? '–' : plural(undoable, 'Änderung', 'Änderungen')),
-    h('a', { class: 'more-link', href: '#/aenderungen', text: 'Zu den Änderungen →' }));
+  return scCard(t('st.absicherung'), t('st.sitzung'), false,
+    row(!sess || s.schutzAn == null ? 'grey' : s.schutzAn ? 'green' : 'red', t('set.schutz'), !sess || s.schutzAn == null ? '–' : s.schutzAn ? t('set.an') + (s.laufwerk ? ' (' + s.laufwerk + ')' : '') : t('set.aus')),
+    row(s.sperre24h == null ? 'grey' : s.sperre24h ? 'yellow' : 'green', t('st.sperre24'), s.sperre24h == null ? '–' : s.sperre24h ? t('set.aktiv') : t('set.aus')),
+    row(pt ? 'green' : 'grey', t('st.letzterPunkt'), pt ? fmtAgo(pt) : '–'),
+    row(undoable == null ? 'grey' : 'cyan', t('st.ruecknehmbar'), undoable == null ? '–' : (undoable === 1 ? t('st.aenderung1', undoable) : t('st.aenderungN', undoable))),
+    h('a', { class: 'more-link', href: '#/aenderungen', text: t('st.zuAenderungen') }));
 }
 function renderStatusReport() {
   const box = $('#st-report'); if (!box) return;
   const nodes = [];
   if (S.report) {
-    const src = 'Bericht vom ' + fmtDate(S.report.Meta.Erstellt);
-    nodes.push(h('div', { class: 'st-sec', text: 'Aus dem Bericht' }));
+    const src = t('kopf.berichtVom') + fmtDate(S.report.Meta.Erstellt);
+    nodes.push(h('div', { class: 'st-sec', text: t('st.ausBericht') }));
     // 5. Schutz-Ampeln
-    nodes.push(scCard('Schutz-Ampeln', src, false, PROT.map(([name, pred]) => {
+    nodes.push(scCard(t('st.ampeln'), src, false, PROT().map(([name, pred]) => {
       const f = findBy(pred), tone = toneOf(f);
-      return h('button', { type: 'button', class: 'srow g-' + tone, disabled: !f, title: f ? `${f.Check}: ${f.Value || ''}` : 'Nicht im Bericht', onclick: f ? () => reveal(f.Check) : null },
-        h('i', { class: 'adot' }), name, h('span', { class: 'sv', text: f ? (STATUS_NAME[f.Status] || f.Status) : 'fehlt' }));
+      return h('button', { type: 'button', class: 'srow g-' + tone, disabled: !f, title: f ? `${chkName(f)}: ${f.Value || ''}` : t('st.nichtImBericht'), onclick: f ? () => reveal(f.Check) : null },
+        h('i', { class: 'adot' }), name, h('span', { class: 'sv', text: f ? (STATUS_NAME[f.Status] || f.Status) : t('st.fehlt') }));
     })));
     nodes.push(portCard(src), stabilityCard(src));
   }
-  nodes.push(h('div', { class: 'st-sec', text: 'Absicherung' }), safetyCard());
+  nodes.push(h('div', { class: 'st-sec', text: t('st.absicherung') }), safetyCard());
   box.replaceChildren(...nodes);
 }
 
@@ -2469,12 +2493,13 @@ async function loadSpeicher() {
 function pickSpeicher() {
   const rep = S.report && S.report.Speicher && S.report.Speicher.stand ? S.report.Speicher : null;
   const apiD = S.spApi && S.spApi.stand ? S.spApi : null;
-  const t = x => { const n = new Date(x.stand).getTime(); return isNaN(n) ? 0 : n; };
-  if (rep && (!apiD || t(rep) >= t(apiD))) { S.speicher = rep; S.spSrc = 'aus dem Bericht'; }
-  else if (apiD) { S.speicher = apiD; S.spSrc = 'neu berechnet'; }
-  else { S.speicher = null; S.spSrc = ''; }
+  const ts = x => { const n = new Date(x.stand).getTime(); return isNaN(n) ? 0 : n; };
+  if (rep && (!apiD || ts(rep) >= ts(apiD))) { S.speicher = rep; S.spSrcKey = 'aus'; }
+  else if (apiD) { S.speicher = apiD; S.spSrcKey = 'neu'; }
+  else { S.speicher = null; S.spSrcKey = ''; }
   if (S.spPop) renderSpPop();
 }
+const spSrcText = () => S.spSrcKey === 'aus' ? t('sp.ausBericht') : (S.spSrcKey === 'neu' ? t('sp.neuBerechnet') : '');
 function fmtBytes(b) {
   b = Number(b); if (b == null || isNaN(b)) return '–';
   const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
@@ -2559,11 +2584,11 @@ document.addEventListener('keydown', e => {
 window.addEventListener('resize', () => { if (S.spPop) { if (sbVisible()) placeSpPop(); else closeSpPop(false); } });
 
 async function copyPath(p) {
-  try { await navigator.clipboard.writeText(p); toast('Pfad kopiert'); } catch { toast('Kopieren nicht möglich'); }
+  try { await navigator.clipboard.writeText(p); toast(t('sp.pfadKopiert')); } catch { toast(t('kopieren.toastNein')); }
 }
 function spItem(label, path, bytes, max, extra, sub) {
   const pct = max > 0 ? Math.max(1, Math.round(Number(bytes) / max * 100)) : 0;
-  return h('button', { type: 'button', class: 'sp-item', title: `${path}\nKlick kopiert den Pfad.`, onclick: () => copyPath(path) },
+  return h('button', { type: 'button', class: 'sp-item', title: path + '\n' + t('sp.klickKopiert'), onclick: () => copyPath(path) },
     h('span', { class: 'sp-top' }, h('span', { class: 'sp-name', text: label }), extra, h('span', { class: 'sp-size', text: fmtBytes(bytes) })),
     h('span', { class: 'sp-bar' }, h('i', { style: `width:${Math.min(100, pct)}%` })),
     sub ? h('span', { class: 'sp-sub' }, sub) : null);
@@ -2579,29 +2604,29 @@ function renderSpPop() {
   const sp = S.speicher, lw = sp && (sp.laufwerke || []).find(x => spLetter(x.laufwerk) === P.letter);
   const drive = ((S.live.data && S.live.data.drives) || []).find(x => spLetter(x.letter) === P.letter);
   const bez = (lw && lw.bezeichnung) || (drive && drive.label) || '';
-  const kids = [h('div', { class: 'sp-head' }, h('b', { text: `${P.letter}${bez ? ' ' + bez : ''} – Größte Speicherverbraucher` }),
-    h('button', { type: 'button', class: 'sm ghost', 'data-f': 'close', 'aria-label': 'Schließen', title: 'Schließen (Esc)', text: '✕', onclick: () => closeSpPop(true) }))];
-  const refresh = h('button', { type: 'button', class: 'sm', 'data-f': 'refresh', disabled: readOnly() || !!S.spJob, title: readOnly() ? lockTitle() : null, text: S.spJob ? 'Wird berechnet …' : (lw ? 'Neu berechnen' : 'Jetzt berechnen'), onclick: spRefresh });
+  const kids = [h('div', { class: 'sp-head' }, h('b', { text: t('sp.kopf', `${P.letter}${bez ? ' ' + bez : ''}`) }),
+    h('button', { type: 'button', class: 'sm ghost', 'data-f': 'close', 'aria-label': t('btn.schliessen'), title: t('sp.schliessenEsc'), text: '✕', onclick: () => closeSpPop(true) }))];
+  const refresh = h('button', { type: 'button', class: 'sm', 'data-f': 'refresh', disabled: readOnly() || !!S.spJob, title: readOnly() ? lockTitle() : null, text: S.spJob ? t('sp.wirdBerechnet') : (lw ? t('sp.neuBerechnenKnopf') : t('sp.jetztBerechnen')), onclick: spRefresh });
   const prog = h('div', { class: 'note', id: 'sp-prog', 'aria-live': 'polite', text: S.spJob ? S.spJob.line : '' });
   if (!sp || !sp.stand || !lw) {
-    kids.push(h('p', { text: `Für ${P.letter} gibt es noch keine Auswertung.` }), h('div', { class: 'sp-foot' }, refresh), prog);
+    kids.push(h('p', { text: t('sp.keineAuswertung', P.letter) }), h('div', { class: 'sp-foot' }, refresh), prog);
   } else {
-    kids.push(h('div', { class: 'note', text: `Stand: ${fmtDate(sp.stand)} · ${S.spSrc}${lw.uebersprungen ? ` · ${lw.uebersprungen} Ordner ohne Zugriff übersprungen` : ''}` }));
+    kids.push(h('div', { class: 'note', text: t('sp.stand', fmtDate(sp.stand), spSrcText(), lw.uebersprungen ? t('sp.uebersprungen', lw.uebersprungen) : '') }));
     if (lw.fehler) kids.push(h('p', { class: 'rem', text: String(lw.fehler) }));
     const folders = (lw.ordner || []).slice(0, 10), files = (lw.dateien || []).slice(0, 10);
     const games = (sp.spiele || []).filter(g => spLetter(g.laufwerk) === P.letter).sort((a, b) => (Number(b.bytes) || 0) - (Number(a.bytes) || 0)).slice(0, 10);
     kids.push(
-      spSection('Ordner', folders, 'Keine Ordner ausgewertet.', (x, max) => spItem(x.pfad, x.pfad, x.bytes, max)),
-      spSection('Dateien', files, 'Keine großen Dateien gefunden.', (x, max) => spItem(x.pfad, x.pfad, x.bytes, max, x.windows ? h('span', { class: 'chip type', text: 'Windows' }) : null)),
-      files.some(x => x.windows) ? h('p', { class: 'note', text: 'pagefile.sys (Auslagerungsdatei), hiberfil.sys (Ruhezustand/Schnellstart) und swapfile.sys gehören zu Windows. Nicht löschen. Verkleinern: Auslagerungsdatei unter Systemsteuerung > System > Erweiterte Systemeinstellungen > Leistung > Virtueller Arbeitsspeicher; hiberfil.sys mit „powercfg /hibernate off“ (schaltet auch Schnellstart ab) oder „powercfg /h /type reduced“.' }) : null,
-      spSection(`Spiele auf ${P.letter}`, games, `Keine Spiele auf ${P.letter} gefunden.`, (x, max) => spItem(x.name || x.pfad, x.pfad, x.bytes, max, x.plattform ? h('span', { class: 'chip type', text: x.plattform }) : null,
-        [`zuletzt gespielt: ${x.zuletztGespielt ? fmtShort(x.zuletztGespielt) : '–'}`, x.groesseUnsicher ? ' · Größe eingeschränkt lesbar' : ''])));
+      spSection(t('sp.ordner'), folders, t('sp.keineOrdner'), (x, max) => spItem(x.pfad, x.pfad, x.bytes, max)),
+      spSection(t('sp.dateien'), files, t('sp.keineDateien'), (x, max) => spItem(x.pfad, x.pfad, x.bytes, max, x.windows ? h('span', { class: 'chip type', text: t('sp.windowsChip') }) : null)),
+      files.some(x => x.windows) ? h('p', { class: 'note', text: t('sp.windowsHinweis') }) : null,
+      spSection(t('sp.spieleAuf', P.letter), games, t('sp.keineSpiele', P.letter), (x, max) => spItem(x.name || x.pfad, x.pfad, x.bytes, max, x.plattform ? h('span', { class: 'chip type', text: x.plattform }) : null,
+        [t('sp.zuletzt', x.zuletztGespielt ? fmtShort(x.zuletztGespielt) : '–'), x.groesseUnsicher ? t('sp.groesseEingeschraenkt') : ''])));
     const hasGames = (dataTable('Installierte Spiele') || []).length > 0;
-    kids.push(h('div', { class: 'sp-foot' }, refresh, hasGames ? h('button', { type: 'button', class: 'link', 'data-f': 'games', text: 'Alle Spiele', onclick: () => { closeSpPop(false); openRaw(['Installierte Spiele']); } }) : null,
-      h('button', { type: 'button', class: 'link', 'data-f': 'spordner', text: 'Spiele-Ordner festlegen …', onclick: gotoSpOrdner })), prog,
-      h('p', { class: 'note', text: 'Deinstallieren nur über die jeweilige Plattform (Steam, Epic …). Morpheus löscht nichts.' }));
+    kids.push(h('div', { class: 'sp-foot' }, refresh, hasGames ? h('button', { type: 'button', class: 'link', 'data-f': 'games', text: t('sp.alleSpiele'), onclick: () => { closeSpPop(false); openRaw(['Installierte Spiele']); } }) : null,
+      h('button', { type: 'button', class: 'link', 'data-f': 'spordner', text: t('sp.ordnerFestlegen'), onclick: gotoSpOrdner })), prog,
+      h('p', { class: 'note', text: t('sp.deinstallieren') }));
   }
-  pop.setAttribute('aria-label', `Speicherverbraucher ${P.letter}`);
+  pop.setAttribute('aria-label', t('sp.aria', P.letter));
   pop.replaceChildren(...kids.filter(k => k != null && k !== false));
   pop.classList.remove('hide');
   placeSpPop();
@@ -2611,15 +2636,15 @@ function renderSpPop() {
 async function startSpeicherRefresh(onLine) {
   const r = await api('/api/speicher/refresh', { method: 'POST' });
   const job = await followJob(r.jobId, lines => { const l = lines[lines.length - 1]; if (l && onLine) onLine(l); });
-  if (job.status === 'failed') throw new Error((job.ergebnis && job.ergebnis.error) || 'Die Berechnung ist fehlgeschlagen.');
+  if (job.status === 'failed') throw new Error((job.ergebnis && job.ergebnis.error) || t('sp.berechnungFehl'));
   await loadSpeicher();
 }
 async function spRefresh() {
   if (S.spJob || S.spoJob || readOnly()) return;
-  S.spJob = { line: 'Wird gestartet …' }; renderSpPop();
+  S.spJob = { line: t('spo.startet') }; renderSpPop();
   try {
     await startSpeicherRefresh(l => { if (S.spJob) { S.spJob.line = l; const p = $('#sp-prog'); if (p) p.textContent = l; } });
-    toast('Speicherverbraucher neu berechnet');
+    toast(t('spo.toastNeu'));
   } catch (e) { toast(e.message); }
   S.spJob = null; renderSpPop();
 }
@@ -2645,7 +2670,7 @@ function renderView(keepScroll) {
   const y = window.scrollY;
   const view = V[S.view] || V.uebersicht;
   let node;
-  try { node = view(); } catch (e) { console.error(e); node = banner('err', 'warn', h('b', { text: 'Anzeigefehler: ' }), e.message); }
+  try { node = view(); } catch (e) { console.error(e); node = banner('err', 'warn', h('b', { text: t('anzeigefehler') }), e.message); }
   dOrdBannerEinsetzen(node);
   if (!keepScroll) node.classList.add('view-in');
   // Beim Neuzeichnen laden Karten (z. B. Werkzeuge) ihren Inhalt nachträglich; bis dahin ist die Seite kürzer und
@@ -2673,7 +2698,7 @@ function route() {
 
 // ---------------------------------------------------------------- Sprechblasen (ⓘ)
 function closeTips(except) {
-  document.querySelectorAll('.tip.open').forEach(t => { if (t !== except) { t.classList.remove('open'); if (t.previousElementSibling) t.previousElementSibling.setAttribute('aria-expanded', 'false'); } });
+  document.querySelectorAll('.tip.open').forEach(tp => { if (tp !== except) { tp.classList.remove('open'); if (tp.previousElementSibling) tp.previousElementSibling.setAttribute('aria-expanded', 'false'); } });
 }
 document.addEventListener('click', e => {
   const btn = e.target.closest ? e.target.closest('button.info') : null;
@@ -2684,14 +2709,89 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTips(null); });
 
+// ---------------------------------------------------------------- Sprache umschalten (2.6, #66)
+const re = s => new RegExp(s, 'i');   // Muster aus gui.psd1 (Logzeilen der Schritte), Groß-/Kleinschreibung egal
+/** Alle von der Sprache abhängigen Tabellen und Listen neu aufbauen (nach dem Laden der Texte). */
+function buildTexts() {
+  STATUS_NAME = { CRIT: t('status.crit'), WARN: t('status.warn'), TIPP: t('status.tipp'), ACK: t('status.ack'), INFO: t('status.info'), OK: t('status.ok'), SKIP: t('status.skip') };
+  MENU_TEXTE = {
+    gruppen: { bereiche: t('menu.gruppe.bereiche'), verwalten: t('menu.gruppe.verwalten') },
+    punkte: { uebersicht: t('menu.uebersicht'), sicherheit: t('menu.sicherheit'), leistung: t('menu.leistung'), gaming: t('menu.gaming'), stabilitaet: t('menu.stabilitaet'), alle: t('menu.alle'),
+      checkliste: t('menu.checkliste'), aenderungen: t('menu.aenderungen'), werkzeuge: t('menu.werkzeuge'), berichte: t('menu.berichte'), scan: t('menu.scan'), rohdaten: t('menu.rohdaten'), einstellungen: t('menu.einstellungen') },
+    unter: { gamingCheck: t('menu.unter.gamingCheck'), wartung: t('menu.unter.wartung'), defender: t('menu.unter.defender'), updates: t('menu.unter.updates'),
+      sysinternals: t('menu.unter.sysinternals'), spieleOrdner: t('menu.unter.spieleOrdner'), keinBericht: t('menu.unter.keinBericht') },
+    filter: { problem: t('menu.filter.problem'), CRIT: t('menu.filter.crit'), WARN: t('menu.filter.warn'), TIPP: t('menu.filter.tipp'), ACK: t('menu.filter.ack'), SKIP: t('menu.filter.skip') },
+    // Reihenfolge wie in der Karte „Wartung & Reparatur“
+    werkzeuge: [['wiederherstellung.punkt', t('menu.werkzeug.punkt')], ['dism.checkhealth', t('menu.werkzeug.dismCheck')], ['dism.scanhealth', t('menu.werkzeug.dismScan')],
+      ['dism.restorehealth', t('menu.werkzeug.dismRestore')], ['sfc.scannow', t('menu.werkzeug.sfc')], ['dism.analyze', t('menu.werkzeug.winsxsAnalyse')], ['dism.cleanup', t('menu.werkzeug.winsxsCleanup')],
+      ['chkdsk.scan', t('menu.werkzeug.chkdsk')], ['perfmon.rel', t('menu.werkzeug.zuverlaessigkeit')], ['dns.flush', t('menu.werkzeug.dns')], ['trim', t('menu.werkzeug.trim')],
+      ['zeit.resync', t('menu.werkzeug.zeit')], ['powercfg.energy', t('menu.werkzeug.energie')], ['powercfg.akku', t('menu.werkzeug.akku')], ['powercfg.schlaf', t('menu.werkzeug.schlaf')]],
+    aria: { nav: t('menu.aria.nav'), auf: t('menu.aria.auf'), zu: t('menu.aria.zu') },
+  };
+  const MT = MENU_TEXTE.punkte;
+  NAV = [
+    { id: 'uebersicht', label: MT.uebersicht, icon: 'home' }, { group: MENU_TEXTE.gruppen.bereiche },
+    { id: 'sicherheit', label: MT.sicherheit, icon: 'shield', badge: true, kinder: 'kategorien' }, { id: 'leistung', label: MT.leistung, icon: 'gauge', badge: true, kinder: 'kategorien' },
+    { id: 'gaming', label: MT.gaming, icon: 'pad', badge: true, kinder: 'kategorien' }, { id: 'stabilitaet', label: MT.stabilitaet, icon: 'pulse', badge: true, kinder: 'kategorien' },
+    { id: 'alle', label: MT.alle, icon: 'list', kinder: 'filter' }, { group: MENU_TEXTE.gruppen.verwalten },
+    { id: 'checkliste', label: MT.checkliste, icon: 'check' }, { id: 'aenderungen', label: MT.aenderungen, icon: 'undo' }, { id: 'werkzeuge', label: MT.werkzeuge, icon: 'tool', kinder: 'werkzeuge' },
+    { id: 'berichte', label: MT.berichte, icon: 'doc' }, { id: 'scan', label: MT.scan, icon: 'scan' },
+    { id: 'rohdaten', label: MT.rohdaten, icon: 'db' }, { id: 'einstellungen', label: MT.einstellungen, icon: 'gear' },
+    { sprache: true },
+  ];
+  RUN_STEPS = [
+    [t('run.step.lesen'), re(t('run.re.lesen'))],
+    [t('run.step.punktAnlegen'), re(t('run.re.punktAnlegen'))],
+    [t('run.step.punktPruefen'), re(t('run.re.punktPruefen'))],
+    [t('run.step.journal'), re(t('run.re.journal'))],
+    [t('run.step.aendern'), re(t('run.re.aendern'))],
+    [t('run.step.ergebnis'), re(t('run.re.ergebnis'))],
+  ];
+  RESULT_TEXT = { erledigt: t('run.res.erledigt'), fehlgeschlagen: t('run.res.fehlgeschlagen'), 'fehlgeschlagen-zurueckgesetzt': t('run.res.zurueckgesetzt'), zurueckgenommen: t('run.res.zurueckgenommen'),
+    uebersprungen: t('run.res.uebersprungen'), 'übersprungen': t('run.res.uebersprungen'), 'uebersprungen-erreicht': t('run.res.schonErledigt'), 'uebersprungen-voraussetzung': t('run.res.voraussetzung') };
+  WT_KLASSE = { diagnose: ['INFO', t('wt.k.diagnose')], wartung: ['OK', t('wt.k.wartung')], reparatur: ['WARN', t('wt.k.reparatur')] };
+  WT_ERG = { ok: ['OK', t('wt.e.ok')], repariert: ['OK', t('wt.e.repariert')], reparierbar: ['WARN', t('wt.e.reparierbar')], problem: ['WARN', t('wt.e.problem')], fehler: ['CRIT', t('wt.e.fehler')], unbekannt: ['INFO', t('wt.e.unbekannt')] };
+  WT_STATUS = { erledigt: t('run.res.erledigt'), fehlgeschlagen: t('run.res.fehlgeschlagen'), abgebrochen: t('wt.s.abgebrochen'), zeitueberschreitung: t('wt.s.zeit') };
+  WT_PAKET = { aktualisiert: ['OK', t('wt.p.aktualisiert')], 'kein-update': ['OK', t('wt.p.keinUpdate')], neustart: ['WARN', t('karte.neustartNoetig')], 'laeuft-noch': ['WARN', t('wt.p.laeuftNoch')], fehlgeschlagen: ['CRIT', t('jr.s.fehlgeschlagen')], abgebrochen: ['INFO', t('jr.abgebrochen')] };
+}
+/** Statische Texte der index.html setzen: data-t = Text, data-t-title / -aria-label / -placeholder / -alt = Attribute */
+function applyStatic() {
+  document.documentElement.lang = LANG;
+  document.querySelectorAll('[data-t]').forEach(e => { e.textContent = t(e.getAttribute('data-t')); });
+  ['title', 'aria-label', 'placeholder', 'alt'].forEach(a => {
+    document.querySelectorAll('[data-t-' + a + ']').forEach(e => e.setAttribute(a, t(e.getAttribute('data-t-' + a))));
+  });
+}
+/** Texte der Oberfläche vom Server holen (liefert { sprache, texte }); bei einem Fehler bleiben die vorhandenen Texte */
+async function loadTexte() {
+  try {
+    const r = await api('/api/texte');
+    if (r && r.texte && typeof r.texte === 'object') { TX = r.texte; LANG = r.sprache === 'en' ? 'en' : 'de'; }
+  } catch (e) { if (e.status === 401) throw e; }
+  buildTexts(); applyStatic();
+}
+/** Klick auf den Sprachknopf im Menü: Sprache beim Server umstellen, Texte, Hilfe und Aktionen neu laden, alles neu zeichnen */
+async function switchLang() {
+  const neu = LANG === 'de' ? 'en' : 'de';
+  try {
+    const r = await api('/api/sprache', { method: 'POST', body: { sprache: neu } });
+    await loadTexte();
+    await Promise.all([loadHelp(), loadActions()]);
+    closeSpPop(false);
+    renderView(true); renderStatusLive(); renderStatusReport();
+    if (r && r.gespeichert === false) toast(t('menu.sprache.nurFenster'));
+  } catch (e) { toast(e.message); }
+}
+
 // ---------------------------------------------------------------- Start
 async function init() {
   try { await initToken(); } catch (e) { fatal(e.message); return; }
-  if (!S.token) { fatal('Kein Zugriffstoken. Bitte die GUI über pc-check-gui starten.'); return; }
+  if (!S.token) { fatal(t('api.keinToken')); return; }
   try {
+    await loadTexte();
     await loadAll();
   } catch (e) {
-    if (e.status !== 401) fatal('Die GUI konnte nicht geladen werden: ' + e.message);
+    if (e.status !== 401) fatal(t('api.ladenFehler', e.message));
     return;
   }
   startHeartbeat();

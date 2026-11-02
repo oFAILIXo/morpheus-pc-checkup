@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Sicherung.ps1. Rein lesend; eigene Testordner liegen in $TestDrive.
 # Ausführen: Invoke-Pester tests\Sicherung.Tests.ps1
 

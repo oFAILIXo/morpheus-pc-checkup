@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Wartung.ps1.
 # Ruft nie echte Werkzeuge auf (DISM, SFC, chkdsk, winget, defrag, powercfg, w32tm, ipconfig, Wiederherstellungspunkt):
 # Prozess, Punkt, Ohne, WingetPfad und Jetzt sind Attrappen. Der Prozess-Runner wird nur mit cmd.exe /c echo und ping 127.0.0.1 getestet.

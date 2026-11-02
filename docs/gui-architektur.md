@@ -921,3 +921,42 @@ Lag das Morpheus-Fenster 1–2 Minuten im Hintergrund, drosselte bzw. fror Edge 
 - **Nutzung:** `Wartung.ps1` über `$script:MorpheusWartungImpl.WingetBenutzer` (Ergebnisfeld `benutzerkontext`, Detail „winget lief ohne Adminrechte (Benutzerkontext).“), `pc-check.ps1` im Konsolendialog (Ausgabe live in der Konsole). `Initialize-/Test-MorpheusWingetOrdner` und das Feld `wingetOrdner` sind entfernt. Der Windows-Dialog vor den Updates nennt den Ablauf.
 - **Tests:** `tests\WingetBenutzer.Tests.ps1` ersetzt die Aufgabenplanung durch einen Hilfsprozess bzw. startet `conhost`/`cmd` echt mit `ping 127.0.0.1` und `findstr`; kein winget, keine Aufgabe.
 - Sicherheitsbewertung: `docs/sicherheitspruefung-2.5.md`.
+
+## 20. Ergänzungen v2.6: Deutsch/Englisch (#66)
+
+### 20.1 Sprachdateien (`lang\de`, `lang\en`, `gui\lib\Sprache.ps1`)
+- **Feste Dateiliste** je Sprache, kein Suchmuster: `scan.psd1` und `leistung.psd1` (Prüfungen, Präfix `scan.`), `bericht.psd1` (Berichte, Konsole und Update-Dialog am Ende des Scans), `server.psd1` (Server, Starter, `gui\lib`), `katalog.psd1` (Meldungen der Katalog-Scriptblöcke), `gui.psd1` (Oberfläche), dazu `hilfe.psd1` (früher `pc-check.hilfe.psd1`) und `aktionen.psd1` (Titel, Erklärung, Befehlsanzeige, Variantennamen je Aktions-Id). Alle stehen in `Get-MorpheusCodeFiles`, liegen also im gesicherten Programmordner und laufen durch die Installations- und Hash-Prüfung.
+- **Nur gelesen:** `Import-PowerShellDataFile` (nur Daten, kein Code). Ein unbekannter Schlüssel liefert den Schlüssel selbst; fehlt ein Text in Englisch, gilt der deutsche.
+- **`T '<schlüssel>' [werte…]`** liefert den Text der aktiven Sprache mit Platzhaltern `{0}` … wie `[string]::Format`. In der Oberfläche `t('<schlüssel>')` (Schlüssel ohne `gui.`).
+- **Feste Kennungen:** `Area`, `Category`, `Check`, Tabellentitel und Spaltennamen bleiben deutsch (Akzeptanzliste, Katalog `Pruefung`, Hilfe, Vergleich alter Berichte, Checkliste). Angezeigt werden `AreaName`, `CategoryName`, `CheckName` je Befund und `DataNamen.Tabellen`/`DataNamen.Spalten` im JSON-Bericht (aus `scan.bereich.*`, `scan.kategorie.*`, `scan.pruefung.*`, `scan.tabelle.*`, `scan.spalte.*`). Alte Berichte ohne diese Felder zeigen die Kennung.
+- **Test:** `tests\Sprache.Tests.ps1` prüft gleiche Schlüssel (auch verschachtelt, Arrays gleich lang), gleiche Platzhalter, keine leeren Texte, keinen Schlüssel doppelt, und dass jeder `T '…'`, `t('…')` und `data-t="…"` im Code einen Text hat; außerdem Titel und Erklärung je Katalog-Aktion und einen Anzeigenamen je Prüfung.
+
+### 20.2 Welche Sprache gilt
+1. Scan: Parameter `-Sprache de|en`, sonst `<Datenordner>\state\sprache.json`, sonst Windows-Sprache (`Get-UICulture`: `de-*` = Deutsch, sonst Englisch). Der Bericht entsteht in dieser Sprache (`Meta.Sprache`).
+2. GUI-Server: beim Start gespeicherte Wahl bzw. Windows-Sprache, gesetzt in `$env:MORPHEUS_SPRACHE`; Jobs und der Scan erben den Wert, der Scan bekommt zusätzlich `-Sprache`. Ein aus der Benutzerumgebung geerbter Wert wird beim Start überschrieben; ungültige Werte zählen nie.
+3. `state\sprache.json` = `{"sprache":"de|en"}`, höchstens 1 KB, alles andere wird ignoriert.
+
+### 20.3 API
+| Methode | Pfad | Zweck |
+|---|---|---|
+| GET | `/api/texte` | `{ sprache, texte }` – alle `gui.*`-Texte ohne Präfix |
+| POST | `/api/sprache` | `{ sprache: 'de'|'en' }` → `{ sprache, gespeichert }`. Lädt Texte und Katalog neu. Speichert atomar nach `state\sprache.json`, im Nur-Lesen-Modus nicht (`gespeichert: false`, gilt nur bis zum Schließen). Keine Windows-Bestätigung: ändert nichts am System. |
+`/api/session` liefert zusätzlich `sprache`; `/api/help` und `/api/actions` liefern die aktive Sprache, Aktionen zusätzlich `variantenNamen` (angezeigt) neben `varianten` (gesendet).
+
+### 20.4 Oberfläche
+- `t('<schlüssel>', …)` und `tk(<dynamischer Schlüssel>, rückfall)`; Texte kommen aus `GET /api/texte` vor dem ersten Rendern. Für Fehler vor dem Laden (Startcode, Token) gibt es eine kleine eingebaute Tabelle (`PRE`).
+- `index.html`: statische Texte per `data-t`, Attribute per `data-t-title`, `data-t-aria-label`, `data-t-placeholder`, `data-t-alt`; gesetzt nur mit `textContent`/`setAttribute`.
+- Umschalten: Menüpunkt unter „Verwalten“ (zeigt die jeweils andere Sprache). Danach Texte, Hilfe und Aktionen neu laden und die aktuelle Ansicht neu zeichnen; `gespeichert: false` → Hinweis „gilt nur für dieses Fenster“.
+- Befunde zeigen `CheckName`/`CategoryName`/`AreaName`, Rohdaten `DataNamen`; Logik (Ansichten, Filter, Checkliste, Akzeptieren, Vergleich) bleibt bei den Kennungen. Sortierung und Datumsformat folgen der Sprache.
+- Mock: `gui\dev\make-mock-texte.ps1` erzeugt `gui\dev\texte.de.json`/`texte.en.json`; nach Textänderungen neu ausführen.
+
+### 20.5 Akzeptanzregeln und Tipps (`ValueDe`)
+Akzeptanzregeln (`accepted.psd1`, `Match`) und die Tipps in `hilfe.psd1` vergleichen per regulärem Ausdruck mit dem Befundtext. Damit sie in beiden Sprachen greifen, trägt jeder Befund `ValueDe`: Der Scan merkt sich bei Englisch zu jedem `T`-Ergebnis die deutsche Fassung (`Start-MorpheusTextSpur`) und setzt den Befundtext daraus deutsch zusammen (`Get-MorpheusDeutscherText`, nur an Wortgrenzen). Tipps vergleichen mit `ValueDe`, Akzeptanzregeln mit `Value` oder `ValueDe`; „Akzeptieren“ in der GUI speichert das Muster auf `ValueDe`. Grenze: Teile eines Befunds, die nicht aus `T` stammen (z. B. Meldungen von Windows), bleiben wie geliefert.
+
+### 20.6 Bewertung der Angriffsfläche (Prinzip 4/5)
+- Sprachdateien: im Programmordner, in `Get-MorpheusCodeFiles` (Installations- und Hash-Prüfung), feste Liste, nur `Import-PowerShellDataFile` (kein Code). Wie bisher `pc-check.hilfe.psd1`, keine neue Quelle.
+- `state\sprache.json`: im Datenordner (nur Administratoren), atomar geschrieben, nur `de`/`en` gültig, höchstens 1 KB. Ein manipulierter Wert kann nur die Sprache wählen.
+- `MORPHEUS_SPRACHE` aus der Benutzerumgebung: nur `de`/`en` zählen; Server und Scan setzen den Wert beim Start selbst.
+- `POST /api/sprache`: Token-geschützt wie alle Endpunkte, kein Pfad, keine Datei aus der Anfrage; ändert nichts am System, daher ohne Windows-Bestätigung (wie die Checkliste).
+- Oberfläche: Texte nur per `textContent`/`setAttribute`, Platzhalter werden als Text eingesetzt. HTML-Bericht: Texte per `HEnc`; neun Anleitungstexte (`bericht.html.guide*Html`) sind bewusst HTML aus der geschützten Sprachdatei, eingesetzte Werte darin werden kodiert; Texte für das eingebettete Skript als JSON mit `<` als `\u003c`. Windows-Bestätigungsdialoge setzen Werte weiter über `Format-GuiDialogWert` ein.
+- Ergebnis: keine neue relevante Angriffsfläche, daher keine eigene Sicherheitsprüfung (Vorgabe: nur wenn das Laden eine neue Angriffsfläche schafft).

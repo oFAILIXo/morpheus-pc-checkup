@@ -20,6 +20,8 @@
     das Ergebnis mit @() umhuellen (leer = nichts, ein Element = kein Array).
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 #region Hilfsfunktionen (privat)
 
 $script:AkzeptanzFelder = @('Id', 'Check', 'Match', 'Datei', 'Sha256', 'Reason', 'Until', 'Erstellt')
@@ -131,17 +133,17 @@ function PcCheckAkzTextParsen {
     if (@($fehler).Count -gt 0) { throw @($fehler)[0].Message }
     $anw = @($ast.EndBlock.Statements)
     if (($anw.Count -ne 1) -or ($anw[0] -isnot [System.Management.Automation.Language.PipelineAst])) {
-        throw 'Erwartet wird genau ein Hashtable (@{ ... }).'
+        throw (T 'server.akz.nurHashtable')
     }
     $elemente = @($anw[0].PipelineElements)
     if (($elemente.Count -ne 1) -or ($elemente[0] -isnot [System.Management.Automation.Language.CommandExpressionAst]) -or
         ($elemente[0].Expression -isnot [System.Management.Automation.Language.HashtableAst])) {
-        throw 'Erwartet wird genau ein Hashtable (@{ ... }).'
+        throw (T 'server.akz.nurHashtable')
     }
     try {
         $daten = $elemente[0].Expression.SafeGetValue()
     } catch {
-        throw "Die Datei enthaelt mehr als reine Daten: $($_.Exception.Message)"
+        throw (T 'server.akz.mehrAlsDaten' $_.Exception.Message)
     }
     $liste = $null
     if ($daten -is [System.Collections.IDictionary]) {
@@ -162,7 +164,7 @@ function PcCheckAkzDateiParsen {
         $text = PcCheckAkzBytesZuText ([IO.File]::ReadAllBytes($Datei))
         PcCheckAkzTextParsen $text
     } catch {
-        throw "Die Akzeptanzliste ist nicht lesbar: $($_.Exception.Message)"
+        throw (T 'server.akz.nichtLesbar' $_.Exception.Message)
     }
 }
 
@@ -259,7 +261,7 @@ function PcCheckAkzFelderListe {
         }
         if ($w -eq '') { continue }
         if (PcCheckAkzSteuerzeichen $w) {
-            if (-not $Ersetzen) { throw "Das Feld '$f' enthaelt Steuerzeichen." }
+            if (-not $Ersetzen) { throw (T 'server.akz.steuerzeichenFeld' $f) }
             $w = [regex]::Replace($w, $script:AkzeptanzSteuerRegex, ' ')
         }
         $n = $f
@@ -306,7 +308,7 @@ function PcCheckAkzPsd1Text {
 # Probe: geschriebene Datei lesen und mit den erwarteten Feldern vergleichen; sonst throw
 function PcCheckAkzProbe {
     param([string]$Pfad, $Paare)
-    $fehlt = 'Die Akzeptanzliste ließ sich nicht sicher schreiben; die bisherige Datei bleibt unverändert.'
+    $fehlt = (T 'server.akz.nichtSicherGeschrieben')
     try {
         $gelesen = @(PcCheckAkzTextParsen (PcCheckAkzBytesZuText ([IO.File]::ReadAllBytes($Pfad))))
     } catch { throw $fehlt }
@@ -333,7 +335,7 @@ function PcCheckAkzSchreiben {
     param([string]$Datei, [string]$Text, [bool]$Bom, [bool]$Sicherung, $ProbePaare = $null)
     $ordner = Split-Path -Path $Datei -Parent
     if ($ordner -and -not (Test-Path -LiteralPath $ordner -PathType Container)) {
-        throw "Der Ordner '$ordner' existiert nicht."
+        throw (T 'server.akz.ordnerFehlt' $ordner)
     }
     $tmp = $Datei + '.tmp'
     $enc = New-Object System.Text.UTF8Encoding($Bom)
@@ -388,28 +390,28 @@ function PcCheckAkzPruefen {
     $datei = PcCheckAkzWert $Regel 'Datei'
     $sha = PcCheckAkzWert $Regel 'Sha256'
     foreach ($f in 'Check', 'Match', 'Reason', 'Until', 'Datei', 'Sha256') {
-        if (PcCheckAkzSteuerzeichen (PcCheckAkzWert $Regel $f)) { throw "Das Feld '$f' darf keine Steuerzeichen enthalten." }
+        if (PcCheckAkzSteuerzeichen (PcCheckAkzWert $Regel $f)) { throw (T 'server.akz.steuerzeichenDarfNicht' $f) }
     }
-    if (($check.Length -lt 1) -or ($check.Length -gt 200)) { throw 'Der Name der Pruefung muss 1 bis 200 Zeichen lang sein.' }
+    if (($check.Length -lt 1) -or ($check.Length -gt 200)) { throw (T 'server.akz.checkLaenge') }
     $rl = $reason.Trim().Length
-    if (($rl -lt 3) -or ($rl -gt 300)) { throw 'Die Begruendung muss 3 bis 300 Zeichen lang sein.' }
+    if (($rl -lt 3) -or ($rl -gt 300)) { throw (T 'server.akz.begruendungLaenge') }
     if ($until -ne '') {
-        if ($until -notmatch '^\d{4}-\d{2}-\d{2}$') { throw "'Gilt bis' muss ein Datum im Format JJJJ-MM-TT sein." }
+        if ($until -notmatch '^\d{4}-\d{2}-\d{2}$') { throw (T 'server.akz.giltBisFormat') }
         $d = PcCheckAkzDatum $until
-        if ($null -eq $d) { throw "'Gilt bis' ist kein gueltiges Datum." }
-        if ($d -lt $Heute.Date) { throw "'Gilt bis' darf nicht in der Vergangenheit liegen." }
-        if ($d -gt $Heute.Date.AddYears(5)) { throw "'Gilt bis' darf hoechstens 5 Jahre in der Zukunft liegen." }
+        if ($null -eq $d) { throw (T 'server.akz.giltBisUngueltig') }
+        if ($d -lt $Heute.Date) { throw (T 'server.akz.giltBisVergangen') }
+        if ($d -gt $Heute.Date.AddYears(5)) { throw (T 'server.akz.giltBisZuFern') }
     }
-    if ($match.Length -gt 2000) { throw 'Das Muster ist zu lang (hoechstens 2000 Zeichen).' }
+    if ($match.Length -gt 2000) { throw (T 'server.akz.musterLang') }
     if ($match -ne '') {
         try { [void](New-Object System.Text.RegularExpressions.Regex($match)) }
-        catch { throw 'Das Muster ist kein gueltiger regulaerer Ausdruck.' }
+        catch { throw (T 'server.akz.musterRegex') }
     }
     if (($datei -ne '') -or ($sha -ne '')) {
-        if (($datei -eq '') -or ($sha -eq '')) { throw 'Datei und Pruefsumme (SHA256) gehoeren zusammen.' }
-        if ($sha -cnotmatch '^[0-9a-f]{64}$') { throw 'Die SHA256-Pruefsumme muss aus 64 Hex-Zeichen (Kleinbuchstaben) bestehen.' }
-        if ($datei -notmatch '^[A-Za-z]:\\') { throw 'Der Dateipfad muss mit einem Laufwerk beginnen (z. B. C:\).' }
-        if ($datei.Length -gt 260) { throw 'Der Dateipfad ist zu lang (hoechstens 260 Zeichen).' }
+        if (($datei -eq '') -or ($sha -eq '')) { throw (T 'server.akz.dateiSha') }
+        if ($sha -cnotmatch '^[0-9a-f]{64}$') { throw (T 'server.akz.shaFormat') }
+        if ($datei -notmatch '^[A-Za-z]:\\') { throw (T 'server.akz.dateipfadLaufwerk') }
+        if ($datei.Length -gt 260) { throw (T 'server.akz.dateipfadLang') }
     }
 }
 
@@ -419,11 +421,11 @@ function PcCheckAkzVollPruefen {
     PcCheckAkzPruefen -Regel $Regel -Heute $Heute
     $ordner = Split-Path -Path $Datei -Parent
     if ($ordner -and -not (Test-Path -LiteralPath $ordner -PathType Container)) {
-        throw "Der Ordner '$ordner' existiert nicht."
+        throw (T 'server.akz.ordnerFehlt' $ordner)
     }
     $l = PcCheckAkzLaden -Datei $Datei -Heute $Heute
     if ($l.Objekte.Count -ge $script:AkzeptanzMaxRegeln) {
-        throw "Die Akzeptanzliste ist voll (hoechstens $($script:AkzeptanzMaxRegeln) Regeln)."
+        throw (T 'server.akz.voll' $script:AkzeptanzMaxRegeln)
     }
     $check = PcCheckAkzWert $Regel 'Check'
     $match = PcCheckAkzWert $Regel 'Match'
@@ -437,7 +439,7 @@ function PcCheckAkzVollPruefen {
         } else {
             $gleich = ($o.datei -eq '') -and ($o.check -ceq $check) -and ($o.match -ceq $match)
         }
-        if ($gleich) { throw 'Das ist bereits akzeptiert.' }
+        if ($gleich) { throw (T 'server.akz.bereitsAkzeptiert') }
     }
     $l
 }
@@ -497,7 +499,7 @@ function Remove-MorpheusAkzeptanz {
     for ($i = 0; $i -lt $l.Objekte.Count; $i++) {
         if ($l.Objekte[$i].id -ceq $Id) { $index = $i; break }
     }
-    if ($index -lt 0) { throw 'Diese Regel gibt es nicht (mehr).' }
+    if ($index -lt 0) { throw (T 'server.akz.regelFehlt') }
     $ziel = $l.Objekte[$index]
     $rest = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt $l.Roh.Count; $i++) {

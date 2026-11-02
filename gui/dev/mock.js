@@ -141,7 +141,7 @@
     if (i >= 3) F2.forEach(f => { if (SYS_CHECKS.includes(f.Check)) { f.Status = 'SKIP'; f.Value = 'Sysinternals nicht eingerichtet: in Morpheus unter Werkzeuge herunterladen'; f.Recommendation = ''; } });
     if (i > 0) F2.forEach(f => { if (f.Check === 'Offene Ports' && i > 2) f.Status = 'CRIT'; if (f.Check === 'Software-Updates' && i > 4) f.Status = 'OK'; if (f.Check === 'Spielebibliotheken' && i > 6) f.Status = 'INFO'; });
     const name = `pc-check_${iso(d).slice(0, 10)}_1321`;
-    return { name, json: { Meta: { Computer: 'DEMO-PC', Erstellt: iso(d), Version: '2.5.0', Admin: true, EventDays: 14, DauerSek: 120 + i, Profil: 'Gaming' }, Findings: F2,
+    return { name, json: { Meta: { Computer: 'DEMO-PC', Erstellt: iso(d), Version: '2.6.0', Admin: true, EventDays: 14, DauerSek: 120 + i, Profil: 'Gaming' }, Findings: F2,
       Changes: i < 11 ? { VerglichenMit: 'vorher.json', Erstellt: iso(new Date(2026, 9, 24 - i, 13, 21)), AdminVorher: true, Status: [{ 'Prüfung': 'Offene Ports', Vorher: 'Kritisch', Jetzt: 'Warnung', Befund: '3 Ports' }], Bestand: { 'Autostart-Einträge': { Neu: ['Demo-Tool <b>fett</b>'], Entfernt: ['Altes Tool'] } } } : null,
       Speicher: sp,
       Data: { System: [{ Computer: 'DEMO-PC', Edition: 'Windows 11 Pro', Version: '24H2' }],
@@ -167,7 +167,7 @@
   const cnt = js => { const c = { CRIT: 0, WARN: 0, TIPP: 0, ACK: 0, INFO: 0, OK: 0, SKIP: 0 }; js.Findings.forEach(f => { c[f.Status]++; }); return c; };
   // ?berichte=0: wie im Nur-Lesen-Modus mit reparierbarem Datenordner (Daten liegen nicht im Codeordner, also kein Bericht)
   const ohneBerichte = new URLSearchParams(location.search).get('berichte') === '0';
-  const reportList = () => ohneBerichte ? [] : reps.map(r => ({ name: r.name, created: r.json.Meta.Erstellt, version: '2.5.0', admin: true, profil: 'Gaming', counts: cnt(r.json) }));
+  const reportList = () => ohneBerichte ? [] : reps.map(r => ({ name: r.name, created: r.json.Meta.Erstellt, version: '2.6.0', admin: true, profil: 'Gaming', counts: cnt(r.json) }));
 
   const A = (id, kategorie, pruefung, titel, erkl, n, a, r, extra = {}) => ({ id, kategorie, pruefung, titel, erklaerung: erkl, nutzen: n, aufwand: a, risiko: r, neustart: false, varianten: null,
     befehle: { ausfuehren: extra.cmd || '', rueckgaengig: extra.undo || '', erklaerung: extra.expl || [] }, zustand: { aktiv: false, wert: 'aus', stand: iso(new Date()) }, ...extra.o });
@@ -189,7 +189,7 @@
     { id: '20261024-190211-01', zeit: '2026-10-24T19:02:11', art: 'ausfuehren', aktion: 'netz.eee', titel: 'Energiesparfunktionen Netzwerkkarte aus', variante: null, vorher: 'an', nachher: 'aus', wiederherstellungspunkt: { seq: 56, zeit: '2026-10-24T19:02:00' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
     { id: '20261024-110000-01', zeit: '2026-10-24T11:00:00', art: 'ausfuehren', aktion: 'gaming.gamedvr', titel: 'Game DVR aus (Zustand wurde danach geändert)', variante: null, vorher: 1, nachher: 0, wiederherstellungspunkt: { seq: 55, zeit: '2026-10-24T10:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
   ];
-  const session = { datenordner: null, version: '2.5.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
+  const session = { datenordner: null, version: '2.6.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
     safety: { schutzAn: true, laufwerk: 'C:', sperre24h: true, letzterPunkt: '2026-10-25T12:02:11', befehl: "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" } };
   // v2.4 (#63): Demo-Schalter ?datenordner=1 (reparierbar, Nur-Lesen) bzw. ?datenordner=repariert (normal, Reparatur heute)
   const dMode = new URLSearchParams(location.search).get('datenordner');
@@ -664,6 +664,9 @@
   }
 
   const realFetch = window.fetch.bind(window);
+  let mockSprache = new URLSearchParams(location.search).get('sprache') === 'en' ? 'en' : 'de';
+  try { const s = sessionStorage.getItem('mockSprache'); if (s === 'de' || s === 'en') mockSprache = s; } catch { /* egal */ }
+  const texteLaden = async () => { try { const r = await realFetch('texte.' + mockSprache + '.json'); return r.ok ? [200, await r.json()] : [404, { error: 'texte.' + mockSprache + '.json fehlt (make-mock-texte.ps1 ausführen).' }]; } catch { return [404, { error: 'texte.json nicht ladbar.' }]; } };
   window.fetch = async (url, opt = {}) => {
     const u = String(url);
     if (!u.startsWith('/api/')) return realFetch(url, opt);
@@ -690,6 +693,9 @@
     else if ((m = path.match(/^\/api\/jobs\/([^/]+)$/))) res = jobState(m[1], parseInt(q.get('from') || '0', 10));
     else if (path === '/api/checklist') { if (method === 'POST') checklist = body; res = [200, checklist]; }
     else if (path === '/api/help') res = [200, help];
+    // v2.6: Oberflächentexte (gui/dev/texte.de.json bzw. texte.en.json, erzeugt von make-mock-texte.ps1); Sprache umschaltbar
+    else if (path === '/api/texte') res = await texteLaden();
+    else if (path === '/api/sprache') { if (method === 'POST' && (body.sprache === 'de' || body.sprache === 'en')) { mockSprache = body.sprache; try { sessionStorage.setItem('mockSprache', mockSprache); } catch { /* egal */ } res = [200, { sprache: mockSprache, gespeichert: new URLSearchParams(location.search).get('nurlesen') !== '1' }]; } else res = [400, { error: 'Unbekannte Sprache.' }]; }
     // v2.2: Speicher
     else if (path === '/api/speicher') res = [200, speicherCache || { stand: null }];
     else if (path === '/api/spielordner') res = method === 'POST' ? spielordnerSpeichern(body.eintraege) : [200, spielordner];

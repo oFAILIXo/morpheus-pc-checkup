@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Speicher.ps1. Rein lesend am System: alle Testdaten liegen in $TestDrive
 # (unter %TEMP%, wird von Pester entfernt), Registry-Abfragen sind gemockt.
 # Ausführen: Invoke-Pester tests\Speicher.Tests.ps1

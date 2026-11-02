@@ -20,6 +20,8 @@
 #   - Alle deutschen Fortschrittsmuster ausser DISM (dort Zeichenkette sprachunabhaengig) sind geschaetzt.
 # Nicht erkannte Ausgabe faellt auf den Exit-Code zurueck (0 = unbekannt, sonst fehler).
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 function Format-MorpheusWartungZeile {
     [CmdletBinding()]
     param([AllowNull()][AllowEmptyString()][string]$Text)
@@ -87,12 +89,12 @@ function New-WaErgebnis {
 function Get-WaRueckfall {
     param($ExitCode, [string]$Zusatz = '')
     if ($null -eq $ExitCode -or "$ExitCode" -eq '') {
-        return (New-WaErgebnis 'unbekannt' 'Die Ausgabe ist nicht eindeutig.' $null @())
+        return (New-WaErgebnis 'unbekannt' (T 'server.wa.nichtEindeutig') $null @())
     }
     $c = [int64]$ExitCode
-    if ($c -eq 0) { return (New-WaErgebnis 'unbekannt' 'Beendet mit Code 0, die Ausgabe ist nicht eindeutig.' $null @()) }
+    if ($c -eq 0) { return (New-WaErgebnis 'unbekannt' (T 'server.wa.code0') $null @()) }
     $u = [uint32]($c -band 0xFFFFFFFFL)
-    return (New-WaErgebnis 'fehler' ('Beendet mit Fehlercode {0} (0x{1:x}).' -f $c, $u) $null @())
+    return (New-WaErgebnis 'fehler' (T 'server.wa.fehlercodeBeendet' $c $u) $null @())
 }
 
 function Get-WaDismFehler {
@@ -107,13 +109,13 @@ function Get-WaDismFehler {
     }
     if ($quelle -and ($code -eq '' -or $code -eq '0x800f081f')) { $code = '0x800f081f' }
     switch ($code) {
-        '0x800f081f' { return (New-WaErgebnis 'fehler' 'DISM hat die Quelldateien für die Reparatur nicht gefunden (0x800f081f).' 'Internetverbindung und Windows Update prüfen und die Reparatur erneut starten.' @('Fehlercode: 0x800f081f')) }
-        '0x800f0906' { return (New-WaErgebnis 'fehler' 'DISM konnte die Quelldateien für die Reparatur nicht herunterladen (0x800f0906).' 'Internetverbindung und Windows Update prüfen und die Reparatur erneut starten.' @('Fehlercode: 0x800f0906')) }
-        '0x800f0907' { return (New-WaErgebnis 'fehler' 'Eine Gruppenrichtlinie verhindert, dass DISM Reparaturdateien von Windows Update lädt (0x800f0907).' 'Die Richtlinie für alternative Reparaturquellen prüfen oder eine Windows-Installationsquelle angeben.' @('Fehlercode: 0x800f0907')) }
-        '87' { return (New-WaErgebnis 'fehler' 'DISM hat den Befehl nicht angenommen (Fehler 87: ungültiger Parameter).' 'Dieser Fehler sollte in Morpheus nicht vorkommen; bitte melden.' @('Fehlercode: 87')) }
-        '5' { return (New-WaErgebnis 'fehler' 'DISM hatte keinen Zugriff (Fehler 5: Zugriff verweigert).' 'Morpheus mit Administratorrechten starten und die Windows-Bestätigung zulassen.' @('Fehlercode: 5')) }
-        '740' { return (New-WaErgebnis 'fehler' 'DISM braucht Administratorrechte (Fehler 740).' 'Die Windows-Bestätigung zulassen.' @('Fehlercode: 740')) }
-        default { return (New-WaErgebnis 'fehler' ('DISM ist mit Fehler {0} abgebrochen.' -f $code) 'Details stehen in C:\Windows\Logs\DISM\dism.log.' @(('Fehlercode: {0}' -f $code))) }
+        '0x800f081f' { return (New-WaErgebnis 'fehler' (T 'server.wa.dismQuelleFehlt') (T 'server.wa.internetUpdatePruefen') @((T 'server.wa.fehlercode' '0x800f081f'))) }
+        '0x800f0906' { return (New-WaErgebnis 'fehler' (T 'server.wa.dismQuelleDownload') (T 'server.wa.internetUpdatePruefen') @((T 'server.wa.fehlercode' '0x800f0906'))) }
+        '0x800f0907' { return (New-WaErgebnis 'fehler' (T 'server.wa.dismGruppenrichtlinie') (T 'server.wa.richtliniePruefen') @((T 'server.wa.fehlercode' '0x800f0907'))) }
+        '87' { return (New-WaErgebnis 'fehler' (T 'server.wa.dism87') (T 'server.wa.dism87Empf') @((T 'server.wa.fehlercode' '87'))) }
+        '5' { return (New-WaErgebnis 'fehler' (T 'server.wa.dism5') (T 'server.wa.adminStarten') @((T 'server.wa.fehlercode' '5'))) }
+        '740' { return (New-WaErgebnis 'fehler' (T 'server.wa.dism740') (T 'server.wa.bestaetigungZulassen') @((T 'server.wa.fehlercode' '740'))) }
+        default { return (New-WaErgebnis 'fehler' (T 'server.wa.dismAbgebrochen' $code) (T 'server.wa.dismLog') @((T 'server.wa.fehlercode' $code))) }
     }
 }
 
@@ -137,7 +139,7 @@ function Get-MorpheusWartungZusammenfassung {
         [AllowNull()][AllowEmptyString()][string]$Text = '',
         [AllowNull()][object]$ExitCode = $null
     )
-    if ($script:WaWerkzeuge -cnotcontains $Werkzeug) { throw "Unbekanntes Wartungswerkzeug: $Werkzeug" }
+    if ($script:WaWerkzeuge -cnotcontains $Werkzeug) { throw (T 'server.wa.werkzeugUnbekannt' $Werkzeug) }
     if ($null -eq $Text) { $Text = '' }
     $zeilen = (($Text.Replace([string][char]0, '')) -replace "`r`n", "`n") -replace "`r", "`n"
     $f = ConvertTo-WaFlach $Text
@@ -146,7 +148,7 @@ function Get-MorpheusWartungZusammenfassung {
     switch -CaseSensitive ($Werkzeug) {
         'winget.upgrade' {
             if ($null -eq $ExitCode) { return (& $rueck) }
-            if ([int64]$ExitCode -eq 0) { return (New-WaErgebnis 'ok' 'Das Programm-Update wurde abgeschlossen.') }
+            if ([int64]$ExitCode -eq 0) { return (New-WaErgebnis 'ok' (T 'server.wa.updateFertig')) }
             return (& $rueck)
         }
 
@@ -154,13 +156,13 @@ function Get-MorpheusWartungZusammenfassung {
             $fe = Get-WaDismFehler $f
             if ($fe) { return $fe }
             if ($f -match '(?i)cannot be repaired|not repairable|nicht repariert werden|nicht reparierbar|nicht repariert') {
-                return (New-WaErgebnis 'fehler' 'Der Komponentenspeicher ist beschädigt und lässt sich nicht reparieren.' 'Als Nächstes hilft meist ein Reparatur-Upgrade von Windows (Installation über die bestehende); vorher die Daten sichern.')
+                return (New-WaErgebnis 'fehler' (T 'server.wa.speicherBeschaedigt') (T 'server.wa.repairUpgrade'))
             }
             if ($f -match '(?i)\brepairable\b|kann repariert werden|l.{1,2}sst sich reparieren|ist reparierbar') {
-                return (New-WaErgebnis 'reparierbar' 'Der Komponentenspeicher ist beschädigt, lässt sich aber reparieren.' 'DISM: Komponentenspeicher reparieren (RestoreHealth) starten, danach SFC ausführen.')
+                return (New-WaErgebnis 'reparierbar' (T 'server.wa.speicherReparierbar') (T 'server.wa.restoreStarten'))
             }
             if ($f -match '(?i)no component store corruption|keine komponentenspeicherbesch.{1,2}digung|keine besch.{1,2}digung(en)? (im|am|des) komponentenspeicher') {
-                return (New-WaErgebnis 'ok' 'Keine Beschädigung im Komponentenspeicher gefunden.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.speicherOk'))
             }
             return (& $rueck)
         }
@@ -169,13 +171,13 @@ function Get-MorpheusWartungZusammenfassung {
             $fe = Get-WaDismFehler $f
             if ($fe) { return $fe }
             if ($f -match '(?i)cannot be repaired|not repairable|nicht repariert werden|nicht reparierbar') {
-                return (New-WaErgebnis 'fehler' 'Der Komponentenspeicher lässt sich nicht reparieren.' 'Als Nächstes hilft meist ein Reparatur-Upgrade von Windows (Installation über die bestehende); vorher die Daten sichern.')
+                return (New-WaErgebnis 'fehler' (T 'server.wa.speicherNichtReparierbar') (T 'server.wa.repairUpgrade'))
             }
             if ($f -match '(?i)corruption was repaired|besch.{1,2}digung wurde repariert|wurde repariert') {
-                return (New-WaErgebnis 'repariert' 'DISM hat den Komponentenspeicher repariert.' 'Jetzt SFC ausführen (sfc /scannow), damit Systemdateien aus dem reparierten Speicher ersetzt werden.')
+                return (New-WaErgebnis 'repariert' (T 'server.wa.dismRepariert') (T 'server.wa.jetztSfcErsetzen'))
             }
             if ($f -match '(?i)restore operation completed successfully|wiederherstellungsvorgang wurde erfolgreich|operation completed successfully|vorgang wurde erfolgreich') {
-                return (New-WaErgebnis 'ok' 'Die Reparatur des Komponentenspeichers wurde ohne Fehler abgeschlossen.' 'Jetzt SFC ausführen (sfc /scannow).')
+                return (New-WaErgebnis 'ok' (T 'server.wa.reparaturOhneFehler') (T 'server.wa.jetztSfc'))
             }
             return (& $rueck)
         }
@@ -183,19 +185,19 @@ function Get-MorpheusWartungZusammenfassung {
         'sfc.scannow' {
             $sfcRepariert = ($f -match '(?i)successfully repaired|erfolgreich repariert')
             if ((-not $sfcRepariert) -and ($f -match '(?i)system repair pending|repair pending|systemreparatur aus|reparatur steht aus|neustart.{0,40}(erfordert|erforderlich)')) {
-                return (New-WaErgebnis 'problem' 'Eine Systemreparatur steht aus und braucht einen Neustart.' 'Windows neu starten und SFC danach noch einmal ausführen.')
+                return (New-WaErgebnis 'problem' (T 'server.wa.sfcAusstehend') (T 'server.wa.neustartSfcNoch'))
             }
             if ($f -match '(?i)could not perform the requested operation|konnte den angeforderten vorgang nicht ausf.{1,2}hren|could not start the repair service|reparaturdienst nicht starten') {
-                return (New-WaErgebnis 'fehler' 'SFC konnte nicht arbeiten.' 'Windows neu starten und es noch einmal versuchen; sonst zuerst DISM: Komponentenspeicher reparieren ausführen.' @('Hinweis: SFC im abgesicherten Modus kann helfen.'))
+                return (New-WaErgebnis 'fehler' (T 'server.wa.sfcKonnteNicht') (T 'server.wa.sfcNeustartDism') @((T 'server.wa.sfcSafeMode')))
             }
             if ($f -match '(?i)unable to fix some|konnte (jedoch )?(einige|manche)|nicht reparieren|nicht repariert werden|unable to repair') {
-                return (New-WaErgebnis 'problem' 'SFC hat beschädigte Systemdateien gefunden und konnte einige nicht reparieren.' 'DISM: Komponentenspeicher reparieren (RestoreHealth) ausführen, dann SFC erneut starten.' @('Einzelheiten stehen in C:\Windows\Logs\CBS\CBS.log'))
+                return (New-WaErgebnis 'problem' (T 'server.wa.sfcTeilweise') (T 'server.wa.restoreDannSfc') @((T 'server.wa.cbsLog')))
             }
             if ($f -match '(?i)successfully repaired|erfolgreich repariert') {
-                return (New-WaErgebnis 'repariert' 'SFC hat beschädigte Systemdateien gefunden und repariert.' 'Windows neu starten. Zur Kontrolle SFC danach noch einmal ausführen.' @('Einzelheiten stehen in C:\Windows\Logs\CBS\CBS.log'))
+                return (New-WaErgebnis 'repariert' (T 'server.wa.sfcRepariert') (T 'server.wa.neustartSfcKontrolle') @((T 'server.wa.cbsLog')))
             }
             if ($f -match '(?i)did not find any integrity violations|keine integrit.{1,2}tsverletzung') {
-                return (New-WaErgebnis 'ok' 'SFC hat keine Beschädigung an Systemdateien gefunden.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.sfcOk'))
             }
             return (& $rueck)
         }
@@ -205,19 +207,19 @@ function Get-MorpheusWartungZusammenfassung {
             if ($fe) { return $fe }
             $det = New-Object 'System.Collections.Generic.List[string]'
             $groesse = Get-WaWert $zeilen '(?:actual size of component store|tats.{1,2}chliche gr.{1,3}e des komponentenspeichers)'
-            if ($groesse) { $det.Add('Größe des Komponentenspeichers: ' + ($groesse -replace '(\d)\.(\d)', '$1,$2')) }
+            if ($groesse) { $det.Add((T 'server.wa.analyseGroesse') + ($groesse -replace '(\d)\.(\d)', '$1,$2')) }
             $pakete = Get-WaWert $zeilen '(?:number of [a-z ]*packages|anzahl der [a-zäöüß ]*pakete)'
-            if ($pakete) { $det.Add('Freigebbare Pakete: ' + $pakete) }
+            if ($pakete) { $det.Add((T 'server.wa.analysePakete') + $pakete) }
             $letzte = Get-WaWert $zeilen '(?:date of last cleanup|datum der letzten bereinigung)'
-            if ($letzte) { $det.Add('Letzte Bereinigung: ' + $letzte) }
+            if ($letzte) { $det.Add((T 'server.wa.analyseLetzte') + $letzte) }
             $empf = Get-WaWert $zeilen '(?:component store cleanup recommended|bereinigung(?: des komponentenspeichers)? empfohlen)'
             if ($empf) {
                 $ja = ($empf -match '(?i)^(yes|ja)\b')
-                $det.Add('Bereinigung empfohlen: ' + $(if ($ja) { 'ja' } else { 'nein' }))
+                $det.Add((T 'server.wa.analyseEmpfohlen') + $(if ($ja) { 'ja' } else { 'nein' }))
                 if ($ja) {
-                    return (New-WaErgebnis 'reparierbar' 'Der Komponentenspeicher kann bereinigt werden; Windows empfiehlt es.' 'DISM: Komponentenspeicher bereinigen (StartComponentCleanup) starten. Das gibt Platz frei.' $det.ToArray())
+                    return (New-WaErgebnis 'reparierbar' (T 'server.wa.speicherBereinigbar') (T 'server.wa.cleanupStarten') $det.ToArray())
                 }
-                return (New-WaErgebnis 'ok' 'Der Komponentenspeicher ist in Ordnung; eine Bereinigung ist nicht nötig.' $null $det.ToArray())
+                return (New-WaErgebnis 'ok' (T 'server.wa.speicherInOrdnung') $null $det.ToArray())
             }
             return (& $rueck)
         }
@@ -226,53 +228,53 @@ function Get-MorpheusWartungZusammenfassung {
             $fe = Get-WaDismFehler $f
             if ($fe) { return $fe }
             if ($f -match '(?i)completed successfully|erfolgreich (beendet|abgeschlossen)') {
-                return (New-WaErgebnis 'ok' 'Der Komponentenspeicher wurde bereinigt.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.speicherBereinigt'))
             }
             return (& $rueck)
         }
 
         'chkdsk.scan' {
             if ($f -match '(?i)access denied|zugriff (wurde )?verweigert|cannot open volume|datentr.{1,2}ger.{0,30}nicht (ge.{1,2}ffnet|zugreifen)') {
-                return (New-WaErgebnis 'fehler' 'chkdsk konnte das Laufwerk nicht prüfen (Zugriff verweigert).' 'Morpheus mit Administratorrechten starten und die Windows-Bestätigung zulassen.')
+                return (New-WaErgebnis 'fehler' (T 'server.wa.chkdskZugriff') (T 'server.wa.adminStarten'))
             }
             if ($f -match '(?i)found no problems|no problems|keine probleme festgestellt|keine probleme gefunden|keine weiteren aktionen erforderlich|no further action is required') {
-                return (New-WaErgebnis 'ok' 'Die Prüfung hat keine Probleme am Dateisystem gefunden.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.chkdskOk'))
             }
             if ($f -match '(?i)found problems|errors found|problems? (were )?found|probleme (gefunden|festgestellt)|fehler gefunden|corruption|besch.{1,2}digung') {
-                return (New-WaErgebnis 'problem' 'Die Prüfung hat Probleme am Dateisystem gefunden.' 'Zuerst eine Datensicherung anlegen. Eine Reparatur beim nächsten Start (chkdsk /f) macht Morpheus nicht selbst; sie ist nur nach der Sicherung sinnvoll.')
+                return (New-WaErgebnis 'problem' (T 'server.wa.chkdskProbleme') (T 'server.wa.chkdskSicherung'))
             }
             return (& $rueck)
         }
 
         'dns.flush' {
             if ($f -match '(?i)could not flush|konnte nicht (geleert|gel.{1,2}scht)|fehler beim leeren|failed') {
-                return (New-WaErgebnis 'fehler' 'Der DNS-Cache konnte nicht geleert werden.' 'Als Administrator erneut versuchen; ist der DNS-Clientdienst gestartet?')
+                return (New-WaErgebnis 'fehler' (T 'server.wa.dnsFehler') (T 'server.wa.dnsAdmin'))
             }
             if ($f -match '(?i)successfully flushed|erfolgreich geleert') {
-                return (New-WaErgebnis 'ok' 'Der DNS-Zwischenspeicher wurde geleert.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.dnsOk'))
             }
             return (& $rueck)
         }
 
         'trim' {
             if ($f -match '(?i)not supported|nicht unterst.{1,2}tzt|wird nicht unterst') {
-                return (New-WaErgebnis 'problem' 'Dieses Laufwerk unterstützt TRIM nicht (oder ist keine SSD).' 'Nur SSDs mit TRIM-Unterstützung brauchen das; hier ist nichts zu tun.')
+                return (New-WaErgebnis 'problem' (T 'server.wa.trimNicht') (T 'server.wa.trimNichtNoetig'))
             }
             if ($f -match '(?i)completed successfully|erfolgreich (abgeschlossen|beendet)') {
-                return (New-WaErgebnis 'ok' 'TRIM wurde für das Laufwerk ausgeführt.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.trimOk'))
             }
             return (& $rueck)
         }
 
         'zeit.resync' {
             if ($f -match '(?i)no time data was available|keine zeitdaten') {
-                return (New-WaErgebnis 'problem' 'Die Zeit wurde nicht synchronisiert: Es waren keine Zeitdaten verfügbar.' 'Internetverbindung prüfen. Der Windows-Zeitdienst braucht einen erreichbaren Zeitserver (Einstellungen, Zeit und Sprache, Datum und Uhrzeit).')
+                return (New-WaErgebnis 'problem' (T 'server.wa.zeitKeineDaten') (T 'server.wa.zeitInternet'))
             }
             if ($f -match '(?i)service has not been started|dienst wurde nicht gestartet|0x80070426') {
-                return (New-WaErgebnis 'problem' 'Der Windows-Zeitdienst läuft nicht.' 'Den Dienst Windows-Zeit starten (Dienste, Windows-Zeit) und es noch einmal versuchen.')
+                return (New-WaErgebnis 'problem' (T 'server.wa.zeitDienst') (T 'server.wa.zeitDienstStarten'))
             }
             if ($f -match '(?i)command completed successfully|befehl wurde erfolgreich ausgef.{1,2}hrt') {
-                return (New-WaErgebnis 'ok' 'Die Uhrzeit wurde neu mit dem Zeitserver abgeglichen.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.zeitOk'))
             }
             return (& $rueck)
         }
@@ -283,33 +285,33 @@ function Get-MorpheusWartungZusammenfassung {
             $m = [regex]::Match($f, '(?i)\b(\d+)\s+(?:errors?|fehler)\b'); if ($m.Success) { $fehler = [int]$m.Groups[1].Value }
             $m = [regex]::Match($f, '(?i)\b(\d+)\s+(?:warnings?|warnungen)\b'); if ($m.Success) { $warn = [int]$m.Groups[1].Value }
             if ($null -ne $fehler -or $null -ne $warn) {
-                $det.Add(('Fehler: {0}, Warnungen: {1}' -f $(if ($null -ne $fehler) { $fehler } else { 0 }), $(if ($null -ne $warn) { $warn } else { 0 })))
+                $det.Add((T 'server.wa.fehlerWarnungen' $(if ($null -ne $fehler) { $fehler } else { 0 }) $(if ($null -ne $warn) { $warn } else { 0 })))
             }
             if ($f -match '(?i)analysis complete|analyse abgeschlossen|energy-report|energiebericht') {
                 if ($det.Count -gt 0) {
-                    return (New-WaErgebnis 'ok' ('Der Energiebericht ist fertig: {0}.' -f ($det[0] -replace '^Fehler: (\d+), Warnungen: (\d+)$', '$1 Fehler, $2 Warnungen')) 'Den Bericht öffnen und die Fehler und Warnungen durchsehen.' $det.ToArray())
+                    return (New-WaErgebnis 'ok' (T 'server.wa.energieFertigMit' $(if ($null -ne $fehler) { $fehler } else { 0 }) $(if ($null -ne $warn) { $warn } else { 0 })) (T 'server.wa.berichtOeffnenFW') $det.ToArray())
                 }
-                return (New-WaErgebnis 'ok' 'Der Energiebericht ist fertig.' 'Den Bericht öffnen und durchsehen.' $det.ToArray())
+                return (New-WaErgebnis 'ok' (T 'server.wa.energieFertig') (T 'server.wa.berichtOeffnen') $det.ToArray())
             }
             return (& $rueck)
         }
 
         'powercfg.akku' {
             if ($f -match '(?i)no batter|keine (batterie|akku)|keinen akku|keine batterien|batterie.{0,30}nicht vorhanden|akku.{0,30}nicht vorhanden') {
-                return (New-WaErgebnis 'problem' 'Dieser PC hat keinen Akku, deshalb gibt es keinen Akkubericht.' 'Der Akkubericht ist nur für Notebooks und Tablets gedacht.')
+                return (New-WaErgebnis 'problem' (T 'server.wa.keinAkku') (T 'server.wa.akkuNurNotebooks'))
             }
             if ($f -match '(?i)report saved|gespeichert') {
-                return (New-WaErgebnis 'ok' 'Der Akkubericht ist fertig.' 'Den Bericht öffnen: Entwurfskapazität und Volladekapazität zeigen den Verschleiß.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.akkuFertig') (T 'server.wa.akkuOeffnen'))
             }
             return (& $rueck)
         }
 
         'powercfg.schlaf' {
             if ($f -match '(?i)modern standby|connected standby|s0 low power|s0-leerlauf|does not support|not supported|nicht unterst.{1,2}tzt|keine unterst.{1,2}tzung') {
-                return (New-WaErgebnis 'problem' 'Dieser PC unterstützt Modern Standby nicht, deshalb gibt es keine Schlafstudie.' 'Die Schlafstudie gibt es nur für PCs mit Modern Standby (vor allem neuere Notebooks).')
+                return (New-WaErgebnis 'problem' (T 'server.wa.keinStandby') (T 'server.wa.schlafNurStandby'))
             }
             if ($f -match '(?i)report saved|gespeichert') {
-                return (New-WaErgebnis 'ok' 'Die Schlafstudie ist fertig.' 'Den Bericht öffnen: Er zeigt, was im Ruhezustand Strom verbraucht hat.')
+                return (New-WaErgebnis 'ok' (T 'server.wa.schlafFertig') (T 'server.wa.schlafOeffnen'))
             }
             return (& $rueck)
         }
@@ -332,11 +334,11 @@ function Get-MorpheusWartungKurzfassung {
     if ($null -ne $DauerSek -and "$DauerSek" -ne '') {
         $s = [int64][math]::Round([double]$DauerSek)
         if ($s -lt 0) { $s = 0 }
-        if ($s -lt 60) { $teile.Add(('Dauer {0} s' -f $s)) }
-        elseif ($s -lt 3600) { $teile.Add(('Dauer {0} min {1} s' -f [int64][math]::Floor($s / 60), ($s % 60))) }
-        else { $teile.Add(('Dauer {0} h {1} min' -f [int64][math]::Floor($s / 3600), [int64][math]::Floor(($s % 3600) / 60))) }
+        if ($s -lt 60) { $teile.Add((T 'server.wa.dauerS' $s)) }
+        elseif ($s -lt 3600) { $teile.Add((T 'server.wa.dauerMin' ([int64][math]::Floor($s / 60)) ($s % 60))) }
+        else { $teile.Add((T 'server.wa.dauerH' ([int64][math]::Floor($s / 3600)) ([int64][math]::Floor(($s % 3600) / 60)))) }
     }
-    if ($null -ne $ExitCode -and "$ExitCode" -ne '') { $teile.Add(('Exit-Code {0}' -f [int64]$ExitCode)) }
+    if ($null -ne $ExitCode -and "$ExitCode" -ne '') { $teile.Add((T 'server.wa.exitCode' ([int64]$ExitCode))) }
     $r = $text
     if ($teile.Count -gt 0) { $r = (($r + ' ' + ($teile -join ', ') + '.')).Trim() }
     $det = @()

@@ -18,6 +18,8 @@
     - Kein Add-Type mit C#-Code. Kein /ResetBase, kein chkdsk /f.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 # Abhängigkeiten aus dem gleichen Ordner laden, falls ihre Funktionen fehlen
 if (-not (Get-Command -Name PcCheckSafetyEnsureRestorePoint -ErrorAction SilentlyContinue)) {
     $__wSafety = Join-Path $PSScriptRoot 'Safety.ps1'
@@ -48,23 +50,28 @@ function MorpheusWartungEintrag {
     }
 }
 
+# Katalog (Texte in der aktuellen Sprache; der Server baut ihn bei einem Sprachwechsel neu auf)
+function Initialize-MorpheusWartungKatalog {
 $script:MorpheusWartungKatalog = [ordered]@{}
-$script:MorpheusWartungKatalog['wiederherstellung.punkt'] = MorpheusWartungEintrag 'Wiederherstellung' 1 'wartung' 'Wiederherstellungspunkt jetzt anlegen' 'Legt einen Windows-Wiederherstellungspunkt an und prüft, dass er wirklich existiert.' $null '' "Checkpoint-Computer -Description 'Morpheus: von Hand angelegt' -RestorePointType MODIFY_SETTINGS" 'nein' $null $null 'etwa 10 Sekunden' $false 'Windows legt innerhalb von 24 Stunden höchstens einen Punkt an (24-Stunden-Sperre).'
-$script:MorpheusWartungKatalog['dism.checkhealth'] = MorpheusWartungEintrag 'Systemdateien' 1 'diagnose' 'DISM: Komponentenspeicher schnell prüfen' 'Prüft schnell, ob Windows eine Beschädigung des Komponentenspeichers bereits vermerkt hat. Ändert nichts.' 'Dism.exe' '/Online /Cleanup-Image /CheckHealth' 'Dism.exe /Online /Cleanup-Image /CheckHealth' 'sofort' $null 600 'unter 1 Minute' $false $null
-$script:MorpheusWartungKatalog['dism.scanhealth'] = MorpheusWartungEintrag 'Systemdateien' 2 'diagnose' 'DISM: Komponentenspeicher gründlich prüfen' 'Durchsucht den Komponentenspeicher von Windows nach Beschädigungen. Ändert nichts.' 'Dism.exe' '/Online /Cleanup-Image /ScanHealth' 'Dism.exe /Online /Cleanup-Image /ScanHealth' 'sofort' $null 3600 '5 bis 20 Minuten' $false $null
-$script:MorpheusWartungKatalog['dism.restorehealth'] = MorpheusWartungEintrag 'Systemdateien' 3 'reparatur' 'DISM: Komponentenspeicher reparieren' 'Repariert den Komponentenspeicher von Windows mit Dateien von Windows Update.' 'Dism.exe' '/Online /Cleanup-Image /RestoreHealth' 'Dism.exe /Online /Cleanup-Image /RestoreHealth' 'nein' $null 7200 '5 bis 30 Minuten' $true 'Nicht unterbrechen: Microsoft rät davon ab. Der Fortschritt bleibt zeitweise bei 20 oder 62 Prozent stehen.'
-$script:MorpheusWartungKatalog['sfc.scannow'] = MorpheusWartungEintrag 'Systemdateien' 4 'reparatur' 'SFC: Systemdateien prüfen und reparieren' 'Prüft die geschützten Windows-Systemdateien und ersetzt beschädigte aus dem Komponentenspeicher.' 'sfc.exe' '/scannow' 'sfc.exe /scannow' 'nein' $null 3600 '5 bis 20 Minuten' $false 'Nicht unterbrechen. Am besten erst nach DISM RestoreHealth ausführen.'
-$script:MorpheusWartungKatalog['dism.analyze'] = MorpheusWartungEintrag 'Komponentenspeicher' 1 'diagnose' 'DISM: Komponentenspeicher analysieren' 'Zeigt die Größe des Komponentenspeichers (WinSxS) und ob eine Bereinigung sinnvoll ist. Ändert nichts.' 'Dism.exe' '/Online /Cleanup-Image /AnalyzeComponentStore' 'Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore' 'sofort' $null 1800 '1 bis 5 Minuten' $false $null
-$script:MorpheusWartungKatalog['dism.cleanup'] = MorpheusWartungEintrag 'Komponentenspeicher' 2 'reparatur' 'DISM: Komponentenspeicher bereinigen' 'Entfernt veraltete Windows-Komponenten aus dem Komponentenspeicher und gibt Speicherplatz frei.' 'Dism.exe' '/Online /Cleanup-Image /StartComponentCleanup' 'Dism.exe /Online /Cleanup-Image /StartComponentCleanup' 'nein' $null 7200 '5 bis 30 Minuten' $false 'Nicht unterbrechen. Morpheus verwendet kein /ResetBase; Updates lassen sich danach weiter deinstallieren.'
-$script:MorpheusWartungKatalog['chkdsk.scan'] = MorpheusWartungEintrag 'Diagnose' 1 'diagnose' 'Datenträger prüfen (nur lesen)' 'Sucht auf dem gewählten Laufwerk online nach Dateisystemfehlern. Repariert nichts.' 'chkdsk.exe' '{LW} /scan' 'chkdsk.exe <LW> /scan' 'sofort' 'laufwerk' 3600 '5 bis 60 Minuten' $false $null
-$script:MorpheusWartungKatalog['perfmon.rel'] = MorpheusWartungEintrag 'Diagnose' 2 'diagnose' 'Zuverlässigkeitsverlauf öffnen' 'Zeigt in Windows, wann Programme oder Windows abgestürzt sind. Öffnet sich ohne Adminrechte.' $null '' 'perfmon /rel' 'nein' $null $null 'sofort' $false $null
-$script:MorpheusWartungKatalog['dns.flush'] = MorpheusWartungEintrag 'Wartung' 1 'wartung' 'DNS-Zwischenspeicher leeren' 'Löscht die zwischengespeicherten Internetadressen. Hilft, wenn Webseiten nicht mehr gefunden werden.' 'ipconfig.exe' '/flushdns' 'ipconfig.exe /flushdns' 'nein' $null 60 'wenige Sekunden' $false $null
-$script:MorpheusWartungKatalog['trim'] = MorpheusWartungEintrag 'Wartung' 2 'wartung' 'SSD optimieren (TRIM)' 'Meldet der SSD, welche Speicherbereiche frei sind. Das hält sie schnell. Es werden keine Dateien verändert.' 'defrag.exe' '{LW} /L' 'defrag.exe <LW> /L' 'sofort' 'ssd' 1800 '1 bis 5 Minuten' $false $null
-$script:MorpheusWartungKatalog['zeit.resync'] = MorpheusWartungEintrag 'Wartung' 3 'wartung' 'Uhrzeit neu synchronisieren' 'Gleicht die Windows-Uhr mit dem Zeitserver ab.' 'w32tm.exe' '/resync' 'w32tm.exe /resync' 'nein' $null 120 'wenige Sekunden' $true $null
-$script:MorpheusWartungKatalog['powercfg.energy'] = MorpheusWartungEintrag 'Energieberichte' 1 'diagnose' 'Energiebericht erstellen' 'Misst 60 Sekunden lang, was den Energieverbrauch erhöht, und erstellt einen Bericht.' 'powercfg.exe' '/energy /output {BERICHT} /duration 60' 'powercfg.exe /energy /output <Bericht> /duration 60' 'sofort' $null 240 'etwa 1 Minute' $false 'Während der Messung den PC nicht benutzen und Programme schließen.' 'oem' 'energy'
-$script:MorpheusWartungKatalog['powercfg.akku'] = MorpheusWartungEintrag 'Energieberichte' 2 'diagnose' 'Akkubericht erstellen' 'Erstellt einen Bericht über Kapazität und Verschleiß des Akkus. Nur bei Notebooks sinnvoll.' 'powercfg.exe' '/batteryreport /output {BERICHT}' 'powercfg.exe /batteryreport /output <Bericht>' 'nein' $null 120 'wenige Sekunden' $false $null 'oem' 'akku'
-$script:MorpheusWartungKatalog['powercfg.schlaf'] = MorpheusWartungEintrag 'Energieberichte' 3 'diagnose' 'Schlafstudie erstellen' 'Zeigt, was den PC im Standby geweckt oder Strom verbraucht hat. Braucht Modern Standby.' 'powercfg.exe' '/sleepstudy /output {BERICHT}' 'powercfg.exe /sleepstudy /output <Bericht>' 'nein' $null 120 'wenige Sekunden' $false $null 'oem' 'schlaf'
-$script:MorpheusWartungKatalog['winget.upgrade'] = MorpheusWartungEintrag 'Programme' 1 'reparatur' 'Programme mit winget aktualisieren' 'Aktualisiert die ausgewählten Programme mit dem Windows-Paketmanager winget aus den Herstellerquellen. winget läuft dabei ohne Adminrechte; braucht ein Programm Adminrechte, fragt Windows selbst nach.' 'winget' $script:MorpheusWartungWingetArgs 'winget upgrade --id <Paket-Id> --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity' 'nach-paket' 'ids' 1800 'je Programm 1 bis 10 Minuten' $true 'Programme vorher schließen. Ein Programm-Update lässt sich nicht zurücknehmen. Fragt Windows nach Adminrechten, den angezeigten Herausgeber prüfen.' 'utf8'
+$script:MorpheusWartungKatalog['wiederherstellung.punkt'] = MorpheusWartungEintrag 'Wiederherstellung' 1 'wartung' (T 'server.wartung.punkt.titel') (T 'server.wartung.punkt.erklaerung') $null '' (T 'server.wartung.punkt.anzeige' (T 'server.wartung.punkt.beschreibung')) 'nein' $null $null (T 'server.wartung.dauer.10s') $false (T 'server.wartung.punkt.hinweis')
+$script:MorpheusWartungKatalog['dism.checkhealth'] = MorpheusWartungEintrag 'Systemdateien' 1 'diagnose' (T 'server.wartung.checkhealth.titel') (T 'server.wartung.checkhealth.erklaerung') 'Dism.exe' '/Online /Cleanup-Image /CheckHealth' 'Dism.exe /Online /Cleanup-Image /CheckHealth' 'sofort' $null 600 (T 'server.wartung.dauer.unter1min') $false $null
+$script:MorpheusWartungKatalog['dism.scanhealth'] = MorpheusWartungEintrag 'Systemdateien' 2 'diagnose' (T 'server.wartung.scanhealth.titel') (T 'server.wartung.scanhealth.erklaerung') 'Dism.exe' '/Online /Cleanup-Image /ScanHealth' 'Dism.exe /Online /Cleanup-Image /ScanHealth' 'sofort' $null 3600 (T 'server.wartung.dauer.5bis20') $false $null
+$script:MorpheusWartungKatalog['dism.restorehealth'] = MorpheusWartungEintrag 'Systemdateien' 3 'reparatur' (T 'server.wartung.restore.titel') (T 'server.wartung.restore.erklaerung') 'Dism.exe' '/Online /Cleanup-Image /RestoreHealth' 'Dism.exe /Online /Cleanup-Image /RestoreHealth' 'nein' $null 7200 (T 'server.wartung.dauer.5bis30') $true (T 'server.wartung.restore.hinweis')
+$script:MorpheusWartungKatalog['sfc.scannow'] = MorpheusWartungEintrag 'Systemdateien' 4 'reparatur' (T 'server.wartung.sfc.titel') (T 'server.wartung.sfc.erklaerung') 'sfc.exe' '/scannow' 'sfc.exe /scannow' 'nein' $null 3600 (T 'server.wartung.dauer.5bis20') $false (T 'server.wartung.sfc.hinweis')
+$script:MorpheusWartungKatalog['dism.analyze'] = MorpheusWartungEintrag 'Komponentenspeicher' 1 'diagnose' (T 'server.wartung.analyze.titel') (T 'server.wartung.analyze.erklaerung') 'Dism.exe' '/Online /Cleanup-Image /AnalyzeComponentStore' 'Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore' 'sofort' $null 1800 (T 'server.wartung.dauer.1bis5') $false $null
+$script:MorpheusWartungKatalog['dism.cleanup'] = MorpheusWartungEintrag 'Komponentenspeicher' 2 'reparatur' (T 'server.wartung.cleanup.titel') (T 'server.wartung.cleanup.erklaerung') 'Dism.exe' '/Online /Cleanup-Image /StartComponentCleanup' 'Dism.exe /Online /Cleanup-Image /StartComponentCleanup' 'nein' $null 7200 (T 'server.wartung.dauer.5bis30') $false (T 'server.wartung.cleanup.hinweis')
+$script:MorpheusWartungKatalog['chkdsk.scan'] = MorpheusWartungEintrag 'Diagnose' 1 'diagnose' (T 'server.wartung.chkdsk.titel') (T 'server.wartung.chkdsk.erklaerung') 'chkdsk.exe' '{LW} /scan' 'chkdsk.exe <LW> /scan' 'sofort' 'laufwerk' 3600 (T 'server.wartung.dauer.5bis60') $false $null
+$script:MorpheusWartungKatalog['perfmon.rel'] = MorpheusWartungEintrag 'Diagnose' 2 'diagnose' (T 'server.wartung.rel.titel') (T 'server.wartung.rel.erklaerung') $null '' 'perfmon /rel' 'nein' $null $null 'sofort' $false $null
+$script:MorpheusWartungKatalog['dns.flush'] = MorpheusWartungEintrag 'Wartung' 1 'wartung' (T 'server.wartung.dns.titel') (T 'server.wartung.dns.erklaerung') 'ipconfig.exe' '/flushdns' 'ipconfig.exe /flushdns' 'nein' $null 60 (T 'server.wartung.dauer.sekunden') $false $null
+$script:MorpheusWartungKatalog['trim'] = MorpheusWartungEintrag 'Wartung' 2 'wartung' (T 'server.wartung.trim.titel') (T 'server.wartung.trim.erklaerung') 'defrag.exe' '{LW} /L' 'defrag.exe <LW> /L' 'sofort' 'ssd' 1800 (T 'server.wartung.dauer.1bis5') $false $null
+$script:MorpheusWartungKatalog['zeit.resync'] = MorpheusWartungEintrag 'Wartung' 3 'wartung' (T 'server.wartung.zeit.titel') (T 'server.wartung.zeit.erklaerung') 'w32tm.exe' '/resync' 'w32tm.exe /resync' 'nein' $null 120 (T 'server.wartung.dauer.sekunden') $true $null
+$script:MorpheusWartungKatalog['powercfg.energy'] = MorpheusWartungEintrag 'Energieberichte' 1 'diagnose' (T 'server.wartung.energy.titel') (T 'server.wartung.energy.erklaerung') 'powercfg.exe' '/energy /output {BERICHT} /duration 60' 'powercfg.exe /energy /output <Bericht> /duration 60' 'sofort' $null 240 (T 'server.wartung.dauer.1min') $false (T 'server.wartung.energy.hinweis') 'oem' 'energy'
+$script:MorpheusWartungKatalog['powercfg.akku'] = MorpheusWartungEintrag 'Energieberichte' 2 'diagnose' (T 'server.wartung.akku.titel') (T 'server.wartung.akku.erklaerung') 'powercfg.exe' '/batteryreport /output {BERICHT}' 'powercfg.exe /batteryreport /output <Bericht>' 'nein' $null 120 (T 'server.wartung.dauer.sekunden') $false $null 'oem' 'akku'
+$script:MorpheusWartungKatalog['powercfg.schlaf'] = MorpheusWartungEintrag 'Energieberichte' 3 'diagnose' (T 'server.wartung.schlaf.titel') (T 'server.wartung.schlaf.erklaerung') 'powercfg.exe' '/sleepstudy /output {BERICHT}' 'powercfg.exe /sleepstudy /output <Bericht>' 'nein' $null 120 (T 'server.wartung.dauer.sekunden') $false $null 'oem' 'schlaf'
+$script:MorpheusWartungKatalog['winget.upgrade'] = MorpheusWartungEintrag 'Programme' 1 'reparatur' (T 'server.wartung.winget.titel') (T 'server.wartung.winget.erklaerung') 'winget' $script:MorpheusWartungWingetArgs 'winget upgrade --id <Paket-Id> --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity' 'nach-paket' 'ids' 1800 (T 'server.wartung.dauer.proProgramm') $true (T 'server.wartung.winget.hinweis') 'utf8'
+
+}
+Initialize-MorpheusWartungKatalog
 
 # Standard-Implementierungen (Tests ersetzen die Einträge)
 if (-not $script:MorpheusWartungImpl) {
@@ -83,7 +90,7 @@ if (-not $script:MorpheusWartungImpl) {
         # winget ohne Adminrechte (2.5, #67): fehlt WingetBenutzer.ps1, startet nichts (kein Rückfall auf Adminrechte)
         WingetBenutzer = {
             param($Datei, $Argumente, $ZeitlimitSek, $Zeile)
-            if (-not (Get-Command -Name Invoke-MorpheusWingetBenutzer -CommandType Function -ErrorAction SilentlyContinue)) { throw 'gui\lib\WingetBenutzer.ps1 fehlt; winget wird nicht mit Adminrechten gestartet.' }
+            if (-not (Get-Command -Name Invoke-MorpheusWingetBenutzer -CommandType Function -ErrorAction SilentlyContinue)) { throw (T 'server.winget.benutzerLibFehlt') }
             Invoke-MorpheusWingetBenutzer -WingetPfad $Datei -Argumente $Argumente -ZeitlimitSek $ZeitlimitSek -Zeile $Zeile
         }
         Jetzt      = { Get-Date }
@@ -142,8 +149,8 @@ function MorpheusWartungZusammenfassen {
         try { $z = Get-MorpheusWartungZusammenfassung -Werkzeug $Werkzeug -Text $Text -ExitCode $ExitCode } catch { $z = $null }
     }
     if ($null -eq $z) {
-        if ($ExitCode -eq 0) { $z = @{ ergebnis = 'unbekannt'; text = 'Beendet mit Code 0, Ausgabe nicht eindeutig'; empfehlung = $null; details = @() } }
-        else { $z = @{ ergebnis = 'fehler'; text = ('Beendet mit Code {0}' -f $ExitCode); empfehlung = $null; details = @() } }
+        if ($ExitCode -eq 0) { $z = @{ ergebnis = 'unbekannt'; text = (T 'server.wartung.beendetCode0'); empfehlung = $null; details = @() } }
+        else { $z = @{ ergebnis = 'fehler'; text = (T 'server.wartung.beendetCode' $ExitCode); empfehlung = $null; details = @() } }
     }
     [ordered]@{
         ergebnis   = [string]$z.ergebnis
@@ -249,7 +256,7 @@ function MorpheusWartungGesamttext {
     param($Z)
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.Append($Z.Text.ToString())
-    if ($Z.Gekuerzt) { [void]$sb.Append([string][char]0x2026).Append(' (Ausgabe gekürzt) ').Append([string][char]0x2026).Append("`n") }
+    if ($Z.Gekuerzt) { [void]$sb.Append([string][char]0x2026).Append(' ' + (T 'server.wartung.ausgabeGekuerzt') + ' ').Append([string][char]0x2026).Append("`n") }
     foreach ($r in $Z.Ring) { [void]$sb.Append($r).Append("`n") }
     return $sb.ToString()
 }
@@ -431,7 +438,7 @@ function Get-MorpheusWartungLaufwerke {
                 if ($mt -eq 'SSD') { $ssd = $true } elseif ($mt -eq 'HDD') { $ssd = $false }
             }
         } catch { $ssd = $null }
-        $name = if ([string]$d.VolumeName) { [string]$d.VolumeName } else { 'Lokaler Datenträger' }
+        $name = if ([string]$d.VolumeName) { [string]$d.VolumeName } else { (T 'server.wartung.lokalerDatentraeger') }
         [void]$liste.Add([pscustomobject][ordered]@{ laufwerk = $lw; bezeichnung = $name; ssd = $ssd })
     }
     $liste.ToArray()
@@ -445,21 +452,21 @@ function Test-MorpheusWartungAuftrag {
         [AllowNull()][AllowEmptyString()][string]$Laufwerk,
         $Laufwerke
     )
-    if ([string]::IsNullOrEmpty($Werkzeug)) { return 'Es wurde kein Werkzeug angegeben.' }
-    if (-not (@($script:MorpheusWartungKatalog.Keys) -ccontains $Werkzeug)) { return 'Dieses Werkzeug ist unbekannt.' }
-    if ($Werkzeug -ceq 'winget.upgrade') { return 'Programme werden über die Update-Liste aktualisiert, nicht über dieses Werkzeug.' }
-    if ($Werkzeug -ceq 'perfmon.rel') { return 'Der Zuverlässigkeitsverlauf wird über seinen eigenen Knopf geöffnet.' }
+    if ([string]::IsNullOrEmpty($Werkzeug)) { return (T 'server.wartung.keinWerkzeug') }
+    if (-not (@($script:MorpheusWartungKatalog.Keys) -ccontains $Werkzeug)) { return (T 'server.wartung.werkzeugUnbekannt') }
+    if ($Werkzeug -ceq 'winget.upgrade') { return (T 'server.wartung.ueberUpdateListe') }
+    if ($Werkzeug -ceq 'perfmon.rel') { return (T 'server.wartung.relEigenerKnopf') }
     $par = $script:MorpheusWartungKatalog[$Werkzeug].Parameter
     $braucht = (($par -ceq 'laufwerk') -or ($par -ceq 'ssd'))
     if (-not $braucht) {
-        if (-not [string]::IsNullOrEmpty($Laufwerk)) { return 'Für dieses Werkzeug darf kein Laufwerk angegeben werden.' }
+        if (-not [string]::IsNullOrEmpty($Laufwerk)) { return (T 'server.wartung.keinLaufwerkErlaubt') }
         return $null
     }
-    if ([string]::IsNullOrEmpty($Laufwerk)) { return 'Für dieses Werkzeug muss ein Laufwerk gewählt werden.' }
-    if ($Laufwerk -cnotmatch '^[A-Z]:$') { return 'Das Laufwerk ist ungültig. Erwartet wird ein Buchstabe mit Doppelpunkt, zum Beispiel C:.' }
+    if ([string]::IsNullOrEmpty($Laufwerk)) { return (T 'server.wartung.laufwerkNoetig') }
+    if ($Laufwerk -cnotmatch '^[A-Z]:$') { return (T 'server.wartung.laufwerkUngueltig') }
     $treffer = @(@($Laufwerke) | Where-Object { ($null -ne $_) -and ([string]$_.laufwerk -ceq $Laufwerk) })
-    if ($treffer.Count -eq 0) { return 'Dieses Laufwerk steht nicht in der Liste der festen Laufwerke.' }
-    if (($par -ceq 'ssd') -and ($treffer[0].ssd -ne $true)) { return 'TRIM ist nur für Laufwerke sinnvoll, die als SSD erkannt wurden.' }
+    if ($treffer.Count -eq 0) { return (T 'server.wartung.laufwerkNichtInListe') }
+    if (($par -ceq 'ssd') -and ($treffer[0].ssd -ne $true)) { return (T 'server.wartung.trimNurSsd') }
     $null
 }
 
@@ -472,7 +479,7 @@ function Get-MorpheusWartungBefehl {
         [string]$Id,
         [string]$Bericht
     )
-    if (-not (@($script:MorpheusWartungKatalog.Keys) -ccontains $Werkzeug)) { throw "Unbekanntes Werkzeug '$Werkzeug'." }
+    if (-not (@($script:MorpheusWartungKatalog.Keys) -ccontains $Werkzeug)) { throw (T 'server.wartung.werkzeugUnbekanntName' $Werkzeug) }
     $k = $script:MorpheusWartungKatalog[$Werkzeug]
     if ($null -eq $k.Programm) { return [string]$k.Anzeige }
     # Nur Anzeige: Lässt sich der Pfad nicht auflösen, steht der Programmname da (gestartet wird dann nichts)
@@ -510,9 +517,9 @@ function Start-MorpheusZuverlaessigkeit {
     try {
         $explorer = Join-Path ([Environment]::GetFolderPath('Windows')) 'explorer.exe'
         & $script:MorpheusWartungImpl.Ohne $explorer 'shell:::{BB64F8A7-BEE7-4E1A-AB8D-7D8273F7FDB6}\pageReliabilityView'
-        [pscustomobject]@{ ok = $true; meldung = 'Der Zuverlässigkeitsverlauf wird geöffnet.' }
+        [pscustomobject]@{ ok = $true; meldung = (T 'server.wartung.relWirdGeoeffnet') }
     } catch {
-        [pscustomobject]@{ ok = $false; meldung = ('Der Zuverlässigkeitsverlauf ließ sich nicht öffnen: ' + $_.Exception.Message + ' Alternative: Win + R, dann perfmon /rel.') }
+        [pscustomobject]@{ ok = $false; meldung = (T 'server.wartung.relFehler' $_.Exception.Message) }
     }
 }
 
@@ -521,18 +528,18 @@ function Start-MorpheusZuverlaessigkeit {
 # Wiederherstellungspunkt-Knopf
 function MorpheusWartungLaufPunkt {
     param($Res, $Ctx, $K)
-    $beschr = 'Morpheus: von Hand angelegt'
+    $beschr = (T 'server.wartung.punkt.beschreibung')
     try {
         $pt = & $script:MorpheusWartungImpl.Punkt $beschr $Ctx.Start
     } catch {
         $Res.status = 'fehlgeschlagen'
         $Res.meldung = $_.Exception.Message
-        $Res.zusammenfassung = [ordered]@{ ergebnis = 'fehler'; text = (MorpheusWartungKurz $_.Exception.Message); empfehlung = 'Bei aktiver 24-Stunden-Sperre: siehe README, Abschnitt 24-Stunden-Sperre.'; details = @() }
+        $Res.zusammenfassung = [ordered]@{ ergebnis = 'fehler'; text = (MorpheusWartungKurz $_.Exception.Message); empfehlung = (T 'server.wartung.sperre24'); details = @() }
         return
     }
     $Res.punkt = $pt
     $Res.status = 'erledigt'
-    $text = 'Wiederherstellungspunkt #{0} angelegt und geprüft.' -f $pt.seq
+    $text = T 'server.wartung.punktAngelegt' $pt.seq
     $Res.meldung = $text
     $Res.zusammenfassung = [ordered]@{ ergebnis = 'ok'; text = $text; empfehlung = $null; details = @() }
     try {
@@ -540,7 +547,7 @@ function MorpheusWartungLaufPunkt {
         $Res.journal = $id
         PcCheckSafetyUpdateEntry $Ctx.DataRoot $id @{ meldung = $text }
     } catch {
-        $Res.meldung = $text + ' Das Journal ließ sich nicht schreiben: ' + $_.Exception.Message
+        $Res.meldung = $text + ' ' + (T 'server.wartung.journalNichtGeschrieben' $_.Exception.Message)
     }
 }
 
@@ -561,7 +568,7 @@ function MorpheusWartungNeuerZeilenLogger {
             $script:MorpheusWartungLogZustand.Letzter = $p
         }
         if ($script:MorpheusWartungLogZustand.N -ge $script:MorpheusWartungLogZustand.Max) {
-            if (-not $script:MorpheusWartungLogZustand.Gekuerzt) { $script:MorpheusWartungLogZustand.Gekuerzt = $true; MorpheusWartungLog '… weitere Ausgabe gekürzt' }
+            if (-not $script:MorpheusWartungLogZustand.Gekuerzt) { $script:MorpheusWartungLogZustand.Gekuerzt = $true; MorpheusWartungLog (T 'server.wartung.weitereAusgabeGekuerzt') }
             return
         }
         $script:MorpheusWartungLogZustand.N++
@@ -575,10 +582,10 @@ function MorpheusWartungVorPunkt {
     param($Res, $Ctx, $K, [bool]$OhnePunkt)
     if ($OhnePunkt) {
         $Res.ohnePunkt = $true
-        MorpheusWartungLog 'Ohne Wiederherstellungspunkt (vom Nutzer bestätigt)'
+        MorpheusWartungLog (T 'server.wartung.ohnePunktLog')
         return $true
     }
-    $beschr = MorpheusWartungKurz ('Morpheus: vor ' + $K.Titel) 64
+    $beschr = MorpheusWartungKurz (T 'server.wartung.vorTitel' $K.Titel) 64
     try {
         $Res.punkt = & $script:MorpheusWartungImpl.Punkt $beschr $Ctx.Start
     } catch {
@@ -604,7 +611,7 @@ function MorpheusWartungLaufProzess {
     try { $datei = MorpheusWartungProgrammPfad $K.Programm }
     catch {
         $Res.status = 'fehlgeschlagen'
-        $Res.meldung = 'Das Windows-Programm ließ sich nicht sicher auflösen, deshalb wurde nichts gestartet: ' + $_.Exception.Message
+        $Res.meldung = (T 'server.wartung.programmNichtAufloesbar' $_.Exception.Message)
         return
     }
     $argz = MorpheusWartungArgumente -Werkzeug $werkzeug -Laufwerk $Laufwerk -Bericht $berichtPfad
@@ -621,19 +628,19 @@ function MorpheusWartungLaufProzess {
         $jid = MorpheusWartungJournalBeginn -DataRoot $Ctx.DataRoot -Jetzt $Ctx.Start -Art 'wartung' -Aktion $werkzeug -Titel $K.Titel -Variante $(if ($Laufwerk) { $Laufwerk } else { $null }) -Punkt $Res.punkt -Befehl $befehl -OhnePunkt $Res.ohnePunkt
     } catch {
         $Res.status = 'fehlgeschlagen'
-        $Res.meldung = 'Das Änderungsjournal ließ sich nicht schreiben, deshalb wurde nichts gestartet: ' + $_.Exception.Message
+        $Res.meldung = (T 'server.wartung.journalVorStart' $_.Exception.Message)
         return
     }
     $Res.journal = $jid
 
-    MorpheusWartungLog ('Starte: ' + $befehl)
+    MorpheusWartungLog (T 'server.wartung.starte' $befehl)
     $logger = MorpheusWartungNeuerZeilenLogger
     $r = $null
     try {
         $r = & $script:MorpheusWartungImpl.Prozess $datei $argz $K.Kodierung $Ctx.AbbruchDatei $K.ZeitlimitSek $logger.Block
     } catch {
         $Res.status = 'fehlgeschlagen'
-        $Res.meldung = 'Das Programm ließ sich nicht starten oder lesen: ' + $_.Exception.Message
+        $Res.meldung = (T 'server.wartung.nichtGestartetLesen' $_.Exception.Message)
         $Res.zusammenfassung = [ordered]@{ ergebnis = 'fehler'; text = (MorpheusWartungKurz $Res.meldung); empfehlung = $null; details = @() }
         try { MorpheusWartungJournalEnde $Ctx.DataRoot $jid 'fehlgeschlagen' $Res.meldung 0 $null } catch { }
         return
@@ -643,18 +650,18 @@ function MorpheusWartungLaufProzess {
     $Res.dauerSek = $r.dauerSek
     if ($r.abgebrochen) {
         $Res.status = 'abgebrochen'
-        $Res.zusammenfassung = [ordered]@{ ergebnis = 'unbekannt'; text = 'Vom Nutzer abgebrochen.'; empfehlung = $null; details = @() }
+        $Res.zusammenfassung = [ordered]@{ ergebnis = 'unbekannt'; text = (T 'server.wartung.vomNutzerAbgebrochen'); empfehlung = $null; details = @() }
     } elseif ($r.zeitueberschritten) {
         $Res.status = 'zeitueberschreitung'
-        $Res.zusammenfassung = [ordered]@{ ergebnis = 'fehler'; text = ('Das Zeitlimit von {0} Minuten wurde überschritten; das Werkzeug wurde beendet.' -f [int][math]::Ceiling($K.ZeitlimitSek / 60)); empfehlung = $null; details = @() }
+        $Res.zusammenfassung = [ordered]@{ ergebnis = 'fehler'; text = (T 'server.wartung.zeitlimit' ([int][math]::Ceiling($K.ZeitlimitSek / 60))); empfehlung = $null; details = @() }
     } else {
         $Res.zusammenfassung = MorpheusWartungZusammenfassen $werkzeug $r.text $r.exitCode
         $Res.status = $(if ($Res.zusammenfassung.ergebnis -ceq 'fehler') { 'fehlgeschlagen' } else { 'erledigt' })
     }
-    MorpheusWartungLog ('Ergebnis: ' + $Res.zusammenfassung.text)
+    MorpheusWartungLog (T 'server.wartung.ergebnisLog' $Res.zusammenfassung.text)
     $Res.meldung = MorpheusWartungKurzfassung $Res.zusammenfassung $r.exitCode $r.dauerSek
     $jstatus = switch ($Res.status) { 'erledigt' { 'erledigt' } 'abgebrochen' { 'abgebrochen' } default { 'fehlgeschlagen' } }
-    try { MorpheusWartungJournalEnde $Ctx.DataRoot $jid $jstatus $Res.meldung $r.dauerSek $r.exitCode } catch { $Res.meldung += ' (Journal nicht aktualisiert: ' + $_.Exception.Message + ')' }
+    try { MorpheusWartungJournalEnde $Ctx.DataRoot $jid $jstatus $Res.meldung $r.dauerSek $r.exitCode } catch { $Res.meldung += ' ' + (T 'server.wartung.journalNichtAktualisiert' $_.Exception.Message) }
 
     if ($berichtPfad -and (Test-Path -LiteralPath $berichtPfad -PathType Leaf)) { $Res.bericht = $bericht }
 }
@@ -662,10 +669,10 @@ function MorpheusWartungLaufProzess {
 function MorpheusWartungLaufWinget {
     param($Res, $Ctx, $K, $Pakete, [bool]$OhnePunkt)
     $w = $null
-    try { $w = & $script:MorpheusWartungImpl.WingetPfad } catch { $w = @{ pfad = $null; grund = ('winget ließ sich nicht prüfen: ' + $_.Exception.Message) } }
+    try { $w = & $script:MorpheusWartungImpl.WingetPfad } catch { $w = @{ pfad = $null; grund = (T 'server.wartung.wingetNichtPruefbar' $_.Exception.Message) } }
     if ($null -eq $w -or -not $w.pfad) {
         $Res.status = 'fehlgeschlagen'
-        $Res.meldung = $(if ($w -and $w.grund) { [string]$w.grund } else { 'winget wurde nicht gefunden oder ist nicht vertrauenswürdig.' })
+        $Res.meldung = $(if ($w -and $w.grund) { [string]$w.grund } else { (T 'server.wartung.wingetNichtVertrauenswuerdig') })
         return
     }
     $datei = [string]$w.pfad
@@ -673,7 +680,7 @@ function MorpheusWartungLaufWinget {
 
     # winget läuft ohne Adminrechte (2.5, #67, G3): Installer, die Adminrechte brauchen, fragen selbst per Windows-Abfrage
     $Res.benutzerkontext = $true
-    MorpheusWartungLog 'winget läuft ohne Adminrechte. Braucht ein Programm Adminrechte, fragt Windows selbst nach: Herausgeber prüfen.'
+    MorpheusWartungLog (T 'server.wartung.wingetOhneAdminLog')
 
     $abgebrochen = $false
     $n = @($Pakete).Count
@@ -688,32 +695,32 @@ function MorpheusWartungLaufWinget {
         $Res.pakete += , $eintrag
         if ($abgebrochen -or ($Ctx.AbbruchDatei -and (Test-Path -LiteralPath $Ctx.AbbruchDatei))) {
             $abgebrochen = $true
-            $eintrag.text = 'Nicht gestartet (abgebrochen).'
+            $eintrag.text = (T 'server.wartung.nichtGestartetAbgebrochen')
             continue
         }
         $argz = MorpheusWartungArgumente -Werkzeug 'winget.upgrade' -Id $eintrag.id
         $befehl = ($datei + ' ' + $argz).Trim()
         if ($datei -match '\s') { $befehl = ('"' + $datei + '" ' + $argz).Trim() }
-        $titel = 'Update: {0} {1} → {2}' -f $eintrag.name, $eintrag.von, $eintrag.auf
+        $titel = T 'server.wartung.updateTitel' $eintrag.name $eintrag.von $eintrag.auf
         $jid = $null
         try {
             $jid = MorpheusWartungJournalBeginn -DataRoot $Ctx.DataRoot -Jetzt $Ctx.Start -Art 'update' -Aktion 'winget.upgrade' -Titel $titel -Variante $eintrag.id -Punkt $Res.punkt -Befehl $befehl -OhnePunkt $Res.ohnePunkt
         } catch {
             $eintrag.status = 'fehlgeschlagen'
-            $eintrag.text = 'Das Änderungsjournal ließ sich nicht schreiben, deshalb wurde nichts gestartet: ' + $_.Exception.Message
+            $eintrag.text = (T 'server.wartung.journalVorStart' $_.Exception.Message)
             $fehler++
             continue
         }
         if (-not $erstes) { $erstes = $jid }
-        MorpheusWartungLog ('Paket {0}/{1}: {2} ({3} → {4})' -f $i, $n, $eintrag.name, $eintrag.von, $eintrag.auf)
-        MorpheusWartungLog ('Starte: ' + $befehl)
+        MorpheusWartungLog (T 'server.wartung.paketLog' $i $n $eintrag.name $eintrag.von $eintrag.auf)
+        MorpheusWartungLog (T 'server.wartung.starte' $befehl)
         $logger = MorpheusWartungNeuerZeilenLogger
         $r = $null
         try {
             $r = & $script:MorpheusWartungImpl.WingetBenutzer $datei $argz $K.ZeitlimitSek $logger.Block
         } catch {
             $eintrag.status = 'fehlgeschlagen'
-            $eintrag.text = 'Das Programm ließ sich nicht starten oder lesen: ' + $_.Exception.Message
+            $eintrag.text = (T 'server.wartung.nichtGestartetLesen' $_.Exception.Message)
             $fehler++
             try { MorpheusWartungJournalEnde $Ctx.DataRoot $jid 'fehlgeschlagen' $eintrag.text 0 $null } catch { }
             continue
@@ -723,16 +730,16 @@ function MorpheusWartungLaufWinget {
         $gesamt += [int]$r.dauerSek
         if ($r.zeitueberschritten) {
             $eintrag.status = 'fehlgeschlagen'
-            $eintrag.text = 'Zeitlimit überschritten; winget wurde beendet.'
+            $eintrag.text = (T 'server.wartung.zeitlimitWinget')
         } elseif ($null -eq $r.exitCode) {
             $eintrag.status = 'fehlgeschlagen'
-            $eintrag.text = $(if ($r.fehler) { [string]$r.fehler } else { 'winget hat kein Ergebnis gemeldet.' })
+            $eintrag.text = $(if ($r.fehler) { [string]$r.fehler } else { (T 'server.wartung.wingetKeinErgebnis') })
         } else {
             $e = $null
             if (Get-Command -Name Get-MorpheusWingetErgebnis -ErrorAction SilentlyContinue) { try { $e = Get-MorpheusWingetErgebnis -ExitCode $r.exitCode } catch { $e = $null } }
             if ($null -eq $e) {
-                if ($r.exitCode -eq 0) { $e = @{ status = 'aktualisiert'; text = 'Das Programm wurde aktualisiert.' } }
-                else { $e = @{ status = 'fehlgeschlagen'; text = ('winget endete mit Code {0}.' -f $r.exitCode) } }
+                if ($r.exitCode -eq 0) { $e = @{ status = 'aktualisiert'; text = (T 'server.wartung.programmAktualisiert') } }
+                else { $e = @{ status = 'fehlgeschlagen'; text = (T 'server.wartung.wingetCode' $r.exitCode) } }
             }
             $eintrag.status = [string]$e.status
             $eintrag.text = [string]$e.text
@@ -740,7 +747,7 @@ function MorpheusWartungLaufWinget {
         # 'laeuft-noch': nichts aktualisiert, zählt wie ein Fehlschlag (erneut versuchen)
         $nichtAktualisiert = (@('fehlgeschlagen', 'laeuft-noch') -ccontains $eintrag.status)
         if ($nichtAktualisiert) { $fehler++ } else { $ok++ }
-        MorpheusWartungLog ('Ergebnis: {0}: {1}' -f $eintrag.name, $eintrag.text)
+        MorpheusWartungLog (T 'server.wartung.ergebnisPaket' $eintrag.name $eintrag.text)
         $js = $(if ($nichtAktualisiert) { 'fehlgeschlagen' } else { 'erledigt' })
         try { MorpheusWartungJournalEnde $Ctx.DataRoot $jid $js $eintrag.text $r.dauerSek $r.exitCode } catch { }
     }
@@ -750,13 +757,13 @@ function MorpheusWartungLaufWinget {
     if ($abgebrochen) { $Res.status = 'abgebrochen' }
     elseif ($fehler -gt 0) { $Res.status = 'fehlgeschlagen' }
     else { $Res.status = 'erledigt' }
-    $text = '{0} von {1} Programmen erledigt, {2} nicht aktualisiert.' -f $ok, $n, $fehler
-    if ($nichtGestartet -gt 0) { $text += " $nichtGestartet nicht gestartet (abgebrochen)." }
+    $text = T 'server.wartung.programmeErledigt' $ok $n $fehler
+    if ($nichtGestartet -gt 0) { $text += ' ' + (T 'server.wartung.nichtGestartetAnzahl' $nichtGestartet) }
     $erg = $(if ($fehler -gt 0) { 'problem' } elseif ($abgebrochen) { 'unbekannt' } else { 'ok' })
-    $details = @('winget lief ohne Adminrechte (Benutzerkontext).')
+    $details = @((T 'server.wartung.wingetBenutzerkontext'))
     $Res.zusammenfassung = [ordered]@{ ergebnis = $erg; text = $text; empfehlung = $null; details = @($details) }
     $Res.meldung = $text
-    MorpheusWartungLog ('Ergebnis: ' + $text)
+    MorpheusWartungLog (T 'server.wartung.ergebnisLog' $text)
 }
 
 #endregion
@@ -773,27 +780,27 @@ function Invoke-MorpheusWartung {
         [string]$AbbruchDatei
     )
     # --- Argumente prüfen (wirft) ---
-    if (-not (@($script:MorpheusWartungKatalog.Keys) -ccontains $Werkzeug)) { throw "Unbekanntes Werkzeug '$Werkzeug'." }
+    if (-not (@($script:MorpheusWartungKatalog.Keys) -ccontains $Werkzeug)) { throw (T 'server.wartung.werkzeugUnbekanntName' $Werkzeug) }
     $k = $script:MorpheusWartungKatalog[$Werkzeug]
     $par = $k.Parameter
     if (($par -ceq 'laufwerk') -or ($par -ceq 'ssd')) {
-        if ($Laufwerk -cnotmatch '^[A-Z]:$') { throw 'Für dieses Werkzeug muss ein gültiges Laufwerk wie C: angegeben werden.' }
+        if ($Laufwerk -cnotmatch '^[A-Z]:$') { throw (T 'server.wartung.laufwerkGueltig') }
     } elseif (-not [string]::IsNullOrEmpty($Laufwerk)) {
-        throw 'Für dieses Werkzeug darf kein Laufwerk angegeben werden.'
+        throw (T 'server.wartung.keinLaufwerkErlaubt')
     }
     $paketListe = @()
     if ($Werkzeug -ceq 'winget.upgrade') {
         $paketListe = @($Pakete | Where-Object { $null -ne $_ })
-        if (($paketListe.Count -lt 1) -or ($paketListe.Count -gt 30)) { throw 'Für winget müssen 1 bis 30 Programme angegeben werden.' }
+        if (($paketListe.Count -lt 1) -or ($paketListe.Count -gt 30)) { throw (T 'server.wartung.wingetAnzahl') }
         foreach ($p in $paketListe) {
             $pid1 = [string]$p.id
             $gueltig = $false
             if (Get-Command -Name Test-MorpheusWingetId -ErrorAction SilentlyContinue) { $gueltig = [bool](Test-MorpheusWingetId -Id $pid1) }
             else { $gueltig = ($pid1 -cmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$') }
-            if (-not $gueltig) { throw "Die Paket-Id '$pid1' ist ungültig." }
+            if (-not $gueltig) { throw (T 'server.wartung.paketIdUngueltig' $pid1) }
         }
     } elseif ($null -ne $Pakete -and @($Pakete).Count -gt 0) {
-        throw 'Für dieses Werkzeug dürfen keine Programme angegeben werden.'
+        throw (T 'server.wartung.keineProgrammeErlaubt')
     }
 
     $jetzt = & $script:MorpheusWartungImpl.Jetzt
@@ -814,7 +821,7 @@ function Invoke-MorpheusWartung {
         }
     } catch {
         $res.status = 'fehlgeschlagen'
-        $res.meldung = 'Unerwarteter Fehler: ' + $_.Exception.Message
+        $res.meldung = (T 'server.wartung.unerwarteterFehler' $_.Exception.Message)
     } finally {
         if ($AbbruchDatei -and (Test-Path -LiteralPath $AbbruchDatei)) { Remove-Item -LiteralPath $AbbruchDatei -Force -ErrorAction SilentlyContinue }
     }
