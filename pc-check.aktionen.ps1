@@ -25,34 +25,23 @@
         Id          = 'defender.netzwerkschutz'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Microsoft Defender: Einstellungen'
-        Titel       = 'Netzwerkschutz einschalten'
-        Erklaerung  = 'Blockiert in allen Programmen Verbindungen zu bekannten Phishing- und Schadsoftware-Servern. Im Alltag merkst du nichts, höchstens wird eine unseriöse Webseite gesperrt.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = 'Set-MpPreference -EnableNetworkProtection Enabled'
-            Rueckgaengig = 'Set-MpPreference -EnableNetworkProtection <vorher>   # Disabled, Enabled oder AuditMode, je nach altem Wert'
-            Erklaerung   = @(
-                'Set-MpPreference ändert eine Einstellung von Microsoft Defender.',
-                '-EnableNetworkProtection Enabled schaltet den Netzwerkschutz scharf (AuditMode würde nur protokollieren, Disabled ist aus).',
-                'Beim Rückgängigmachen wird der alte Wert (aus, an oder nur protokollieren) wieder gesetzt.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
-            try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { return 'Microsoft Defender ist nicht abrufbar: ' + $_.Exception.Message }
-            if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') { return "Defender läuft im Modus '$($s.AMRunningMode)'; vermutlich ist ein Virenschutz eines anderen Anbieters aktiv." }
-            if (-not $s.AntivirusEnabled) { return 'Der Defender-Virenschutz ist aus; vermutlich ist ein Virenschutz eines anderen Anbieters aktiv.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
+            try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { return (T 'katalog.defender.nichtAbrufbar' $_.Exception.Message) }
+            if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') { return (T 'katalog.defender.modus' $s.AMRunningMode) }
+            if (-not $s.AntivirusEnabled) { return (T 'katalog.defender.avAus') }
         }
         Lesen = {
             try { $v = [int](Get-MpPreference -ErrorAction Stop).EnableNetworkProtection }
-            catch { return [pscustomobject]@{ Aktiv = $false; Wert = 'Defender nicht lesbar: ' + $_.Exception.Message; Zustand = $null } }
-            $namen = @{ 0 = 'aus'; 1 = 'an'; 2 = 'nur protokollieren' }
+            catch { return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.defender.nichtLesbar' $_.Exception.Message); Zustand = $null } }
+            $namen = @{ 0 = (T 'katalog.wert.aus'); 1 = (T 'katalog.wert.an'); 2 = (T 'katalog.defender.nurProtokollieren') }
             [pscustomobject]@{ Aktiv = ($v -eq 1); Wert = [string]$namen[$v]; Zustand = $v }
         }
         Ausfuehren = {
@@ -61,10 +50,10 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $namen = @{ 0 = 'Disabled'; 1 = 'Enabled'; 2 = 'AuditMode' }
             $modus = $namen[[int]$Vorher]
-            if (-not $modus) { throw "Unbekannter Netzwerkschutz-Wert '$Vorher'." }
+            if (-not $modus) { throw (T 'katalog.defender.netzwerkschutzUnbekannt' $Vorher) }
             Set-MpPreference -EnableNetworkProtection $modus -ErrorAction Stop | Out-Null
         }
     },
@@ -73,34 +62,23 @@
         Id          = 'defender.pua'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Microsoft Defender: Einstellungen'
-        Titel       = 'Schutz vor unerwünschten Apps (PUA) einschalten'
-        Erklaerung  = 'Defender blockiert dann Adware, Zusatzsoftware in Installern und ähnliche unerwünschte Programme. Selten wird dabei auch ein harmloses Hilfsprogramm gesperrt.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = 'Set-MpPreference -PUAProtection Enabled'
-            Rueckgaengig = 'Set-MpPreference -PUAProtection <vorher>   # Disabled, Enabled oder AuditMode, je nach altem Wert'
-            Erklaerung   = @(
-                'Set-MpPreference ändert eine Einstellung von Microsoft Defender.',
-                '-PUAProtection Enabled blockiert potenziell unerwünschte Anwendungen (AuditMode würde nur melden, Disabled ist aus).',
-                'Beim Rückgängigmachen wird der alte Wert wieder gesetzt.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
-            try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { return 'Microsoft Defender ist nicht abrufbar: ' + $_.Exception.Message }
-            if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') { return "Defender läuft im Modus '$($s.AMRunningMode)'; vermutlich ist ein Virenschutz eines anderen Anbieters aktiv." }
-            if (-not $s.AntivirusEnabled) { return 'Der Defender-Virenschutz ist aus; vermutlich ist ein Virenschutz eines anderen Anbieters aktiv.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
+            try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { return (T 'katalog.defender.nichtAbrufbar' $_.Exception.Message) }
+            if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') { return (T 'katalog.defender.modus' $s.AMRunningMode) }
+            if (-not $s.AntivirusEnabled) { return (T 'katalog.defender.avAus') }
         }
         Lesen = {
             try { $v = [int](Get-MpPreference -ErrorAction Stop).PUAProtection }
-            catch { return [pscustomobject]@{ Aktiv = $false; Wert = 'Defender nicht lesbar: ' + $_.Exception.Message; Zustand = $null } }
-            $namen = @{ 0 = 'aus'; 1 = 'an (blockieren)'; 2 = 'nur protokollieren' }
+            catch { return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.defender.nichtLesbar' $_.Exception.Message); Zustand = $null } }
+            $namen = @{ 0 = (T 'katalog.wert.aus'); 1 = (T 'katalog.defender.anBlockieren'); 2 = (T 'katalog.defender.nurProtokollieren') }
             [pscustomobject]@{ Aktiv = ($v -eq 1); Wert = [string]$namen[$v]; Zustand = $v }
         }
         Ausfuehren = {
@@ -109,10 +87,10 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $namen = @{ 0 = 'Disabled'; 1 = 'Enabled'; 2 = 'AuditMode' }
             $modus = $namen[[int]$Vorher]
-            if (-not $modus) { throw "Unbekannter PUA-Wert '$Vorher'." }
+            if (-not $modus) { throw (T 'katalog.defender.puaUnbekannt' $Vorher) }
             Set-MpPreference -PUAProtection $modus -ErrorAction Stop | Out-Null
         }
     },
@@ -121,40 +99,28 @@
         Id          = 'defender.asr-basis'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Microsoft Defender: Einstellungen'
-        Titel       = 'Zwei Angriffsflächen-Regeln (Treiber-Missbrauch, LSASS) aktivieren'
-        Erklaerung  = 'Verhindert, dass Schadsoftware bekannte anfällige Treiber missbraucht oder Anmeldedaten aus dem LSASS-Prozess stiehlt. Sehr alte Hersteller-Treiber (z. B. mancher Übertaktungs-Tools) können dadurch gesperrt werden; "Nur protokollieren" ist zum Testen ohne Sperre.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'mittel'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = @('Blockieren', 'Nur protokollieren')
-        Befehle     = @{
-            Ausfuehren   = "Add-MpPreference -AttackSurfaceReductionRules_Ids '56a863a9-875e-4185-98a7-b882c64b5ce5' -AttackSurfaceReductionRules_Actions <variante>`nAdd-MpPreference -AttackSurfaceReductionRules_Ids '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2' -AttackSurfaceReductionRules_Actions <variante>   # <variante>: Blockieren = Enabled, Nur protokollieren = AuditMode; nur für Regeln, die noch nicht auf Blockieren/Protokollieren stehen"
-            Rueckgaengig = "Add-MpPreference -AttackSurfaceReductionRules_Ids <regel> -AttackSurfaceReductionRules_Actions <alter Modus>   # war die Regel vorher gesetzt`nRemove-MpPreference -AttackSurfaceReductionRules_Ids <regel>   # war die Regel vorher nicht gesetzt"
-            Erklaerung   = @(
-                'Add-MpPreference fügt eine Regel zur Verringerung der Angriffsfläche (ASR) hinzu bzw. ändert ihren Modus.',
-                '56a863a9-… = Missbrauch anfälliger signierter Treiber blockieren; 9e6c4e1f-… = Diebstahl von Anmeldedaten aus LSASS blockieren.',
-                '-AttackSurfaceReductionRules_Actions: Enabled = blockieren, AuditMode = nur protokollieren.',
-                'Remove-MpPreference entfernt eine Regel wieder; so ist sie danach genau so "nicht gesetzt" wie vorher.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
-            try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { return 'Microsoft Defender ist nicht abrufbar: ' + $_.Exception.Message }
-            if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') { return "Defender läuft im Modus '$($s.AMRunningMode)'; vermutlich ist ein Virenschutz eines anderen Anbieters aktiv." }
-            if (-not $s.AntivirusEnabled) { return 'Der Defender-Virenschutz ist aus; vermutlich ist ein Virenschutz eines anderen Anbieters aktiv.' }
-            if (-not $s.RealTimeProtectionEnabled) { return 'Der Echtzeitschutz ist aus; die Regeln wirken nur bei eingeschaltetem Echtzeitschutz.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
+            try { $s = Get-MpComputerStatus -ErrorAction Stop } catch { return (T 'katalog.defender.nichtAbrufbar' $_.Exception.Message) }
+            if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') { return (T 'katalog.defender.modus' $s.AMRunningMode) }
+            if (-not $s.AntivirusEnabled) { return (T 'katalog.defender.avAus') }
+            if (-not $s.RealTimeProtectionEnabled) { return (T 'katalog.defender.echtzeitAus') }
         }
         Lesen = {
             $regelIds = @('56a863a9-875e-4185-98a7-b882c64b5ce5', '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2')
-            $kurz = @('Treiber-Missbrauch', 'LSASS-Schutz')
+            $kurz = @((T 'katalog.asr.treiber'), (T 'katalog.asr.lsass'))
             try { $p = Get-MpPreference -ErrorAction Stop }
-            catch { return [pscustomobject]@{ Aktiv = $false; Wert = 'Defender nicht lesbar: ' + $_.Exception.Message; Zustand = $null } }
+            catch { return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.defender.nichtLesbar' $_.Exception.Message); Zustand = $null } }
             $vid = @($p.AttackSurfaceReductionRules_Ids | ForEach-Object { ([string]$_).ToLower() })
             $vac = @($p.AttackSurfaceReductionRules_Actions)
-            $namen = @{ 0 = 'aus'; 1 = 'Blockieren'; 2 = 'Nur protokollieren'; 5 = 'nicht konfiguriert'; 6 = 'Warnen' }
+            $namen = @{ 0 = (T 'katalog.wert.aus'); 1 = (T 'katalog.asr.blockieren'); 2 = (T 'katalog.asr.nurProtokollieren'); 5 = (T 'katalog.asr.nichtKonfiguriert'); 6 = (T 'katalog.asr.warnen') }
             $regeln = @(for ($i = 0; $i -lt $regelIds.Count; $i++) {
                     $idx = [array]::IndexOf($vid, $regelIds[$i])
                     $akt = $null
@@ -166,7 +132,7 @@
             for ($i = 0; $i -lt $regeln.Count; $i++) {
                 $a = $regeln[$i].Aktion
                 if ($a -ne 1 -and $a -ne 2) { $aktiv = $false }
-                if ($null -eq $a) { $t = 'nicht gesetzt' } else { $t = [string]$namen[$a]; if (-not $t) { $t = "Wert $a" } }
+                if ($null -eq $a) { $t = (T 'katalog.asr.nichtGesetzt') } else { $t = [string]$namen[$a]; if (-not $t) { $t = (T 'katalog.asr.wert' $a) } }
                 $texte += ('{0}: {1}' -f $kurz[$i], $t)
             }
             [pscustomobject]@{ Aktiv = $aktiv; Wert = ($texte -join '; '); Zustand = [ordered]@{ Regeln = $regeln } }
@@ -176,7 +142,7 @@
             $modus = switch ($Variante) {
                 'Blockieren' { 'Enabled' }
                 'Nur protokollieren' { 'AuditMode' }
-                default { throw "Ungültige Variante '$Variante'." }
+                default { throw (T 'katalog.asr.variante' $Variante) }
             }
             $regelIds = @('56a863a9-875e-4185-98a7-b882c64b5ce5', '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2')
             $p = Get-MpPreference -ErrorAction Stop
@@ -191,7 +157,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $namen = @{ 0 = 'Disabled'; 1 = 'Enabled'; 2 = 'AuditMode'; 5 = 'NotConfigured'; 6 = 'Warn' }
             foreach ($r in @($Vorher.Regeln)) {
                 $id = ([string]$r.Id).ToLower()
@@ -205,7 +171,7 @@
                     continue
                 }
                 $modus = $namen[[int]$r.Aktion]
-                if (-not $modus) { throw "Unbekannter ASR-Modus '$($r.Aktion)'." }
+                if (-not $modus) { throw (T 'katalog.asr.modusUnbekannt' $r.Aktion) }
                 if ($idx -ge 0 -and $idx -lt $vac.Count -and [int]$vac[$idx] -eq [int]$r.Aktion) { continue }
                 Add-MpPreference -AttackSurfaceReductionRules_Ids $id -AttackSurfaceReductionRules_Actions $modus -ErrorAction Stop | Out-Null
             }
@@ -220,30 +186,18 @@
         Id          = 'fernzugriff.remoteunterstuetzung'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Remotedesktop'
-        Titel       = 'Remoteunterstützung ausschalten'
-        Erklaerung  = 'Niemand kann sich mehr per "Remoteunterstützung" (Einladung zur Fernhilfe) auf deinen PC verbinden. Das merkst du nur, wenn du diese Funktion bewusst nutzt.'
         Nutzen      = 'gering'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' -Name 'fAllowToGetHelp' -PropertyType DWord -Value 0 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' -Name 'fAllowToGetHelp' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'fAllowToGetHelp'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'fAllowToGetHelp ist die Einstellung "Remoteunterstützungsverbindungen mit diesem Computer zulassen"; 0 = nicht zulassen, 1 = zulassen.',
-                '-PropertyType DWord ist der Registry-Datentyp (32-Bit-Zahl).',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert, wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             $pol = $null
             try { $pol = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name 'fAllowToGetHelp' -ErrorAction Stop).fAllowToGetHelp } catch { }
-            if ($null -ne $pol) { return 'Eine Gruppenrichtlinie legt die Remoteunterstützung fest; die Einstellung hier hätte keine Wirkung.' }
+            if ($null -ne $pol) { return (T 'katalog.remote.gpo') }
         }
         Lesen = {
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance'; $name = 'fAllowToGetHelp'
@@ -257,8 +211,8 @@
             try { $pol = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name $name -ErrorAction Stop).$name } catch { }
             $wirksam = $wert
             if ($null -ne $pol) { $wirksam = $pol }
-            if ($wirksam -eq 0) { $text = 'nicht erlaubt' } elseif ($null -eq $wirksam) { $text = 'nicht gesetzt (Windows-Standard: erlaubt)' } else { $text = 'erlaubt' }
-            if ($null -ne $pol) { $text += ' (per Richtlinie)' }
+            if ($wirksam -eq 0) { $text = (T 'katalog.remote.nichtErlaubt') } elseif ($null -eq $wirksam) { $text = (T 'katalog.remote.nichtGesetzt') } else { $text = (T 'katalog.remote.erlaubt') }
+            if ($null -ne $pol) { $text = (T 'katalog.wert.perRichtlinie' $text) }
             [pscustomobject]@{ Aktiv = ($wirksam -eq 0); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -269,7 +223,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance'; $name = 'fAllowToGetHelp'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -292,30 +246,18 @@
         Id          = 'fernzugriff.rdp'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Remotedesktop'
-        Titel       = 'Remotedesktop (RDP) ausschalten'
-        Erklaerung  = 'Niemand kann sich mehr per Remotedesktop auf diesen PC verbinden; das schließt eine häufig angegriffene Tür. Wenn du den PC von unterwegs oder von einem anderen Rechner per RDP bedienst, funktioniert das danach nicht mehr.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'mittel'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -PropertyType DWord -Value 1 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'fDenyTSConnections'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'fDenyTSConnections ist der Schalter hinter "Remotedesktop" in den Einstellungen; 1 = Verbindungen verweigern, 0 = erlauben.',
-                '-PropertyType DWord ist der Registry-Datentyp (32-Bit-Zahl).',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert, wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             $pol = $null
             try { $pol = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name 'fDenyTSConnections' -ErrorAction Stop).fDenyTSConnections } catch { }
-            if ($null -ne $pol) { return 'Eine Gruppenrichtlinie legt den Remotedesktop fest; die Einstellung hier hätte keine Wirkung.' }
+            if ($null -ne $pol) { return (T 'katalog.rdp.gpo') }
         }
         Lesen = {
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'; $name = 'fDenyTSConnections'
@@ -329,8 +271,8 @@
             try { $pol = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name $name -ErrorAction Stop).$name } catch { }
             $wirksam = $wert
             if ($null -ne $pol) { $wirksam = $pol }
-            if ($wirksam -eq 1) { $text = 'aus' } elseif ($null -eq $wirksam) { $text = 'nicht gesetzt' } else { $text = 'an' }
-            if ($null -ne $pol) { $text += ' (per Richtlinie)' }
+            if ($wirksam -eq 1) { $text = (T 'katalog.wert.aus') } elseif ($null -eq $wirksam) { $text = (T 'katalog.rdp.nichtGesetzt') } else { $text = (T 'katalog.wert.an') }
+            if ($null -ne $pol) { $text = (T 'katalog.wert.perRichtlinie' $text) }
             [pscustomobject]@{ Aktiv = ($wirksam -eq 1); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -341,7 +283,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'; $name = 'fDenyTSConnections'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -364,27 +306,15 @@
         Id          = 'netz.llmnr'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'LLMNR / NetBIOS'
-        Titel       = 'LLMNR (Namensauflösung per Rundruf) ausschalten'
-        Erklaerung  = 'LLMNR ist ein altes Verfahren, mit dem Rechner im Netz Namen per Rundruf auflösen; in fremden Netzen lassen sich darüber Anmelde-Hashes abgreifen. Im Heimnetz merkst du nichts, höchstens werden Geräte ohne eigenen DNS-Eintrag nicht mehr über ihren Namen gefunden.'
         Nutzen      = 'gering'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' -Force   # nur falls der Schlüssel fehlt`nNew-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' -Name 'EnableMulticast' -PropertyType DWord -Value 0 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' -Name 'EnableMulticast' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'EnableMulticast'; hat Ausführen den Schlüssel neu angelegt, wird der leere Schlüssel mit Remove-Item entfernt"
-            Erklaerung   = @(
-                'New-Item legt den Richtlinien-Schlüssel an, falls er noch nicht existiert.',
-                'New-ItemProperty setzt den Wert EnableMulticast in der Richtlinie "Multicastnamensauflösung deaktivieren" des DNS-Clients; 0 = LLMNR aus.',
-                '-PropertyType DWord ist der Registry-Datentyp (32-Bit-Zahl).',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht Wert und (nur den selbst angelegten, leeren) Schlüssel.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
         }
         Lesen = {
             $pfad = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'; $name = 'EnableMulticast'
@@ -394,7 +324,7 @@
                 $k = Get-Item -LiteralPath $pfad -ErrorAction Stop
                 if ($k.GetValueNames() -contains $name) { $wert = $k.GetValue($name); $typ = $k.GetValueKind($name).ToString() }
             }
-            if ($wert -eq 0) { $text = 'aus (Richtlinie)' } elseif ($null -eq $wert) { $text = 'an (Standard)' } else { $text = 'an (Richtlinie)' }
+            if ($wert -eq 0) { $text = (T 'katalog.llmnr.ausRichtlinie') } elseif ($null -eq $wert) { $text = (T 'katalog.llmnr.anStandard') } else { $text = (T 'katalog.llmnr.anRichtlinie') }
             [pscustomobject]@{ Aktiv = ($wert -eq 0); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -405,7 +335,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'; $name = 'EnableMulticast'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -432,8 +362,6 @@
         Id          = 'system.wiederherstellung'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Wiederherstellung'
-        Titel       = 'Computerschutz (Wiederherstellungspunkte) auf dem Systemlaufwerk einschalten'
-        Erklaerung  = 'Schaltet die Systemwiederherstellung ein, damit vor Änderungen Wiederherstellungspunkte angelegt werden können; diese Aktion selbst legt noch keinen Punkt an. ACHTUNG: Das Rückgängigmachen (Ausschalten) löscht ALLE vorhandenen Wiederherstellungspunkte des Laufwerks unwiderruflich.'
         Nutzen      = 'hoch'
         Aufwand     = 'gering'
         Risiko      = 'mittel'
@@ -441,21 +369,12 @@
         Bereich     = 'System'
         Varianten   = $null
         OhneWiederherstellungspunkt = $true
-        Befehle     = @{
-            Ausfuehren   = "Enable-ComputerRestore -Drive `"`$env:SystemDrive\`""
-            Rueckgaengig = "Disable-ComputerRestore -Drive `"`$env:SystemDrive\`"   # ACHTUNG: löscht alle Wiederherstellungspunkte dieses Laufwerks"
-            Erklaerung   = @(
-                'Enable-ComputerRestore schaltet den Computerschutz (Systemwiederherstellung) für das angegebene Laufwerk ein.',
-                '$env:SystemDrive ist das Systemlaufwerk (meist C:); der Backslash macht daraus den Laufwerksstamm (C:\).',
-                'Disable-ComputerRestore schaltet den Schutz wieder aus und löscht dabei alle vorhandenen Wiederherstellungspunkte dieses Laufwerks; sie lassen sich nicht zurückholen.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             $dis = $null
             try { $dis = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore' -Name 'DisableSR' -ErrorAction Stop).DisableSR } catch { }
-            if ($dis -eq 1) { return 'Der Computerschutz ist per Gruppenrichtlinie abgeschaltet (DisableSR = 1).' }
+            if ($dis -eq 1) { return (T 'katalog.wiederherstellung.gpo') }
         }
         Lesen = {
             $laufwerk = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
@@ -464,7 +383,7 @@
             try { $intervall = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name 'RPSessionInterval' -ErrorAction Stop).RPSessionInterval } catch { }
             try { $dis = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore' -Name 'DisableSR' -ErrorAction Stop).DisableSR } catch { }
             $an = (($intervall -eq 1) -and ($dis -ne 1))
-            if ($an) { $text = "an für $laufwerk" } elseif ($dis -eq 1) { $text = 'aus (per Richtlinie)' } else { $text = "aus für $laufwerk" }
+            if ($an) { $text = (T 'katalog.wiederherstellung.an' $laufwerk) } elseif ($dis -eq 1) { $text = (T 'katalog.wiederherstellung.ausRichtlinie') } else { $text = (T 'katalog.wiederherstellung.aus' $laufwerk) }
             [pscustomobject]@{ Aktiv = $an; Wert = $text; Zustand = [ordered]@{ Eingeschaltet = $an; Laufwerk = ($laufwerk + '\') } }
         }
         Ausfuehren = {
@@ -475,7 +394,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             # War der Schutz schon vorher an, gab es nichts zurückzunehmen; ausgeschaltet wird nur, was diese Aktion eingeschaltet hat
             if ($Vorher.Eingeschaltet -eq $true) { return }
             $laufwerk = [string]$Vorher.Laufwerk
@@ -488,39 +407,27 @@
         Id          = 'system.wiederherstellung-speicher'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Wiederherstellung'
-        Titel       = 'Speicher für Wiederherstellungspunkte auf 10 % vergrößern'
-        Erklaerung  = 'Ist der Speicher für Wiederherstellungspunkte zu klein, löscht Windows ältere Punkte, sobald ein neuer entsteht – oft schon nach Stunden. Mit 10 % des Systemlaufwerks bleiben mehrere Punkte erhalten. Belegt wird der Platz erst, wenn Punkte entstehen.'
         Nutzen      = 'hoch'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "vssadmin resize shadowstorage /for=`$env:SystemDrive /on=`$env:SystemDrive /maxsize=10%"
-            Rueckgaengig = "vssadmin resize shadowstorage /for=`$env:SystemDrive /on=`$env:SystemDrive /maxsize=<alter Wert in MB bzw. UNBOUNDED>   # ist der alte Wert kleiner, löscht Windows dabei ältere Punkte"
-            Erklaerung   = @(
-                'vssadmin resize shadowstorage ändert, wie viel Platz Schattenkopien (daraus bestehen Wiederherstellungspunkte) auf dem Laufwerk belegen dürfen.',
-                '/for und /on: das Systemlaufwerk (meist C:); /maxsize=10% erlaubt bis zu 10 % der Laufwerksgröße.',
-                'Rückgängig setzt die alte Grenze wieder. Ist sie kleiner als der belegte Platz, löscht Windows dabei die ältesten Punkte.',
-                'Ist „Point-in-time restore“ von Windows 11 aktiv, setzt Windows die Grenze bei jedem Start auf dessen Einstellung zurück (Standard 2 %). Dann ändert Morpheus nichts und nennt den Weg über die Einstellungen.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             # Point-in-time restore (Windows 11, seit 26100/26200.8737): „The maximum VSS limit equals the maximum usage
             # configuration for point-in-time restore“ (learn.microsoft.com/windows/configuration/point-in-time-restore).
             # Lokal nur über die Einstellungen oder MDM (Recovery-CSP) änderbar; vssadmin hielte nur bis zum nächsten Start.
             $pitr = $null
             try { $pitr = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Setup\' -TaskName 'PITRTask' -ErrorAction Stop } catch { }
             if ($pitr -and ([string]$pitr.State -ne 'Disabled')) {
-                return 'Windows verwaltet die Grenze über „Point-in-time restore“ und setzt sie bei jedem Start zurück. Bitte selbst einstellen: Einstellungen > System > Wiederherstellung > Point-in-time restore > Anzeigen oder bearbeiten, Regler auf etwa 10 %. Ist Point-in-time restore dort aus: sysdm.cpl > Computerschutz > Konfigurieren > Max. Belegung.'
+                return (T 'katalog.speicher.pitr')
             }
             $iv = $null; $dis = $null
             try { $iv = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name 'RPSessionInterval' -ErrorAction Stop).RPSessionInterval } catch { }
             try { $dis = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore' -Name 'DisableSR' -ErrorAction Stop).DisableSR } catch { }
-            if (($iv -ne 1) -or ($dis -eq 1)) { return 'Der Computerschutz ist aus; zuerst „Computerschutz einschalten“ ausführen.' }
+            if (($iv -ne 1) -or ($dis -eq 1)) { return (T 'katalog.speicher.schutzAus') }
         }
         Lesen = {
             $lw = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
@@ -529,17 +436,17 @@
                 $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$lw'" -ErrorAction Stop
                 $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { $_.Volume.DeviceID -eq $vol.DeviceID }) | Select-Object -First 1
             }
-            catch { return [pscustomobject]@{ Aktiv = $false; Wert = 'nur mit Administratorrechten lesbar'; Zustand = [ordered]@{ Laufwerk = $lw; Max = $null } } }
-            if (-not $ss) { return [pscustomobject]@{ Aktiv = $false; Wert = "für $lw noch kein Speicher eingerichtet"; Zustand = [ordered]@{ Laufwerk = $lw; Max = $null } } }
+            catch { return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.speicher.nurAdmin'); Zustand = [ordered]@{ Laufwerk = $lw; Max = $null } } }
+            if (-not $ss) { return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.speicher.keinSpeicher' $lw); Zustand = [ordered]@{ Laufwerk = $lw; Max = $null } } }
             $max = [uint64]$ss.MaxSpace
             if ($max -eq [uint64]::MaxValue) {
-                return [pscustomobject]@{ Aktiv = $true; Wert = 'unbegrenzt'; Zustand = [ordered]@{ Laufwerk = $lw; Max = 'UNBOUNDED' } }
+                return [pscustomobject]@{ Aktiv = $true; Wert = (T 'katalog.speicher.unbegrenzt'); Zustand = [ordered]@{ Laufwerk = $lw; Max = 'UNBOUNDED' } }
             }
             $pct = [Math]::Round(100 * [double]$max / [double]$vol.Capacity, 1)
-            $wert = 'max {0:N1} GB ({1} %)' -f ([double]$max / 1GB), $pct
+            $wert = (T 'katalog.speicher.max' ([double]$max / 1GB) $pct)
             $pitr = $null
             try { $pitr = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Setup\' -TaskName 'PITRTask' -ErrorAction Stop } catch { }
-            if ($pitr -and ([string]$pitr.State -ne 'Disabled')) { $wert += ', verwaltet von Point-in-time restore (Einstellungen > System > Wiederherstellung)' }
+            if ($pitr -and ([string]$pitr.State -ne 'Disabled')) { $wert = (T 'katalog.speicher.mitPitr' $wert) }
             # Ziel erreicht ab 8 % (die Aktion setzt 10 %). Der Zustand zählt in ganzen MB: Windows speichert die Grenze
             # gerundet, bytegenau würde die Kontrolle nach dem Rückgängigmachen fälschlich abweichen.
             [pscustomobject]@{ Aktiv = ($pct -ge 8); Wert = $wert; Zustand = [ordered]@{ Laufwerk = $lw; Max = ('{0}MB' -f [Math]::Floor([double]$max / 1MB)) } }
@@ -549,21 +456,21 @@
             $lw = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
             if (-not $lw) { $lw = 'C:' }
             $out = & (Join-Path ([Environment]::SystemDirectory) 'vssadmin.exe') resize shadowstorage "/for=$lw" "/on=$lw" '/maxsize=10%' 2>&1
-            if ($LASTEXITCODE -ne 0) { throw ("vssadmin endete mit Code $($LASTEXITCODE): " + (($out | Out-String).Trim())) }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.speicher.vssadmin' $LASTEXITCODE (($out | Out-String).Trim())) }
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
-            if ($null -eq $Vorher.Max) { throw 'Vorher war kein Speicher eingerichtet; eine Zuordnung lässt sich auf Windows-Desktops nicht entfernen. Bitte die Grenze unter sysdm.cpl > Computerschutz selbst einstellen.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
+            if ($null -eq $Vorher.Max) { throw (T 'katalog.speicher.keinVorher') }
             $lw = [string]$Vorher.Laufwerk
-            if ($lw -notmatch '^[A-Za-z]:$') { throw "Ungültiges Laufwerk '$lw' im Vorher-Zustand." }
+            if ($lw -notmatch '^[A-Za-z]:$') { throw (T 'katalog.speicher.laufwerkUngueltig' $lw) }
             $max = [string]$Vorher.Max
             if ($max -ne 'UNBOUNDED') {
-                if ($max -notmatch '^(\d{1,12})MB$') { throw "Ungültige Speichergrenze '$max' im Vorher-Zustand." }
+                if ($max -notmatch '^(\d{1,12})MB$') { throw (T 'katalog.speicher.grenzeUngueltig' $max) }
                 if ([int64]$Matches[1] -lt 320) { $max = '320MB' }   # vssadmin verlangt mindestens 320 MB
             }
             $out = & (Join-Path ([Environment]::SystemDirectory) 'vssadmin.exe') resize shadowstorage "/for=$lw" "/on=$lw" "/maxsize=$max" 2>&1
-            if ($LASTEXITCODE -ne 0) { throw ("vssadmin endete mit Code $($LASTEXITCODE): " + (($out | Out-String).Trim())) }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.speicher.vssadmin' $LASTEXITCODE (($out | Out-String).Trim())) }
         }
     },
 
@@ -571,29 +478,18 @@
         Id          = 'system.schnellstart'
         Kategorie   = 'Leistung'
         Pruefung    = 'Schnellstart und Ruhezustand'
-        Titel       = 'Schnellstart ausschalten'
-        Erklaerung  = '"Herunterfahren" fährt Windows dann wirklich komplett herunter, sodass Treiber-, Update- und BIOS-Änderungen sicher greifen. Der Start dauert mit einer NVMe-SSD kaum merklich länger; der Ruhezustand bleibt unberührt.'
         Nutzen      = 'gering'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -PropertyType DWord -Value 0 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'HiberbootEnabled'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'HiberbootEnabled ist der Schalter "Schnellstart aktivieren" aus den Energieoptionen; 0 = aus, 1 = an. Die Hibernate-Datei und der Ruhezustand bleiben unverändert (bewusst kein "powercfg /hibernate off").',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert, wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             $pol = $null
             try { $pol = (Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name 'HiberbootEnabled' -ErrorAction Stop).HiberbootEnabled } catch { }
-            if ($null -ne $pol) { return 'Eine Gruppenrichtlinie legt den Schnellstart fest; die Einstellung hier hätte keine Wirkung.' }
+            if ($null -ne $pol) { return (T 'katalog.schnellstart.gpo') }
         }
         Lesen = {
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'; $name = 'HiberbootEnabled'
@@ -604,7 +500,7 @@
                 if ($k.GetValueNames() -contains $name) { $wert = $k.GetValue($name); $typ = $k.GetValueKind($name).ToString() }
             }
             # Wie in der Prüfung: alles außer 1 gilt als "aus"
-            if ($wert -eq 1) { $text = 'an' } elseif ($null -eq $wert) { $text = 'aus (Wert nicht gesetzt)' } else { $text = 'aus' }
+            if ($wert -eq 1) { $text = (T 'katalog.wert.an') } elseif ($null -eq $wert) { $text = (T 'katalog.wert.ausNichtGesetzt') } else { $text = (T 'katalog.wert.aus') }
             [pscustomobject]@{ Aktiv = ($wert -ne 1); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -615,7 +511,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'; $name = 'HiberbootEnabled'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -638,28 +534,16 @@
         Id          = 'haertung.lsa'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'LSA-Schutz'
-        Titel       = 'LSA-Schutz einschalten (ohne UEFI-Sperre)'
-        Erklaerung  = 'Schützt den Windows-Prozess, der Anmeldedaten verwaltet, vor dem Auslesen durch Schadsoftware. Wirkt erst nach einem Neustart; sehr selten verweigern ältere Anmelde-Zusatzprogramme danach den Dienst. Es wird bewusst die Variante ohne UEFI-Sperre (Wert 2) gesetzt, damit sie sich jederzeit wieder ausschalten lässt.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'mittel'
         Neustart    = $true
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'RunAsPPL' -PropertyType DWord -Value 2 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'RunAsPPL' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'RunAsPPL'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'RunAsPPL steuert, ob die lokale Sicherheitsautorität (lsass.exe) als geschützter Prozess startet. 2 = an ohne UEFI-Sperre (rücknehmbar), 1 = an mit UEFI-Sperre (würde sich nicht per Registry zurücknehmen lassen und wird deshalb nicht verwendet).',
-                'Die Änderung wirkt erst nach einem Neustart.',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert, wenn er vorher nicht existierte (ebenfalls erst nach Neustart wirksam).'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
-            if ([Environment]::OSVersion.Version.Build -lt 22621) { return 'Der rücknehmbare LSA-Schutz (RunAsPPL = 2) braucht Windows 11 22H2 oder neuer.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
+            if ([Environment]::OSVersion.Version.Build -lt 22621) { return (T 'katalog.lsa.version') }
         }
         Lesen = {
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'; $name = 'RunAsPPL'
@@ -669,7 +553,7 @@
                 $k = Get-Item -LiteralPath $pfad -ErrorAction Stop
                 if ($k.GetValueNames() -contains $name) { $wert = $k.GetValue($name); $typ = $k.GetValueKind($name).ToString() }
             }
-            if ($wert -eq 1) { $text = 'an (mit UEFI-Sperre)' } elseif ($wert -eq 2) { $text = 'an' } elseif ($null -eq $wert) { $text = 'aus (Wert nicht gesetzt)' } else { $text = "aus (RunAsPPL = $wert)" }
+            if ($wert -eq 1) { $text = (T 'katalog.lsa.anUefi') } elseif ($wert -eq 2) { $text = (T 'katalog.wert.an') } elseif ($null -eq $wert) { $text = (T 'katalog.wert.ausNichtGesetzt') } else { $text = (T 'katalog.lsa.ausWert' $wert) }
             [pscustomobject]@{ Aktiv = ($wert -eq 1 -or $wert -eq 2); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -680,7 +564,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'; $name = 'RunAsPPL'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -703,27 +587,15 @@
         Id          = 'haertung.treibersperrliste'
         Kategorie   = 'Sicherheit'
         Pruefung    = 'Treiber-Sperrliste und Smart App Control'
-        Titel       = 'Microsoft-Sperrliste für anfällige Treiber einschalten'
-        Erklaerung  = 'Windows lädt dann keine Treiber mehr, die Microsoft als missbrauchbar eingestuft hat. Wirkt nach einem Neustart; sehr alte Treiber von Hardware-Tools (z. B. mancher Übertaktungs- oder Lüfter-Software) können dadurch gesperrt werden.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'mittel'
         Neustart    = $true
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config' -Name 'VulnerableDriverBlocklistEnable' -PropertyType DWord -Value 1 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config' -Name 'VulnerableDriverBlocklistEnable' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'VulnerableDriverBlocklistEnable'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'VulnerableDriverBlocklistEnable schaltet die Microsoft-Sperrliste für anfällige Treiber ein (1) oder aus (0).',
-                'Die Änderung wirkt erst nach einem Neustart.',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert, wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
         }
         Lesen = {
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config'; $name = 'VulnerableDriverBlocklistEnable'
@@ -734,7 +606,7 @@
                 if ($k.GetValueNames() -contains $name) { $wert = $k.GetValue($name); $typ = $k.GetValueKind($name).ToString() }
             }
             # Wie in der Prüfung: nur ein ausdrückliches 0 bedeutet "aus"; ohne Wert gilt der Windows-Standard (an)
-            if ($wert -eq 0) { $text = 'aus' } elseif ($null -eq $wert) { $text = 'an (Windows-Standard)' } else { $text = 'an' }
+            if ($wert -eq 0) { $text = (T 'katalog.wert.aus') } elseif ($null -eq $wert) { $text = (T 'katalog.wert.anStandard') } else { $text = (T 'katalog.wert.an') }
             [pscustomobject]@{ Aktiv = ($wert -ne 0); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -745,7 +617,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config'; $name = 'VulnerableDriverBlocklistEnable'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -772,37 +644,25 @@
         Id          = 'energie.aspm'
         Kategorie   = 'Leistung'
         Pruefung    = 'Weitere Energiesparfunktionen'
-        Titel       = 'PCIe-Energieverwaltung (ASPM) im aktiven Energieplan ausschalten'
-        Erklaerung  = 'Grafikkarte und NVMe-SSD schalten ihre PCIe-Verbindung dann nie in einen Schlafzustand, was bei manchen Systemen Mikroruckler vermeidet. Der Verbrauch steigt minimal; auf einem Laptop im Akkubetrieb kostet es etwas Laufzeit.'
         Nutzen      = 'gering'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "powercfg /setacvalueindex <aktiver Plan> 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0`npowercfg /setdcvalueindex <aktiver Plan> 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0`npowercfg /setactive SCHEME_CURRENT"
-            Rueckgaengig = "powercfg /setacvalueindex <damaliger Plan> 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 <alter AC-Wert>`npowercfg /setdcvalueindex <damaliger Plan> 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 <alter DC-Wert>`npowercfg /setactive SCHEME_CURRENT"
-            Erklaerung   = @(
-                'powercfg ändert Einstellungen der Energiepläne. /setacvalueindex gilt im Netzbetrieb (AC), /setdcvalueindex im Akkubetrieb (DC).',
-                '501a4d13-… ist die Gruppe "PCI Express", ee12f906-… die Einstellung "Verbindungszustand-Energieverwaltung" (ASPM); 0 = aus, 1 = mittel, 2 = maximal sparen.',
-                '/setactive SCHEME_CURRENT wendet den aktuellen Plan neu an, damit die Änderung sofort gilt.',
-                'Rückgängig setzt in genau dem Plan, der damals aktiv war, die alten Werte (AC und DC) zurück.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             $akt = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /getactivescheme) -join ' '
-            if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { return 'Der aktive Energieplan ließ sich nicht ermitteln.' }
+            if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { return (T 'katalog.aspm.planUnbekannt') }
             $out = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /qh $Matches[1] '501a4d13-42af-4429-9fd1-a8218c268e20' 'ee12f906-d277-404b-b6da-e5fa1a576df5') -join "`n"
-            if (@([regex]::Matches($out, '0x([0-9a-fA-F]{8})')).Count -lt 2) { return 'Der aktive Energieplan enthält die PCIe-Einstellung nicht.' }
+            if (@([regex]::Matches($out, '0x([0-9a-fA-F]{8})')).Count -lt 2) { return (T 'katalog.aspm.ohnePcie') }
         }
         Lesen = {
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
             $akt = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /getactivescheme) -join ' '
             if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') {
-                return [pscustomobject]@{ Aktiv = $false; Wert = 'Aktiver Energieplan nicht lesbar'; Zustand = $null }
+                return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.aspm.nichtLesbar'); Zustand = $null }
             }
             $plan = $Matches[1].ToLower()
             $planName = $plan
@@ -810,38 +670,38 @@
             $out = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /qh $plan $teil $einst) -join "`n"
             $hex = @([regex]::Matches($out, '0x([0-9a-fA-F]{8})') | ForEach-Object { [Convert]::ToInt64($_.Groups[1].Value, 16) })
             if ($hex.Count -lt 2) {
-                return [pscustomobject]@{ Aktiv = $false; Wert = "Plan '$planName' enthält die PCIe-Einstellung nicht"; Zustand = $null }
+                return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.aspm.planOhnePcie' $planName); Zustand = $null }
             }
             $ac = [int]$hex[-2]; $dc = [int]$hex[-1]
-            $namen = @{ 0 = 'aus'; 1 = 'mittel'; 2 = 'maximal' }
-            $text = "Plan '{0}': Netz {1}, Akku {2}" -f $planName, $(if ($namen.ContainsKey($ac)) { $namen[$ac] } else { $ac }), $(if ($namen.ContainsKey($dc)) { $namen[$dc] } else { $dc })
+            $namen = @{ 0 = (T 'katalog.wert.aus'); 1 = (T 'katalog.aspm.mittel'); 2 = (T 'katalog.aspm.maximal') }
+            $text = (T 'katalog.aspm.anzeige' $planName $(if ($namen.ContainsKey($ac)) { $namen[$ac] } else { $ac }) $(if ($namen.ContainsKey($dc)) { $namen[$dc] } else { $dc }))
             [pscustomobject]@{ Aktiv = ($ac -eq 0 -and $dc -eq 0); Wert = $text; Zustand = [ordered]@{ Plan = $plan; AC = $ac; DC = $dc } }
         }
         Ausfuehren = {
             param($Variante)
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
             $akt = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /getactivescheme) -join ' '
-            if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { throw 'Der aktive Energieplan ließ sich nicht ermitteln.' }
+            if ($akt -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { throw (T 'katalog.aspm.planUnbekannt') }
             $plan = $Matches[1].ToLower()
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setacvalueindex $plan $teil $einst 0 | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "powercfg /setacvalueindex endete mit Code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setacvalueindex' $LASTEXITCODE) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setdcvalueindex $plan $teil $einst 0 | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "powercfg /setdcvalueindex endete mit Code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setdcvalueindex' $LASTEXITCODE) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setactive SCHEME_CURRENT | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "powercfg /setactive endete mit Code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setactive' $LASTEXITCODE) }
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
             $plan = ([string]$Vorher.Plan).ToLower()
-            if ($plan -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw "Ungültiger Energieplan '$plan' im Vorher-Zustand." }
+            if ($plan -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw (T 'katalog.aspm.planUngueltig' $plan) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setacvalueindex $plan $teil $einst ([int]$Vorher.AC) | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "powercfg /setacvalueindex endete mit Code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setacvalueindex' $LASTEXITCODE) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setdcvalueindex $plan $teil $einst ([int]$Vorher.DC) | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "powercfg /setdcvalueindex endete mit Code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setdcvalueindex' $LASTEXITCODE) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setactive SCHEME_CURRENT | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "powercfg /setactive endete mit Code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setactive' $LASTEXITCODE) }
         }
     },
 
@@ -853,29 +713,18 @@
         Id          = 'gaming.spielmodus'
         Kategorie   = 'Gaming'
         Pruefung    = 'Spielmodus'
-        Titel       = 'Windows-Spielmodus einschalten'
-        Erklaerung  = 'Windows priorisiert dann das laufende Spiel und startet während des Spielens keine Update-Neustarts oder Treiberinstallationen. Der Effekt auf die FPS ist klein; bei Problemen in einzelnen Spielen lässt er sich wieder ausschalten.'
         Nutzen      = 'gering'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'Benutzer'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKCU:\Software\Microsoft\GameBar' -Name 'AutoGameModeEnabled' -PropertyType DWord -Value 1 -Force   # legt den Schlüssel vorher an, falls er fehlt"
-            Rueckgaengig = "New-ItemProperty -Path 'HKCU:\Software\Microsoft\GameBar' -Name 'AutoGameModeEnabled' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'AutoGameModeEnabled'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'HKCU gilt nur für den angemeldeten Benutzer. AutoGameModeEnabled ist der Schalter "Spielmodus" (1 = an, 0 = aus).',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert (und einen selbst angelegten, leeren Schlüssel), wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             try {
                 $besitzer = @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction Stop | ForEach-Object { (Invoke-CimMethod -InputObject $_ -MethodName GetOwner -ErrorAction Stop).User })
-            } catch { return 'Der angemeldete Benutzer ließ sich nicht ermitteln: ' + $_.Exception.Message }
-            if (-not $besitzer) { return 'Es läuft kein Explorer; ein angemeldeter Benutzer ist nicht erkennbar.' }
-            if ($besitzer -notcontains $env:USERNAME) { return "Das Programm läuft als '$env:USERNAME', angemeldet ist aber '$((($besitzer | Select-Object -Unique) -join ', '))'. Die Einstellung würde den falschen Benutzer treffen." }
+            } catch { return (T 'katalog.benutzer.nichtErmittelt' $_.Exception.Message) }
+            if (-not $besitzer) { return (T 'katalog.benutzer.keinExplorer') }
+            if ($besitzer -notcontains $env:USERNAME) { return (T 'katalog.benutzer.falsch' $env:USERNAME (($besitzer | Select-Object -Unique) -join ', ')) }
         }
         Lesen = {
             $pfad = 'HKCU:\Software\Microsoft\GameBar'; $name = 'AutoGameModeEnabled'
@@ -886,7 +735,7 @@
                 if ($k.GetValueNames() -contains $name) { $wert = $k.GetValue($name); $typ = $k.GetValueKind($name).ToString() }
             }
             # Wie in der Prüfung: nur ein ausdrückliches 0 bedeutet "aus"; ohne Wert gilt der Windows-Standard (an)
-            if ($wert -eq 0) { $text = 'aus' } elseif ($null -eq $wert) { $text = 'an (Windows-Standard)' } else { $text = 'an' }
+            if ($wert -eq 0) { $text = (T 'katalog.wert.aus') } elseif ($null -eq $wert) { $text = (T 'katalog.wert.anStandard') } else { $text = (T 'katalog.wert.an') }
             [pscustomobject]@{ Aktiv = ($wert -ne 0); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -897,7 +746,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKCU:\Software\Microsoft\GameBar'; $name = 'AutoGameModeEnabled'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -920,31 +769,19 @@
         Id          = 'gaming.hags'
         Kategorie   = 'Gaming'
         Pruefung    = 'Hardwarebeschleunigte GPU-Planung (HAGS)'
-        Titel       = 'Hardwarebeschleunigte GPU-Planung (HAGS) einschalten'
-        Erklaerung  = 'Die Grafikkarte verwaltet ihren Speicher dann selbst, was die Latenz senken kann und für DLSS Frame Generation nötig ist. Wirkt erst nach einem Neustart; bei Rucklern in einzelnen Spielen lässt es sich wieder ausschalten.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'mittel'
         Neustart    = $true
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name 'HwSchMode' -PropertyType DWord -Value 2 -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name 'HwSchMode' -PropertyType DWord -Value <vorher> -Force   # existierte der Wert vorher nicht: Remove-ItemProperty -Path '…' -Name 'HwSchMode'"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force).',
-                'HwSchMode ist der Schalter hinter "Hardwarebeschleunigte GPU-Planung" (Einstellungen > System > Anzeige > Grafik); 2 = an, 1 = aus.',
-                'Die Änderung wirkt erst nach einem Neustart.',
-                'Rückgängig stellt den alten Wert wieder her bzw. löscht den Wert, wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
             # Nur anbieten, wenn Windows die Einstellung für diese Grafikkarte selbst angelegt hat (Treiber unterstützt HAGS)
             $h = $null
             try { $h = (Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name 'HwSchMode' -ErrorAction Stop).HwSchMode } catch { }
-            if ($h -ne 1 -and $h -ne 2) { return 'Windows hat für diese Grafikkarte keine HAGS-Einstellung angelegt; bitte unter Einstellungen > System > Anzeige > Grafik prüfen, ob sie angeboten wird.' }
+            if ($h -ne 1 -and $h -ne 2) { return (T 'katalog.hags.keineEinstellung') }
         }
         Lesen = {
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers'; $name = 'HwSchMode'
@@ -954,7 +791,7 @@
                 $k = Get-Item -LiteralPath $pfad -ErrorAction Stop
                 if ($k.GetValueNames() -contains $name) { $wert = $k.GetValue($name); $typ = $k.GetValueKind($name).ToString() }
             }
-            if ($wert -eq 2) { $text = 'an' } elseif ($wert -eq 1) { $text = 'aus' } elseif ($null -eq $wert) { $text = 'Windows-Standard (nicht gesetzt)' } else { $text = "unbekannt (HwSchMode = $wert)" }
+            if ($wert -eq 2) { $text = (T 'katalog.wert.an') } elseif ($wert -eq 1) { $text = (T 'katalog.wert.aus') } elseif ($null -eq $wert) { $text = (T 'katalog.hags.standard') } else { $text = (T 'katalog.hags.unbekannt' $wert) }
             [pscustomobject]@{ Aktiv = ($wert -eq 2); Wert = $text; Zustand = [ordered]@{ Wert = $wert; Typ = $typ; SchluesselVorhanden = $schluessel } }
         }
         Ausfuehren = {
@@ -965,7 +802,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers'; $name = 'HwSchMode'
             if ($null -eq $Vorher.Wert) {
                 if (Test-Path -LiteralPath $pfad) {
@@ -988,30 +825,18 @@
         Id          = 'gaming.gamedvr'
         Kategorie   = 'Gaming'
         Pruefung    = 'Hintergrundaufzeichnung (Game DVR)'
-        Titel       = 'Hintergrundaufnahme (Game DVR) ausschalten'
-        Erklaerung  = 'Windows schneidet dann nicht mehr ständig die letzten Spielminuten mit, was FPS und Grafikspeicher spart. Aufnahmen per Xbox Game Bar (z. B. "Letzte 30 Sekunden speichern") gehen danach nicht mehr.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'Benutzer'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKCU:\System\GameConfigStore' -Name 'GameDVR_Enabled' -PropertyType DWord -Value 0 -Force`nNew-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' -Name 'AppCaptureEnabled' -PropertyType DWord -Value 0 -Force`nNew-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' -Name 'HistoricalCaptureEnabled' -PropertyType DWord -Value 0 -Force   # fehlende Schlüssel werden vorher angelegt"
-            Rueckgaengig = "New-ItemProperty -Path <Schlüssel> -Name <Wert> -PropertyType DWord -Value <vorher> -Force   # für alle drei Werte; existierte ein Wert vorher nicht: Remove-ItemProperty -Path <Schlüssel> -Name <Wert>"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force). HKCU gilt nur für den angemeldeten Benutzer.',
-                'GameDVR_Enabled (System\GameConfigStore) und AppCaptureEnabled sind die Hauptschalter für die Spielaufnahme der Game Bar; 0 = aus.',
-                'HistoricalCaptureEnabled ist der Schalter "Aufzeichnen, was passiert ist" (Hintergrundaufnahme); 0 = aus. Genau diesen Wert wertet die Prüfung aus.',
-                'Rückgängig stellt jeden der drei Werte einzeln wieder her bzw. löscht ihn, wenn er vorher nicht existierte.'
-            )
-        }
         Voraussetzung = {
             try {
                 $besitzer = @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction Stop | ForEach-Object { (Invoke-CimMethod -InputObject $_ -MethodName GetOwner -ErrorAction Stop).User })
-            } catch { return 'Der angemeldete Benutzer ließ sich nicht ermitteln: ' + $_.Exception.Message }
-            if (-not $besitzer) { return 'Es läuft kein Explorer; ein angemeldeter Benutzer ist nicht erkennbar.' }
-            if ($besitzer -notcontains $env:USERNAME) { return "Das Programm läuft als '$env:USERNAME', angemeldet ist aber '$((($besitzer | Select-Object -Unique) -join ', '))'. Die Einstellung würde den falschen Benutzer treffen." }
+            } catch { return (T 'katalog.benutzer.nichtErmittelt' $_.Exception.Message) }
+            if (-not $besitzer) { return (T 'katalog.benutzer.keinExplorer') }
+            if ($besitzer -notcontains $env:USERNAME) { return (T 'katalog.benutzer.falsch' $env:USERNAME (($besitzer | Select-Object -Unique) -join ', ')) }
         }
         Lesen = {
             $ziele = @(
@@ -1031,7 +856,7 @@
             $alleAus = $true
             foreach ($w in $werte) { if ($w.Wert -ne 0) { $alleAus = $false } }
             $an = @($werte | Where-Object { $_.Wert -eq 1 })
-            if ($alleAus) { $text = 'aus' } elseif ($an.Count -gt 0) { $text = 'an (' + (($an | ForEach-Object { $_.Name }) -join ', ') + ')' } else { $text = 'teilweise nicht gesetzt' }
+            if ($alleAus) { $text = (T 'katalog.wert.aus') } elseif ($an.Count -gt 0) { $text = (T 'katalog.gamedvr.an' (($an | ForEach-Object { $_.Name }) -join ', ')) } else { $text = (T 'katalog.gamedvr.teilweise') }
             [pscustomobject]@{ Aktiv = $alleAus; Wert = $text; Zustand = [ordered]@{ Werte = $werte } }
         }
         Ausfuehren = {
@@ -1048,7 +873,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             foreach ($v in @($Vorher.Werte)) {
                 $pfad = [string]$v.Pfad; $name = [string]$v.Name
                 if ($null -eq $v.Wert) {
@@ -1073,30 +898,18 @@
         Id          = 'gaming.maus'
         Kategorie   = 'Gaming'
         Pruefung    = 'Mausbeschleunigung'
-        Titel       = 'Mausbeschleunigung ausschalten'
-        Erklaerung  = 'Die Maus bewegt den Zeiger dann immer proportional zur Handbewegung ("Zeigerpräzision verbessern" aus), was vor allem in Shootern ein gleichmäßigeres Zielen ergibt. Die Umstellung braucht ein Ab- und Anmelden und fühlt sich anfangs ungewohnt an.'
         Nutzen      = 'mittel'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'Benutzer'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "New-ItemProperty -Path 'HKCU:\Control Panel\Mouse' -Name 'MouseSpeed' -PropertyType String -Value '0' -Force`nNew-ItemProperty -Path 'HKCU:\Control Panel\Mouse' -Name 'MouseThreshold1' -PropertyType String -Value '0' -Force`nNew-ItemProperty -Path 'HKCU:\Control Panel\Mouse' -Name 'MouseThreshold2' -PropertyType String -Value '0' -Force"
-            Rueckgaengig = "New-ItemProperty -Path 'HKCU:\Control Panel\Mouse' -Name <Wert> -PropertyType String -Value '<vorher>' -Force   # für alle drei Werte; existierte ein Wert vorher nicht: Remove-ItemProperty -Path '…' -Name <Wert>"
-            Erklaerung   = @(
-                'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force). HKCU gilt nur für den angemeldeten Benutzer.',
-                'MouseSpeed, MouseThreshold1 und MouseThreshold2 sind die drei Werte hinter "Zeigerpräzision verbessern"; alle drei auf "0" bedeutet: keine Beschleunigung.',
-                '-PropertyType String: Diese Werte sind Text (REG_SZ), keine Zahlen.',
-                'Windows liest die Werte erst nach dem nächsten Ab-/Anmelden. Rückgängig stellt jeden der drei Werte einzeln wieder her.'
-            )
-        }
         Voraussetzung = {
             try {
                 $besitzer = @(Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" -ErrorAction Stop | ForEach-Object { (Invoke-CimMethod -InputObject $_ -MethodName GetOwner -ErrorAction Stop).User })
-            } catch { return 'Der angemeldete Benutzer ließ sich nicht ermitteln: ' + $_.Exception.Message }
-            if (-not $besitzer) { return 'Es läuft kein Explorer; ein angemeldeter Benutzer ist nicht erkennbar.' }
-            if ($besitzer -notcontains $env:USERNAME) { return "Das Programm läuft als '$env:USERNAME', angemeldet ist aber '$((($besitzer | Select-Object -Unique) -join ', '))'. Die Einstellung würde den falschen Benutzer treffen." }
+            } catch { return (T 'katalog.benutzer.nichtErmittelt' $_.Exception.Message) }
+            if (-not $besitzer) { return (T 'katalog.benutzer.keinExplorer') }
+            if ($besitzer -notcontains $env:USERNAME) { return (T 'katalog.benutzer.falsch' $env:USERNAME (($besitzer | Select-Object -Unique) -join ', ')) }
         }
         Lesen = {
             $pfad = 'HKCU:\Control Panel\Mouse'
@@ -1113,7 +926,7 @@
             $alleNull = $true
             foreach ($w in $werte) { if ([string]$w.Wert -ne '0') { $alleNull = $false } }
             $speed = $werte[0].Wert
-            if ($alleNull) { $text = 'Zeigerbeschleunigung aus' } elseif ([string]$speed -eq '0') { $text = 'Zeigerbeschleunigung aus (Schwellenwerte noch nicht 0)' } else { $text = "Zeigerbeschleunigung an (MouseSpeed = $speed)" }
+            if ($alleNull) { $text = (T 'katalog.maus.aus') } elseif ([string]$speed -eq '0') { $text = (T 'katalog.maus.ausSchwellen') } else { $text = (T 'katalog.maus.an' $speed) }
             [pscustomobject]@{ Aktiv = $alleNull; Wert = $text; Zustand = [ordered]@{ Werte = $werte } }
         }
         Ausfuehren = {
@@ -1126,7 +939,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             foreach ($v in @($Vorher.Werte)) {
                 $pfad = [string]$v.Pfad; $name = [string]$v.Name
                 if ($null -eq $v.Wert) {
@@ -1151,35 +964,22 @@
         Id          = 'netz.eee'
         Kategorie   = 'Gaming'
         Pruefung    = 'Netzwerkkarte: Energiesparfunktionen'
-        Titel       = 'Energiesparfunktionen der LAN-Karte ausschalten'
-        Erklaerung  = 'Schaltet Energy Efficient Ethernet, Green Ethernet und ähnliche Schlafmodi der verbundenen Kabel-Netzwerkkarte aus, die in Online-Spielen kurze Latenzspitzen verursachen können. Dabei startet die Netzwerkkarte kurz neu, die Verbindung ist für einige Sekunden weg.'
         Nutzen      = 'gering'
         Aufwand     = 'gering'
         Risiko      = 'gering'
         Neustart    = $false
         Bereich     = 'System'
         Varianten   = $null
-        Befehle     = @{
-            Ausfuehren   = "Set-NetAdapterAdvancedProperty -Name '<Adapter>' -RegistryKeyword '<Schlüsselwort>' -RegistryValue '0' -NoRestart   # für jede aktive Energiesparfunktion (*EEE, EEELinkAdvertisement, *GreenEthernet, EnableGreenEthernet, AdvancedEEE, ULPMode, PowerSavingMode)`nRestart-NetAdapter -Name '<Adapter>'"
-            Rueckgaengig = "Set-NetAdapterAdvancedProperty -Name '<Adapter>' -RegistryKeyword '<Schlüsselwort>' -RegistryValue '<vorher>' -NoRestart   # für jede geänderte Funktion`nRestart-NetAdapter -Name '<Adapter>'"
-            Erklaerung   = @(
-                'Set-NetAdapterAdvancedProperty ändert eine erweiterte Treibereinstellung der Netzwerkkarte, hier über ihr Registry-Schlüsselwort (-RegistryKeyword).',
-                'Die Schlüsselwörter stehen für Energy Efficient Ethernet, Green Ethernet, Advanced EEE, Ultra Low Power Mode und Power Saving Mode; 0 = aus. Es werden nur Funktionen geändert, die vorhanden und noch nicht aus sind, und nur bei verbundenen, kabelgebundenen Adaptern.',
-                '-NoRestart verschiebt den Neustart des Adapters ans Ende, damit er nur einmal pro Adapter erfolgt.',
-                'Restart-NetAdapter startet die Netzwerkkarte neu, damit die Einstellung wirkt; die Verbindung ist kurz unterbrochen.',
-                'Rückgängig setzt jede geänderte Funktion auf ihren alten Wert zurück.'
-            )
-        }
         Voraussetzung = {
             $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-            if (-not $admin) { return 'Administratorrechte fehlen.' }
-            if (-not (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue)) { return 'Die Netzwerk-Cmdlets (NetAdapter) sind nicht verfügbar.' }
+            if (-not $admin) { return (T 'katalog.voraus.admin') }
+            if (-not (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue)) { return (T 'katalog.eee.keineCmdlets') }
             $ad = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and [string]$_.PhysicalMediaType -match '802\.3' })
-            if (-not $ad) { return 'Es ist kein kabelgebundener Netzwerkadapter verbunden.' }
+            if (-not $ad) { return (T 'katalog.eee.keinAdapter') }
         }
         Lesen = {
             if (-not (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue)) {
-                return [pscustomobject]@{ Aktiv = $false; Wert = 'Netzwerk-Cmdlets nicht verfügbar'; Zustand = $null }
+                return [pscustomobject]@{ Aktiv = $false; Wert = (T 'katalog.eee.cmdletsLesen'); Zustand = $null }
             }
             $schluessel = @('*EEE', 'EEELinkAdvertisement', '*GreenEthernet', 'EnableGreenEthernet', 'AdvancedEEE', 'ULPMode', 'PowerSavingMode')
             $ad = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and [string]$_.PhysicalMediaType -match '802\.3' } | Sort-Object Name)
@@ -1189,10 +989,10 @@
                     }
                 })
             $an = @($eintraege | Where-Object { $_.Wert -ne '0' })
-            if ($ad.Count -eq 0) { $text = 'Kein kabelgebundener Adapter verbunden' }
-            elseif ($eintraege.Count -eq 0) { $text = (($ad | ForEach-Object { $_.Name }) -join ', ') + ': keine Energiesparfunktionen vorhanden' }
-            elseif ($an.Count -eq 0) { $text = 'alle aus (' + (($eintraege | ForEach-Object { "$($_.Adapter): $($_.Schluessel)" }) -join ', ') + ')' }
-            else { $text = 'aktiv: ' + (($an | ForEach-Object { "$($_.Adapter): $($_.Schluessel) = $($_.Wert)" }) -join ', ') }
+            if ($ad.Count -eq 0) { $text = (T 'katalog.eee.keinAdapterLesen') }
+            elseif ($eintraege.Count -eq 0) { $text = (T 'katalog.eee.keine' (($ad | ForEach-Object { $_.Name }) -join ', ')) }
+            elseif ($an.Count -eq 0) { $text = (T 'katalog.eee.alleAus' (($eintraege | ForEach-Object { "$($_.Adapter): $($_.Schluessel)" }) -join ', ')) }
+            else { $text = (T 'katalog.eee.aktiv' (($an | ForEach-Object { "$($_.Adapter): $($_.Schluessel) = $($_.Wert)" }) -join ', ')) }
             [pscustomobject]@{ Aktiv = ($an.Count -eq 0); Wert = $text; Zustand = [ordered]@{ Eintraege = $eintraege } }
         }
         Ausfuehren = {
@@ -1220,7 +1020,7 @@
         }
         Rueckgaengig = {
             param($Vorher)
-            if ($null -eq $Vorher) { throw 'Kein Vorher-Zustand vorhanden.' }
+            if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $geaendert = New-Object System.Collections.ArrayList
             foreach ($e in @($Vorher.Eintraege)) {
                 $aktuell = Get-NetAdapterAdvancedProperty -Name ([string]$e.Adapter) -RegistryKeyword ([string]$e.Schluessel) -ErrorAction Stop

@@ -8,6 +8,8 @@
 # Test-MorpheusSysKopf prueft, ob eine CSV-Kopfzeile vorhanden ist (Werkzeug lieferte CSV oder nicht).
 # Beschreibbar: Datei mit voller Schreibmaske, Elternordner nur mit Austausch-/Loesch-Rechten.
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 $script:MorpheusSysAwMaxFeld = 2048
 $script:MorpheusSysAwMaxEintraege = 5000
 $script:MorpheusSysAwMaxNamen = 5
@@ -485,22 +487,22 @@ function Get-MorpheusAutorunsSignaturBefund {
         $betroffen.Add((MorpheusSysAwErgaenzen $e @{ Erhoeht = $erh }))
     }
     if ($betroffen.Count -eq 0) {
-        return (MorpheusSysAwBefund 'OK' 'Alle aktiven Autostarts sind signiert.' '' @())
+        return (MorpheusSysAwBefund 'OK' (T 'server.aw.alleSigniert') '' @())
     }
     $g = MorpheusSysAwGruppieren $betroffen
     $teile = @()
-    if ($g.Hoch.Count -gt 0) { $teile += (MorpheusSysAwGruppenText 'Systemnahe Autostarts ohne verifizierte Signatur' $g.Hoch) }
-    if ($g.Dienst.Count -gt 0) { $teile += (MorpheusSysAwGruppenText 'Dienste und Treiber (bereits eigene Prüfungen)' $g.Dienst) }
+    if ($g.Hoch.Count -gt 0) { $teile += (MorpheusSysAwGruppenText (T 'server.aw.systemnahOhneSignatur') $g.Hoch) }
+    if ($g.Dienst.Count -gt 0) { $teile += (MorpheusSysAwGruppenText (T 'server.aw.dienstTreiber') $g.Dienst) }
     if ($g.User.Count -gt 0) {
-        $kopf = 'Autostarts ohne Signatur'
-        if ($teile.Count -gt 0) { $kopf = 'weitere Autostarts' }
+        $kopf = (T 'server.aw.ohneSignatur')
+        if ($teile.Count -gt 0) { $kopf = (T 'server.aw.weitere') }
         $teile += (MorpheusSysAwGruppenText $kopf $g.User)
     }
     $wert = $teile -join '; '
     if ($g.Hoch.Count -gt 0) {
-        return (MorpheusSysAwBefund 'WARN' $wert 'Herkunft der Einträge prüfen (Tabelle). Unsignierte systemnahe Autostarts sind selten und typisch für alte Software oder Schadsoftware.' $betroffen.ToArray())
+        return (MorpheusSysAwBefund 'WARN' $wert (T 'server.aw.herkunftPruefen') $betroffen.ToArray())
     }
-    MorpheusSysAwBefund 'INFO' $wert 'Unsignierte Programme im Benutzerbereich sind häufig (z. B. kleine Hilfsprogramme). Unsignierte Dienste und Treiber bewertet der Scan in eigenen Prüfungen. Herkunft in der Tabelle prüfen und Unbekanntes entfernen.' $betroffen.ToArray()
+    MorpheusSysAwBefund 'INFO' $wert (T 'server.aw.userHaeufig') $betroffen.ToArray()
 }
 
 <#
@@ -531,22 +533,22 @@ function Get-MorpheusAutorunsPfadBefund {
         $betroffen.Add((MorpheusSysAwErgaenzen $e @{ Beschreibbar = $true; Erhoeht = $erh }))
     }
     if ($betroffen.Count -eq 0) {
-        return (MorpheusSysAwBefund 'OK' 'Keine aktiven Autostarts in für Benutzer beschreibbaren Ordnern gefunden.' '' @())
+        return (MorpheusSysAwBefund 'OK' (T 'server.aw.keineBeschreibbaren') '' @())
     }
     $g = MorpheusSysAwGruppieren $betroffen
     $teile = @()
-    if ($g.Hoch.Count -gt 0) { $teile += (MorpheusSysAwGruppenText 'Systemnahe Autostarts und Aufgaben mit erhöhten Rechten' $g.Hoch) }
-    if ($g.Dienst.Count -gt 0) { $teile += (MorpheusSysAwGruppenText 'Dienste und Treiber (bereits eigene Prüfungen)' $g.Dienst) }
+    if ($g.Hoch.Count -gt 0) { $teile += (MorpheusSysAwGruppenText (T 'server.aw.systemnahErhoeht') $g.Hoch) }
+    if ($g.Dienst.Count -gt 0) { $teile += (MorpheusSysAwGruppenText (T 'server.aw.dienstTreiber') $g.Dienst) }
     if ($g.User.Count -gt 0) {
-        $kopf = 'Autostarts in beschreibbaren Ordnern'
-        if ($teile.Count -gt 0) { $kopf = 'weitere Autostarts' }
+        $kopf = (T 'server.aw.inBeschreibbaren')
+        if ($teile.Count -gt 0) { $kopf = (T 'server.aw.weitere') }
         $teile += (MorpheusSysAwGruppenText $kopf $g.User)
     }
     $wert = $teile -join '; '
     if ($g.Hoch.Count -gt 0) {
-        return (MorpheusSysAwBefund 'WARN' $wert 'Programmordner prüfen: Systemnahe Autostarts und Aufgaben, die als SYSTEM laufen, sollten nur aus Ordnern starten, die nur Administratoren ändern dürfen (z. B. C:\Program Files). Unbekannte Einträge mit Autoruns (Werkzeuge) genauer ansehen.' $betroffen.ToArray())
+        return (MorpheusSysAwBefund 'WARN' $wert (T 'server.aw.programmordner') $betroffen.ToArray())
     }
-    MorpheusSysAwBefund 'INFO' $wert 'Programme in AppData oder im Benutzerordner sind üblich und geben keine erhöhten Rechte. Dienste und Treiber bewertet der Scan in eigenen Prüfungen. Nur bei unbekannten Namen genauer hinsehen.' $betroffen.ToArray()
+    MorpheusSysAwBefund 'INFO' $wert (T 'server.aw.appdataUeblich') $betroffen.ToArray()
 }
 
 <#
@@ -566,12 +568,12 @@ function Get-MorpheusSystemdateienBefund {
         }
     }
     if ($betroffen.Count -eq 0) {
-        return (MorpheusSysAwBefund 'OK' 'Keine unsignierten Dateien in System32 und drivers gefunden.' '' @())
+        return (MorpheusSysAwBefund 'OK' (T 'server.aw.keineUnsignierten') '' @())
     }
     $namen = MorpheusSysAwNamenListe @($betroffen | ForEach-Object { ([string]$_.Pfad -split '[\\/]')[-1] })
-    $wert = ('{0} unsignierte Dateien: {1}' -f $betroffen.Count, $namen)
-    if ($betroffen.Count -eq 1) { $wert = ('1 unsignierte Datei: {0}' -f $namen) }
-    MorpheusSysAwBefund 'WARN' $wert 'Dateien prüfen (Tabelle). Unsignierte Dateien in System32 stammen meist von alter Treiber- oder Drucker-Software; Unbekanntes mit Defender scannen.' $betroffen.ToArray()
+    $wert = (T 'server.aw.unsignierteMehrere' $betroffen.Count $namen)
+    if ($betroffen.Count -eq 1) { $wert = (T 'server.aw.unsignierteEine' $namen) }
+    MorpheusSysAwBefund 'WARN' $wert (T 'server.aw.dateienPruefen') $betroffen.ToArray()
 }
 
 #endregion

@@ -24,6 +24,8 @@
     festen Zielnamen. Entfernen löscht zuerst die EXEs und bricht ab, wenn eine in Benutzung ist.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 # Abhängigkeiten aus dem gleichen Ordner laden, falls ihre Funktionen fehlen
 if (-not (Get-Command -Name Test-MorpheusSecurePath -ErrorAction SilentlyContinue)) {
     $__sysInstall = Join-Path $PSScriptRoot 'Install.ps1'
@@ -52,7 +54,7 @@ if (-not $script:MorpheusSysImpl) {
         Download   = {
             param($Url, $Ziel, $MaxBytes)
             if (-not ([string]$Url).StartsWith('https://download.sysinternals.com/files/', [StringComparison]::Ordinal)) {
-                throw "Der Download von '$Url' ist nicht erlaubt; erlaubt ist nur https://download.sysinternals.com/files/."
+                throw (T 'server.sys.downloadNichtErlaubt' $Url)
             }
             try { [Net.ServicePointManager]::SecurityProtocol = ([Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12) } catch { }
             $req = [Net.HttpWebRequest]::Create([string]$Url)
@@ -63,9 +65,9 @@ if (-not $script:MorpheusSysImpl) {
             $resp = $null
             try {
                 try { $resp = $req.GetResponse() }
-                catch [Net.WebException] { throw ('Der Download ist fehlgeschlagen: ' + $_.Exception.Message) }
-                if ([int]$resp.StatusCode -ne 200) { throw ('Der Server antwortete mit Status {0} statt 200 (Weiterleitungen sind nicht erlaubt).' -f [int]$resp.StatusCode) }
-                if (($resp.ContentLength -ge 0) -and ($resp.ContentLength -gt $MaxBytes)) { throw ('Die Datei ist mit {0} Bytes größer als erlaubt ({1}).' -f $resp.ContentLength, $MaxBytes) }
+                catch [Net.WebException] { throw (T 'server.sys.downloadFehler' $_.Exception.Message) }
+                if ([int]$resp.StatusCode -ne 200) { throw (T 'server.sys.serverStatus' ([int]$resp.StatusCode)) }
+                if (($resp.ContentLength -ge 0) -and ($resp.ContentLength -gt $MaxBytes)) { throw (T 'server.sys.dateiZuGross' $resp.ContentLength $MaxBytes) }
                 $in = $resp.GetResponseStream()
                 $out = New-Object IO.FileStream($Ziel, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
                 try {
@@ -73,7 +75,7 @@ if (-not $script:MorpheusSysImpl) {
                     [long]$sum = 0
                     while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
                         $sum += $n
-                        if ($sum -gt $MaxBytes) { throw "Der Download überschreitet die erlaubte Größe von $MaxBytes Bytes und wurde abgebrochen." }
+                        if ($sum -gt $MaxBytes) { throw (T 'server.sys.downloadZuGross' $MaxBytes) }
                         $out.Write($buf, 0, $n)
                     }
                 } finally { $out.Dispose(); $in.Dispose() }
@@ -149,7 +151,7 @@ function MorpheusSysArgumente {
     if ($Auftrag -ceq 'treiber') {
         return [ordered]@{ Name = 'sigcheck'; Argumente = [string[]]@('-accepteula', '-nobanner', '-c', '-u', '-e', '-r', (Join-Path (Join-Path $sys 'System32') 'drivers')) }
     }
-    throw "Unbekannter Sysinternals-Auftrag '$Auftrag'. Erlaubt sind 'autostarts', 'system32' und 'treiber'."
+    throw (T 'server.sys.auftragUnbekannt' $Auftrag)
 }
 
 # Argumentliste -> Befehlszeile (Windows-Regeln für CommandLineToArgvW)
@@ -182,9 +184,9 @@ function MorpheusSysOeffnen {
 # Grund, warum der tools-Ordner nicht benutzt werden darf, sonst $null
 function MorpheusSysOrdnerGrund {
     param([string]$ToolsDir)
-    if (MorpheusSysIstVerknuepfung $ToolsDir) { return "Der Ordner $ToolsDir ist eine Verknüpfung (Junction/Symlink)." }
+    if (MorpheusSysIstVerknuepfung $ToolsDir) { return (T 'server.sys.ordnerVerknuepfung' $ToolsDir) }
     $s = & $script:MorpheusSysImpl.SicherPfad $ToolsDir
-    if (-not $s.Sicher) { return ('Der Ordner ist nicht nur für Administratoren beschreibbar: ' + (@($s.Gruende) -join ' | ')) }
+    if (-not $s.Sicher) { return (T 'server.sys.ordnerNichtNurAdmin' (@($s.Gruende) -join ' | ')) }
     $null
 }
 
@@ -192,16 +194,16 @@ function MorpheusSysOrdnerGrund {
 function MorpheusSysLeseJson {
     param([string]$ToolsDir)
     $p = Join-Path $ToolsDir 'werkzeuge.json'
-    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return @{ Daten = $null; Grund = 'Die Datei werkzeuge.json fehlt; die Werkzeuge müssen neu heruntergeladen werden.' } }
-    if (MorpheusSysIstVerknuepfung $p) { return @{ Daten = $null; Grund = 'Die Datei werkzeuge.json ist eine Verknüpfung.' } }
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return @{ Daten = $null; Grund = (T 'server.sys.jsonFehlt') } }
+    if (MorpheusSysIstVerknuepfung $p) { return @{ Daten = $null; Grund = (T 'server.sys.jsonVerknuepfung') } }
     try {
         $s = & $script:MorpheusSysImpl.SicherPfad $p
-        if (-not $s.Sicher) { return @{ Daten = $null; Grund = ('Die Datei werkzeuge.json ist nicht nur für Administratoren beschreibbar: ' + (@($s.Gruende) -join ' | ')) } }
+        if (-not $s.Sicher) { return @{ Daten = $null; Grund = (T 'server.sys.jsonNichtNurAdmin' (@($s.Gruende) -join ' | ')) } }
         $d = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8) | ConvertFrom-Json -ErrorAction Stop
-        if (($null -eq $d) -or ($null -eq $d.werkzeuge)) { return @{ Daten = $null; Grund = 'Die Datei werkzeuge.json hat kein gültiges Format.' } }
+        if (($null -eq $d) -or ($null -eq $d.werkzeuge)) { return @{ Daten = $null; Grund = (T 'server.sys.jsonFormat') } }
         @{ Daten = $d; Grund = $null }
     } catch {
-        @{ Daten = $null; Grund = ('Die Datei werkzeuge.json ist nicht lesbar: ' + $_.Exception.Message) }
+        @{ Daten = $null; Grund = (T 'server.sys.jsonNichtLesbar' $_.Exception.Message) }
     }
 }
 
@@ -218,35 +220,35 @@ function MorpheusSysPruefen {
     $datei = Split-Path -Leaf $Pfad
     $r = [ordered]@{ ok = $false; grund = $null; signierer = $null; sha256 = $null }
     try {
-        if (MorpheusSysIstVerknuepfung $Pfad) { $r.grund = "Die Datei $datei ist eine Verknüpfung (Junction/Symlink)."; return $r }
+        if (MorpheusSysIstVerknuepfung $Pfad) { $r.grund = (T 'server.sys.dateiVerknuepfung' $datei); return $r }
         $og = MorpheusSysOrdnerGrund $ToolsDir
         if ($og) { $r.grund = $og; return $r }
         $s = & $script:MorpheusSysImpl.SicherPfad $Pfad
-        if (-not $s.Sicher) { $r.grund = "Die Datei $datei ist nicht nur für Administratoren beschreibbar: " + (@($s.Gruende) -join ' | '); return $r }
+        if (-not $s.Sicher) { $r.grund = (T 'server.sys.dateiNichtNurAdmin' $datei (@($s.Gruende) -join ' | ')); return $r }
 
         $hash = MorpheusSysHash $Stream
         $r.sha256 = $hash
-        if ($SollSha256 -and ($hash -ine $SollSha256)) { $r.grund = 'Die Datei wurde seit dem Download verändert (SHA256 passt nicht).'; return $r }
+        if ($SollSha256 -and ($hash -ine $SollSha256)) { $r.grund = (T 'server.sys.shaPasstNicht'); return $r }
 
         $sig = & $script:MorpheusSysImpl.Signatur $Pfad
         $status = if ($null -ne $sig) { [string]$sig.Status } else { 'Unbekannt' }
-        if ($status -cne 'Valid') { $r.grund = "Die Signatur ist ungültig (Status: $status)."; return $r }
+        if ($status -cne 'Valid') { $r.grund = (T 'server.sys.signaturUngueltig' $status); return $r }
         $cert = $sig.SignerCertificate
         $subject = if ($null -ne $cert) { [string]$cert.Subject } else { '' }
         if ($subject -cnotmatch '(?:^|,\s*)O="?Microsoft Corporation"?(?:,|$)') {
-            $r.grund = "Die Datei ist nicht von Microsoft Corporation signiert (Signierer: $subject)."
+            $r.grund = (T 'server.sys.nichtMicrosoft' $subject)
             return $r
         }
         $wurzel = & $script:MorpheusSysImpl.Wurzel $cert $Pfad
         $erlaubt = $false
         if ($wurzel) { foreach ($w in $script:MorpheusSysWurzeln) { if ([string]$wurzel -ieq $w) { $erlaubt = $true } } }
-        if (-not $erlaubt) { $r.grund = 'Die Zertifikatskette endet nicht an einer Microsoft-Stammzertifizierungsstelle (ggf. unvollständig, weil offline).'; return $r }
+        if (-not $erlaubt) { $r.grund = (T 'server.sys.ketteEndet'); return $r }
 
         $vi = & $script:MorpheusSysImpl.Herkunft $Pfad
         $firma = if ($null -ne $vi) { [string]$vi.CompanyName } else { '' }
         $produkt = if ($null -ne $vi) { [string]$vi.ProductName } else { '' }
         if (-not (($firma -match 'Sysinternals') -or ($produkt -match 'Sysinternals'))) {
-            $r.grund = "Die Datei ist kein Sysinternals-Programm (Firma: $firma, Produkt: $produkt)."
+            $r.grund = (T 'server.sys.keinSysinternals' $firma $produkt)
             return $r
         }
 
@@ -255,7 +257,7 @@ function MorpheusSysPruefen {
         $r
     } catch {
         $r.ok = $false
-        $r.grund = 'Die Prüfung ist fehlgeschlagen: ' + $_.Exception.Message
+        $r.grund = (T 'server.sys.pruefungFehlgeschlagen' $_.Exception.Message)
         $r
     }
 }
@@ -297,7 +299,7 @@ function MorpheusSysStart {
             $res.ok = $true
         } else {
             $res.zeitueberschreitung = $true
-            $res.fehler = "Zeitüberschreitung nach $TimeoutSek Sekunden; der Prozess wurde beendet."
+            $res.fehler = (T 'server.sys.zeitueberschreitung' $TimeoutSek)
             try { & (Join-Path ([Environment]::SystemDirectory) 'taskkill.exe') /PID $p.Id /T /F 2>&1 | Out-Null } catch { }
             try { $p.Kill() } catch { }
             [void]$p.WaitForExit(5000)
@@ -307,7 +309,7 @@ function MorpheusSysStart {
         $res.fehlerAusgabe = $msErr.ToArray()
     } catch {
         $res.ok = $false
-        $res.fehler = 'Der Prozess ließ sich nicht starten oder lesen: ' + $_.Exception.Message
+        $res.fehler = (T 'server.sys.prozessStart' $_.Exception.Message)
         try { if (-not $p.HasExited) { $p.Kill() } } catch { }
     } finally {
         $p.Dispose()
@@ -325,7 +327,7 @@ function MorpheusSysBytesText {
 function MorpheusSysEntpacken {
     # Zip-Eintrag in eine Datei schreiben; die tatsächlich gelesenen Bytes werden mitgezählt (Länge im Header kann lügen)
     param($Eintrag, [string]$Ziel, [long]$MaxBytes)
-    if ($Eintrag.Length -gt $MaxBytes) { throw ("Der Eintrag {0} ist mit {1} Bytes größer als erlaubt ({2})." -f $Eintrag.FullName, $Eintrag.Length, $MaxBytes) }
+    if ($Eintrag.Length -gt $MaxBytes) { throw (T 'server.sys.eintragZuGross' $Eintrag.FullName $Eintrag.Length $MaxBytes) }
     $in = $Eintrag.Open()
     $out = $null
     try {
@@ -334,7 +336,7 @@ function MorpheusSysEntpacken {
         [long]$sum = 0
         while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
             $sum += $n
-            if ($sum -gt $MaxBytes) { throw ("Der Eintrag {0} ist entpackt größer als erlaubt ({1} Bytes)." -f $Eintrag.FullName, $MaxBytes) }
+            if ($sum -gt $MaxBytes) { throw (T 'server.sys.eintragEntpacktZuGross' $Eintrag.FullName $MaxBytes) }
             $out.Write($buf, 0, $n)
         }
     } finally {
@@ -408,21 +410,21 @@ function Test-MorpheusSysWerkzeug {
     }
     try {
         if (-not (Test-Path -LiteralPath $pfad -PathType Leaf)) {
-            $o.grund = "Die Datei $($def.Exe) fehlt."
+            $o.grund = (T 'server.sys.dateiFehlt' $def.Exe)
             return [pscustomobject]$o
         }
         $o.vorhanden = $true
         $stream = $null
         try {
             try { $stream = MorpheusSysOeffnen $pfad }
-            catch { $o.grund = "Die Datei $($def.Exe) ließ sich nicht öffnen: " + $_.Exception.Message; return [pscustomobject]$o }
+            catch { $o.grund = (T 'server.sys.dateiNichtOeffnen' $def.Exe $_.Exception.Message); return [pscustomobject]$o }
             $og = MorpheusSysOrdnerGrund $tools
             if ($og) { $o.grund = $og; return [pscustomobject]$o }
             $j = MorpheusSysLeseJson -ToolsDir $tools
             if ($null -eq $j.Daten) { $o.grund = $j.Grund; return [pscustomobject]$o }
             $eintrag = $j.Daten.werkzeuge.PSObject.Properties[$Name]
             if (($null -eq $eintrag) -or (-not $eintrag.Value.sha256)) {
-                $o.grund = "In werkzeuge.json gibt es keinen Eintrag für $($def.Exe)."
+                $o.grund = (T 'server.sys.keinJsonEintrag' $def.Exe)
                 return [pscustomobject]$o
             }
             $pr = MorpheusSysPruefen -ToolsDir $tools -Pfad $pfad -Stream $stream -SollSha256 ([string]$eintrag.Value.sha256)
@@ -437,7 +439,7 @@ function Test-MorpheusSysWerkzeug {
         }
     } catch {
         $o.geprueft = $false
-        $o.grund = 'Die Prüfung ist fehlgeschlagen: ' + $_.Exception.Message
+        $o.grund = (T 'server.sys.pruefungFehlgeschlagen' $_.Exception.Message)
     }
     [pscustomobject]$o
 }
@@ -477,12 +479,12 @@ function Invoke-MorpheusSysWerkzeug {
 
         if (-not (Test-Path -LiteralPath $pfad -PathType Leaf)) {
             $res.nichtEingerichtet = $true
-            $res.fehler = "Die Datei $($def.Exe) fehlt."
+            $res.fehler = (T 'server.sys.dateiFehlt' $def.Exe)
             return $res
         }
         if (-not (Get-MorpheusSysZustimmung -DataRoot $DataRoot).akzeptiert) {
             $res.nichtEingerichtet = $true
-            $res.fehler = 'Die Sysinternals-Lizenzbedingungen sind nicht angenommen.'
+            $res.fehler = (T 'server.sys.lizenzNichtAngenommen')
             return $res
         }
 
@@ -490,7 +492,7 @@ function Invoke-MorpheusSysWerkzeug {
         try { $stream = MorpheusSysOeffnen $pfad }
         catch {
             $res.nichtVertrauenswuerdig = $true
-            $res.fehler = "Die Datei $($def.Exe) ließ sich nicht sperren und öffnen: " + $_.Exception.Message
+            $res.fehler = (T 'server.sys.dateiNichtSperren' $def.Exe $_.Exception.Message)
             return $res
         }
         $og = MorpheusSysOrdnerGrund $tools
@@ -500,7 +502,7 @@ function Invoke-MorpheusSysWerkzeug {
         $eintrag = $j.Daten.werkzeuge.PSObject.Properties[$a.Name]
         if (($null -eq $eintrag) -or (-not $eintrag.Value.sha256)) {
             $res.nichtVertrauenswuerdig = $true
-            $res.fehler = "In werkzeuge.json gibt es keinen Eintrag für $($def.Exe)."
+            $res.fehler = (T 'server.sys.keinJsonEintrag' $def.Exe)
             return $res
         }
         $pr = MorpheusSysPruefen -ToolsDir $tools -Pfad $pfad -Stream $stream -SollSha256 ([string]$eintrag.Value.sha256)
@@ -518,7 +520,7 @@ function Invoke-MorpheusSysWerkzeug {
             $res.ok = $true
             if ($err -and ($s.code -ne 0)) { $res.fehler = $err }
         } else {
-            $res.fehler = if ($err) { $err } else { "Das Werkzeug endete mit Code $($s.code) ohne Ausgabe." }
+            $res.fehler = if ($err) { $err } else { (T 'server.sys.endeOhneAusgabe' $s.code) }
         }
     } catch {
         $res.ok = $false
@@ -534,19 +536,19 @@ function Install-MorpheusSysWerkzeuge {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$DataRoot)
 
-    if (-not (& $script:MorpheusSysImpl.Admin)) { throw 'Zum Herunterladen der Sysinternals-Werkzeuge sind Administratorrechte nötig.' }
-    if (-not (Get-MorpheusSysZustimmung -DataRoot $DataRoot).akzeptiert) { throw 'Die Sysinternals-Lizenzbedingungen sind nicht angenommen. Ohne Zustimmung werden die Werkzeuge nicht heruntergeladen.' }
-    try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch { throw ('Die ZIP-Unterstützung von Windows ließ sich nicht laden: ' + $_.Exception.Message) }
+    if (-not (& $script:MorpheusSysImpl.Admin)) { throw (T 'server.sys.downloadAdmin') }
+    if (-not (Get-MorpheusSysZustimmung -DataRoot $DataRoot).akzeptiert) { throw (T 'server.sys.ohneZustimmung') }
+    try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch { throw (T 'server.sys.zipNichtLaden' $_.Exception.Message) }
 
     $tools = MorpheusSysToolsDir $DataRoot
-    if (Test-Path -LiteralPath $tools -PathType Leaf) { throw "Der Pfad $tools ist eine Datei statt eines Ordners." }
+    if (Test-Path -LiteralPath $tools -PathType Leaf) { throw (T 'server.sys.pfadIstDatei' $tools) }
     if (-not (Test-Path -LiteralPath $tools -PathType Container)) {
-        MorpheusSysLog "Lege den gesicherten Ordner $tools an …"
+        MorpheusSysLog (T 'server.sys.logOrdnerAnlegen' $tools)
         New-MorpheusSecureDirectory -Path $tools
     } else {
-        if (MorpheusSysIstVerknuepfung $tools) { throw "Der Ordner $tools ist eine Verknüpfung (Junction/Symlink) und wird nicht verwendet." }
+        if (MorpheusSysIstVerknuepfung $tools) { throw (T 'server.sys.ordnerVerknuepfungNichtVerwendet' $tools) }
         $s = & $script:MorpheusSysImpl.SicherPfad $tools
-        if (-not $s.Sicher) { throw "Der Ordner $tools ist nicht nur für Administratoren beschreibbar und wird nicht verwendet: " + (@($s.Gruende) -join ' | ') }
+        if (-not $s.Sicher) { throw (T 'server.sys.ordnerNichtNurAdminNichtVerwendet' $tools (@($s.Gruende) -join ' | ')) }
     }
 
     $fehler = New-Object System.Collections.Generic.List[string]
@@ -560,30 +562,30 @@ function Install-MorpheusSysWerkzeuge {
         try {
             MorpheusSysEntferneDatei $zip; MorpheusSysEntferneDatei $neu; MorpheusSysEntferneDatei $eulaNeu
 
-            MorpheusSysLog "Lade $($def.Titel) von $($def.Url) …"
+            MorpheusSysLog (T 'server.sys.logLade' $def.Titel $def.Url)
             & $script:MorpheusSysImpl.Download $def.Url $zip $script:MorpheusSysZipMaxBytes
-            if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw 'Der Download hat keine Datei geliefert.' }
-            if ((Get-Item -LiteralPath $zip -Force).Length -gt $script:MorpheusSysZipMaxBytes) { throw 'Die heruntergeladene Datei ist größer als erlaubt.' }
+            if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw (T 'server.sys.keineDatei') }
+            if ((Get-Item -LiteralPath $zip -Force).Length -gt $script:MorpheusSysZipMaxBytes) { throw (T 'server.sys.dateiZuGrossAllgemein') }
 
-            MorpheusSysLog "Prüfe das ZIP-Archiv von $($def.Titel) …"
+            MorpheusSysLog (T 'server.sys.logPruefeZip' $def.Titel)
             $archiv = [IO.Compression.ZipFile]::OpenRead($zip)
             $hatEula = $false
             try {
                 $exeEintraege = @($archiv.Entries | Where-Object { ($_.FullName -ieq $def.Exe) -and ($_.FullName -notmatch '[\\/]') })
-                if ($exeEintraege.Count -ne 1) { throw "Das Archiv enthält $($exeEintraege.Count) Einträge namens $($def.Exe) statt genau einem." }
+                if ($exeEintraege.Count -ne 1) { throw (T 'server.sys.archivEintraege' $exeEintraege.Count $def.Exe) }
                 MorpheusSysEntpacken -Eintrag $exeEintraege[0] -Ziel $neu -MaxBytes $script:MorpheusSysExeMaxBytes
                 $eulaEintraege = @($archiv.Entries | Where-Object { ($_.FullName -ieq 'Eula.txt') -and ($_.FullName -notmatch '[\\/]') })
-                if ($eulaEintraege.Count -gt 1) { throw 'Das Archiv enthält mehrere Einträge namens Eula.txt.' }
+                if ($eulaEintraege.Count -gt 1) { throw (T 'server.sys.archivEula') }
                 if ($eulaEintraege.Count -eq 1) {
                     MorpheusSysEntpacken -Eintrag $eulaEintraege[0] -Ziel $eulaNeu -MaxBytes $script:MorpheusSysExeMaxBytes
                     $hatEula = $true
                 }
             } finally { $archiv.Dispose() }
 
-            MorpheusSysLog "Prüfe die Signatur von $($def.Exe) …"
+            MorpheusSysLog (T 'server.sys.logPruefeSignatur' $def.Exe)
             $st = MorpheusSysOeffnen $neu
             try { $pr = MorpheusSysPruefen -ToolsDir $tools -Pfad $neu -Stream $st } finally { $st.Dispose() }
-            if (-not $pr.ok) { throw "Die heruntergeladene Datei $($def.Exe) ist nicht vertrauenswürdig: $($pr.grund)" }
+            if (-not $pr.ok) { throw (T 'server.sys.heruntergeladenUnsicher' $def.Exe $pr.grund) }
             $hash = $pr.sha256
 
             if (Test-Path -LiteralPath $ziel -PathType Leaf) { [IO.File]::Replace($neu, $ziel, [NullString]::Value) }
@@ -594,7 +596,7 @@ function Install-MorpheusSysWerkzeuge {
             try { $pr2 = MorpheusSysPruefen -ToolsDir $tools -Pfad $ziel -Stream $st -SollSha256 $hash } finally { $st.Dispose() }
             if (-not $pr2.ok) {
                 MorpheusSysEntferneDatei $ziel
-                throw "Die Datei $($def.Exe) war nach dem Verschieben nicht mehr vertrauenswürdig: $($pr2.grund)"
+                throw (T 'server.sys.nachVerschiebenUnsicher' $def.Exe $pr2.grund)
             }
 
             $version = ''
@@ -622,20 +624,20 @@ function Install-MorpheusSysWerkzeuge {
                 if (Test-Path -LiteralPath $eulaZiel -PathType Leaf) { [IO.File]::Replace($eulaNeu, $eulaZiel, [NullString]::Value) }
                 else { [IO.File]::Move($eulaNeu, $eulaZiel) }
             }
-            MorpheusSysLog "$($def.Titel) ist eingerichtet (Version $version)."
+            MorpheusSysLog (T 'server.sys.logEingerichtet' $def.Titel $version)
         } catch {
-            $fehler.Add("$($def.Titel): " + $_.Exception.Message)
-            MorpheusSysLog ("Fehler bei $($def.Titel): " + $_.Exception.Message)
+            $fehler.Add((T 'server.sys.titelMeldung' $def.Titel $_.Exception.Message))
+            MorpheusSysLog (T 'server.sys.logFehlerBei' $def.Titel $_.Exception.Message)
         } finally {
             MorpheusSysEntferneDatei $zip; MorpheusSysEntferneDatei $neu; MorpheusSysEntferneDatei $eulaNeu
         }
     }
 
-    if ($fehler.Count -gt 0) { throw ('Die Sysinternals-Werkzeuge konnten nicht vollständig eingerichtet werden. ' + ($fehler -join ' ')) }
+    if ($fehler.Count -gt 0) { throw (T 'server.sys.nichtVollstaendig' ($fehler -join ' ')) }
 
     $liste = @()
     foreach ($n in $script:MorpheusSysWerkzeuge.Keys) { $liste += , (Test-MorpheusSysWerkzeug -DataRoot $DataRoot -Name $n) }
-    [ordered]@{ werkzeuge = @($liste); meldung = 'Autoruns und Sigcheck wurden heruntergeladen, geprüft und eingerichtet.' }
+    [ordered]@{ werkzeuge = @($liste); meldung = (T 'server.sys.eingerichtetMeldung') }
 }
 
 function Remove-MorpheusSysWerkzeuge {
@@ -656,7 +658,7 @@ function Remove-MorpheusSysWerkzeuge {
         $exe = Join-Path $tools $script:MorpheusSysWerkzeuge[$name].Exe
         if (Test-Path -LiteralPath $exe) {
             try { [IO.File]::Delete($exe) }
-            catch { throw ("$($script:MorpheusSysWerkzeuge[$name].Exe) wird gerade verwendet (läuft ein Scan?). Bitte später erneut versuchen.") }
+            catch { throw (T 'server.sys.inVerwendung' $script:MorpheusSysWerkzeuge[$name].Exe) }
         }
     }
     foreach ($z in $ziele) {
@@ -664,7 +666,7 @@ function Remove-MorpheusSysWerkzeuge {
             try { [IO.File]::Delete($z) } catch { $fehler.Add((Split-Path -Leaf $z) + ': ' + $_.Exception.Message) }
         }
     }
-    if ($fehler.Count -gt 0) { throw ('Nicht alle Sysinternals-Dateien ließen sich löschen: ' + ($fehler -join ' | ')) }
+    if ($fehler.Count -gt 0) { throw (T 'server.sys.nichtAlleGeloescht' ($fehler -join ' | ')) }
     Get-MorpheusSysStand -DataRoot $DataRoot
 }
 
@@ -695,7 +697,7 @@ function Get-MorpheusSysEula {
         $bytes = New-Object byte[] $gelesen
         [Array]::Copy($buf, $bytes, $gelesen)
         $text = (MorpheusSysBytesText $bytes) -replace "`0", ''
-        if ($gekuerzt) { $text += "`r`n`r`n[… gekürzt; den vollständigen Text findest du unter $($script:MorpheusSysLizenzUrl)]" }
+        if ($gekuerzt) { $text += "`r`n`r`n" + (T 'server.sys.lizenzGekuerzt' $script:MorpheusSysLizenzUrl) }
         $text
     } catch {
         $null

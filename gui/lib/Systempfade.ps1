@@ -19,6 +19,8 @@
     Beim Dot-Sourcen wird nichts ausgeführt.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 # Fingerabdrücke der Microsoft-Wurzeln (Root CA 2010 und 2011), wie in Sysinternals.ps1
 $script:MorpheusPfadWurzeln = @('3B1EFD3A66EA28B16697394703A72CA340A05BD5', '8F43288AD272F3103B6FB1428485EA3014C0BCFE')
 
@@ -70,10 +72,10 @@ function Get-MorpheusSystemProgramm {
     [CmdletBinding()]
     param([Parameter(Mandatory, Position = 0)][string]$Name)
     if (($Name -notmatch '^[A-Za-z0-9_.\-]+(\\[A-Za-z0-9_.\-]+)*\.(exe|com)\z') -or ($Name -match '(^|\\)\.\.?(\\|\z)')) {
-        throw "Ungültiger Programmname: $Name"
+        throw (T 'server.pfad.programmnameUngueltig' $Name)
     }
     $p = Join-Path ([Environment]::SystemDirectory) $Name
-    if (-not [IO.File]::Exists($p)) { throw "Das Windows-Programm $p wurde nicht gefunden." }
+    if (-not [IO.File]::Exists($p)) { throw (T 'server.pfad.programmFehlt' $p) }
     $p
 }
 
@@ -86,13 +88,13 @@ function Get-MorpheusSystemProgramm {
 function Test-MorpheusMicrosoftSignatur {
     param([Parameter(Mandatory)][string]$Pfad)
     try { $sig = & $script:MorpheusPfadImpl.Signatur $Pfad }
-    catch { return 'Die Signatur ließ sich nicht prüfen: ' + $_.Exception.Message }
-    if ((-not $sig) -or ([string]$sig.Status -ne 'Valid')) { return ('Die Signatur ist nicht gültig ({0}).' -f [string]$sig.Status) }
+    catch { return (T 'server.pfad.signaturNichtPruefbar' $_.Exception.Message) }
+    if ((-not $sig) -or ([string]$sig.Status -ne 'Valid')) { return (T 'server.pfad.signaturUngueltig' ([string]$sig.Status)) }
     $subj = [string]$sig.SignerCertificate.Subject
-    if ($subj -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') { return "Nicht von Microsoft signiert ($subj)." }
+    if ($subj -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') { return (T 'server.pfad.nichtMicrosoft' $subj) }
     $wurzel = $null
     try { $wurzel = [string](& $script:MorpheusPfadImpl.Wurzel $sig.SignerCertificate) } catch { $wurzel = $null }
-    if ($script:MorpheusPfadWurzeln -notcontains $wurzel) { return 'Die Zertifikatskette endet nicht an einer Microsoft-Wurzel.' }
+    if ($script:MorpheusPfadWurzeln -notcontains $wurzel) { return (T 'server.pfad.kette') }
     $null
 }
 
@@ -111,28 +113,28 @@ function Get-MorpheusWinget {
     $praefix = $basis.TrimEnd('\') + '\Microsoft.DesktopAppInstaller_'
     $pakete = @()
     try { $pakete = @(& $script:MorpheusPfadImpl.Pakete) }
-    catch { return [pscustomobject]@{ Pfad = $null; Version = $null; Grund = 'Das App-Installationsprogramm (winget) ließ sich nicht abfragen: ' + $_.Exception.Message } }
+    catch { return [pscustomobject]@{ Pfad = $null; Version = $null; Grund = (T 'server.pfad.wingetAbfrage' $_.Exception.Message) } }
     $gruende = New-Object System.Collections.Generic.List[string]
     $kandidaten = @($pakete | Where-Object { $_ -and $_.InstallLocation } | Sort-Object -Property @{ Expression = { try { [version][string]$_.Version } catch { [version]'0.0' } } } -Descending)
     foreach ($p in $kandidaten) {
         $ort = [string]$p.InstallLocation
-        if ([string]$p.PublisherId -cne '8wekyb3d8bbwe') { $gruende.Add("Paket $($p.PackageFullName) stammt nicht von Microsoft."); continue }
+        if ([string]$p.PublisherId -cne '8wekyb3d8bbwe') { $gruende.Add((T 'server.pfad.paketNichtMicrosoft' $p.PackageFullName)); continue }
         $voll = $null
-        try { $voll = [IO.Path]::GetFullPath($ort).TrimEnd('\') } catch { $gruende.Add("Ungültiger Ort: $ort"); continue }
+        try { $voll = [IO.Path]::GetFullPath($ort).TrimEnd('\') } catch { $gruende.Add((T 'server.pfad.ortUngueltig' $ort)); continue }
         $rest = ''
         if ($voll.Length -gt $praefix.Length) { $rest = $voll.Substring($praefix.Length) }
         if ((-not $voll.StartsWith($praefix, [StringComparison]::OrdinalIgnoreCase)) -or ($rest -eq '') -or ($rest.Contains('\'))) {
-            $gruende.Add("winget liegt nicht im geschützten Ordner $basis ($voll)."); continue
+            $gruende.Add((T 'server.pfad.wingetNichtGeschuetzt' $basis $voll)); continue
         }
         $exe = Join-Path $voll 'winget.exe'
         $it = $null
-        try { $it = & $script:MorpheusPfadImpl.Datei $exe } catch { $gruende.Add("winget.exe fehlt in $voll."); continue }
-        if (($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($it.Attributes -band [IO.FileAttributes]::Directory)) { $gruende.Add("$exe ist eine Verknüpfung."); continue }
+        try { $it = & $script:MorpheusPfadImpl.Datei $exe } catch { $gruende.Add((T 'server.pfad.wingetExeFehlt' $voll)); continue }
+        if (($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($it.Attributes -band [IO.FileAttributes]::Directory)) { $gruende.Add((T 'server.pfad.exeVerknuepfung' $exe)); continue }
         $sig = Test-MorpheusMicrosoftSignatur -Pfad $exe
-        if ($sig) { $gruende.Add("$exe – $sig"); continue }
+        if ($sig) { $gruende.Add((T 'server.pfad.exeSig' $exe $sig)); continue }
         return [pscustomobject]@{ Pfad = $exe; Version = [string]$p.Version; Grund = $null }
     }
-    $grund = 'winget ist nicht als signiertes App-Installationsprogramm unter Program Files\WindowsApps installiert.'
+    $grund = (T 'server.pfad.wingetNichtInstalliert')
     if ($gruende.Count) { $grund += ' ' + ($gruende -join ' ') }
     [pscustomobject]@{ Pfad = $null; Version = $null; Grund = $grund }
 }

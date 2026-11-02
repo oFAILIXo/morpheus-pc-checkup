@@ -74,7 +74,8 @@ param(
     [switch]$NoUpdatePrompt,
     [string]$CompareWith,
     [switch]$NoOpen,
-    [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto'
+    [ValidateSet('Auto', 'Gaming', 'Office', 'Laptop')][string]$Profil = 'Auto',
+    [ValidateSet('', 'de', 'en')][string]$Sprache = ''
 )
 # Sicherheit (2.3.3): Module nur aus System32 und Program Files laden, nie aus Benutzerordnern (gui\lib\Systempfade.ps1).
 # Als erste Anweisung, damit vorher nichts automatisch geladen wird; Kindprozesse und Jobs erben den Wert.
@@ -89,7 +90,7 @@ $script:BenutzerTemp = $env:TEMP
 $env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
 foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 
-$ScriptVersion = '2.5.0'
+$ScriptVersion = '2.6.0'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
@@ -100,6 +101,13 @@ $script:Sys32 = [Environment]::SystemDirectory
 if (-not $OutputDir) { $OutputDir = Join-Path $PSScriptRoot 'reports' }
 if (-not $AcceptedFile) { $AcceptedFile = Join-Path $PSScriptRoot 'accepted.psd1' }
 if (-not $SpielOrdnerFile) { $SpielOrdnerFile = Join-Path (Split-Path -Parent $OutputDir) 'state\spielordner.json' }
+# Sprache (2.6, #66): -Sprache, sonst gespeicherte Wahl im Datenordner, sonst Windows-Sprache. Der Bericht entsteht in dieser Sprache.
+. (Join-Path $PSScriptRoot 'gui\lib\Sprache.ps1')
+if (-not $Sprache) { $Sprache = Get-MorpheusSprache -DataRoot (Split-Path -Parent $OutputDir) }
+$env:MORPHEUS_SPRACHE = $Sprache
+Import-MorpheusTexte -Sprache $Sprache
+# Akzeptanzregeln und Tipps vergleichen den deutschen Befundtext (ValueDe), damit sie in beiden Sprachen greifen
+if ($Sprache -ne 'de') { Start-MorpheusTextSpur }
 
 $script:Findings = New-Object System.Collections.Generic.List[object]
 $script:Tables = [ordered]@{}
@@ -115,8 +123,10 @@ $startedAt = Get-Date
 
 #region Hilfsfunktionen
 
-# Status: CRIT/WARN = Handlungsbedarf, TIPP = lohnende Optimierung (wird aus INFO abgeleitet, siehe Tipps in pc-check.hilfe.psd1),
+# Status: CRIT/WARN = Handlungsbedarf, TIPP = lohnende Optimierung (wird aus INFO abgeleitet, siehe Tipps in lang\<sprache>\hilfe.psd1),
 # INFO = reine Information, ACK = akzeptiert, OK, SKIP = nicht geprüft.
+# Area, Category und Check sind feste deutsche Kennungen (Akzeptanzliste, Katalog, Hilfe, Vergleich alter Berichte);
+# angezeigt werden AreaName, CategoryName und CheckName in der Sprache des Scans (2.6, #66).
 function Add-Finding {
     param(
         [Parameter(Mandatory, Position = 0)][ValidateSet('OK', 'INFO', 'WARN', 'CRIT', 'SKIP')][string]$Status,
@@ -130,6 +140,7 @@ function Add-Finding {
             Check          = $Check
             Status         = $Status
             Value          = $Value
+            ValueDe        = (Get-MorpheusDeutscherText $Value)
             Recommendation = $Recommendation
             OriginalStatus = ''
             Note           = ''
@@ -138,6 +149,9 @@ function Add-Finding {
             Risk           = ''
             Steps          = @()
             Command        = ''
+            AreaName       = (Get-MorpheusAnzeige 'bereich' $script:Area)
+            CategoryName   = (Get-MorpheusAnzeige 'kategorie' $script:Category)
+            CheckName      = (Get-MorpheusAnzeige 'pruefung' $Check)
         })
 }
 
@@ -151,19 +165,20 @@ function Start-Section {
     param([string]$Area, [string]$Category)
     $script:Area = $Area
     $script:Category = $Category
-    Write-Host "`n[$Area] $Category" -ForegroundColor Cyan
+    Write-Host ("`n[" + (Get-MorpheusAnzeige 'bereich' $Area) + '] ' + (Get-MorpheusAnzeige 'kategorie' $Category)) -ForegroundColor Cyan
 }
 
 function Invoke-Check {
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][scriptblock]$Script, [switch]$NeedsAdmin)
     $script:CheckName = $Name
+    $null = Get-MorpheusDeutscherText ''
     if ($NeedsAdmin -and -not $script:IsAdmin) {
-        Add-Finding SKIP 'Nur mit Adminrechten prüfbar'
+        Add-Finding SKIP (T 'scan.hilfe.nurAdmin')
         return
     }
-    Write-Host "  - $Name"
+    Write-Host ('  - ' + (Get-MorpheusAnzeige 'pruefung' $Name))
     try { & $Script }
-    catch { Add-Finding SKIP ('Fehler: ' + $_.Exception.Message) }
+    catch { Add-Finding SKIP (T 'scan.hilfe.fehler' $_.Exception.Message) }
 }
 
 function Get-RegValue {
@@ -176,7 +191,7 @@ function Get-RegValue {
 function Invoke-Native {
     param([string]$File, [string[]]$Arguments)
     # Nie über PATH auflösen (2.3.3): ein Programm gleichen Namens in einem Benutzerordner liefe sonst mit Adminrechten
-    if ($File -notmatch '^[A-Za-z]:\\') { throw "Programm ohne vollen Pfad: $File" }
+    if ($File -notmatch '^[A-Za-z]:\\') { throw (T 'scan.hilfe.ohnePfad' $File) }
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try { , @(& $File @Arguments 2>$null | ForEach-Object { "$_" }) }
@@ -392,7 +407,7 @@ if (Test-Path -LiteralPath $AcceptedFile) {
         if ($script:AkzeptanzLib) { $script:AkzeptanzRegeln = @(Read-MorpheusAkzeptanz -Datei $AcceptedFile | Where-Object { $_ }) }
         else { $script:AkzeptanzRegeln = @((Import-PowerShellDataFile -LiteralPath $AcceptedFile).Accepted | Where-Object { $_ }) }
     }
-    catch { Write-Warning "Akzeptanzliste nicht lesbar: $($_.Exception.Message)" }
+    catch { Write-Warning (T 'scan.start.akzeptanzFehler' $_.Exception.Message) }
 }
 # Sysinternals (Autoruns, Sigcheck): Bibliotheken nur laden, nichts ausführen; die Werkzeuge starten ausschließlich über Invoke-MorpheusSysWerkzeug
 $script:SysLib = $false
@@ -432,7 +447,7 @@ if (Test-Path -LiteralPath $pfadLibPfad) {
         if ($script:IsAdmin) {
             $tempNeu = $null
             if ($script:SysDataRoot) { $tempNeu = Set-MorpheusTempPfad -DataRoot $script:SysDataRoot }
-            if (-not $tempNeu) { Write-Warning 'Der Datenordner ist nicht gesichert: Temporäre Dateien (secedit, Add-Type) bleiben im Temp-Ordner des Benutzers. Sicherer ist der Start über die installierte Fassung.' }
+            if (-not $tempNeu) { Write-Warning (T 'scan.start.datenordnerUngesichert') }
         }
     }
     catch { $script:PfadLib = $false }
@@ -454,11 +469,11 @@ $script:SigcheckCache = $null
 # wenn es verwertbar ist; sonst wird der passende Befund geschrieben und $null geliefert.
 function Resolve-SysErgebnis {
     param($Ergebnis, [string]$Titel, [string]$Art)
-    if (-not $Ergebnis) { Add-Finding SKIP 'Fehler: keine Antwort vom Werkzeug'; return $null }
-    if ($Ergebnis.nichtEingerichtet) { Add-Finding SKIP 'Sysinternals nicht eingerichtet: in Morpheus unter Werkzeuge herunterladen'; return $null }
-    if ($Ergebnis.nichtVertrauenswuerdig) { Add-Finding WARN ("$Titel nicht ausgeführt: " + $Ergebnis.fehler) 'Unter Werkzeuge neu herunterladen; bleibt die Meldung, die Datei nicht verwenden.'; return $null }
-    if (-not $Ergebnis.ok) { Add-Finding SKIP ('Fehler: ' + $Ergebnis.fehler); return $null }
-    if ($Art -and -not (Test-MorpheusSysKopf -Text $Ergebnis.text -Art $Art)) { Add-Finding SKIP "Fehler: Die Ausgabe von $Titel ist nicht lesbar (keine CSV-Kopfzeile)."; return $null }
+    if (-not $Ergebnis) { Add-Finding SKIP (T 'scan.sys.keineAntwort'); return $null }
+    if ($Ergebnis.nichtEingerichtet) { Add-Finding SKIP (T 'scan.sys.nichtEingerichtet'); return $null }
+    if ($Ergebnis.nichtVertrauenswuerdig) { Add-Finding WARN (T 'scan.sys.nichtAusgefuehrt' $Titel $Ergebnis.fehler) (T 'scan.sys.neuLaden'); return $null }
+    if (-not $Ergebnis.ok) { Add-Finding SKIP (T 'scan.hilfe.fehler' $Ergebnis.fehler); return $null }
+    if ($Art -and -not (Test-MorpheusSysKopf -Text $Ergebnis.text -Art $Art)) { Add-Finding SKIP (T 'scan.sys.ausgabeNichtLesbar' $Titel); return $null }
     $Ergebnis
 }
 
@@ -479,8 +494,8 @@ function Get-SysAufgaben {
 }
 
 function Test-SysVorabAus {
-    if ($SkipSysinternals) { Add-Finding SKIP 'Übersprungen (-SkipSysinternals)'; return $true }
-    if (-not $script:SysLib) { Add-Finding SKIP 'gui\lib\Sysinternals.ps1 fehlt'; return $true }
+    if ($SkipSysinternals) { Add-Finding SKIP (T 'scan.sys.uebersprungen'); return $true }
+    if (-not $script:SysLib) { Add-Finding SKIP (T 'scan.allg.dateiFehlt' 'gui\lib\Sysinternals.ps1'); return $true }
     $false
 }
 
@@ -500,7 +515,7 @@ function Write-SysFortschritt {
 function Get-SysAutoruns {
     if (Test-SysVorabAus) { return $null }
     if (-not $script:Autoruns) {
-        Write-SysFortschritt '    Autoruns läuft, das dauert 1–3 Minuten …' 'autorunsc64.exe'
+        Write-SysFortschritt ('    ' + (T 'scan.sys.autorunsLaeuft')) 'autorunsc64.exe'
         try { $script:Autoruns = Invoke-MorpheusSysWerkzeug -DataRoot $script:SysDataRoot -Auftrag autostarts }
         catch { $script:Autoruns = [pscustomobject]@{ ok = $false; fehler = $_.Exception.Message; nichtVertrauenswuerdig = $false; nichtEingerichtet = $false; text = '' } }
     }
@@ -526,7 +541,7 @@ function Get-SysSigcheckBewertung {
         $grund = ''
         if ($kannFinden -and $h -and $regeln.Count) {
             $r = Find-MorpheusAkzeptanzDatei -Regeln $regeln -Pfad $z.Pfad -Sha256 $h
-            if ($r) { $grund = [string]$r.reason; if (-not $grund) { $grund = [string]$r.Reason }; if (-not $grund) { $grund = 'akzeptiert' }; $akzeptiert[([string]$z.Pfad).ToLowerInvariant()] = $true }
+            if ($r) { $grund = [string]$r.reason; if (-not $grund) { $grund = [string]$r.Reason }; if (-not $grund) { $grund = (T 'scan.sig.grund') }; $akzeptiert[([string]$z.Pfad).ToLowerInvariant()] = $true }
         }
         $o = [ordered]@{}
         foreach ($pr in $z.PSObject.Properties) { $o[$pr.Name] = $pr.Value }
@@ -542,16 +557,16 @@ function Get-SysSigcheckBewertung {
     if ($k -gt 0 -and $status -eq 'OK') {
         $voll = Get-MorpheusSystemdateienBefund -System32 $System32 -Treiber $Treiber
         $status = 'ACK'; $wert = [string]$voll.wert; $empf = [string]$voll.empfehlung
-        $note = if ($k -eq 1) { '1 Datei akzeptiert (je SHA256)' } else { "$k Dateien akzeptiert (je SHA256)" }
+        $note = if ($k -eq 1) { T 'scan.sig.eineAkzeptiert' } else { T 'scan.sig.akzeptiert' $k }
     }
-    elseif ($k -gt 0) { $wert += "; $k akzeptiert" }
+    elseif ($k -gt 0) { $wert += (T 'scan.sig.wertAkzeptiert' $k) }
     [pscustomobject]@{ Tabelle = $zeilen.ToArray(); Status = $status; Wert = $wert; Empfehlung = $empf; Note = $note; Akzeptiert = $k }
 }
 
 function Get-SysSigcheck {
     if (Test-SysVorabAus) { return $null }
     if (-not $script:SigcheckCache) {
-        Write-SysFortschritt '    Sigcheck läuft, das dauert 1–3 Minuten …' 'sigcheck64.exe'
+        Write-SysFortschritt ('    ' + (T 'scan.sys.sigcheckLaeuft')) 'sigcheck64.exe'
         $cache = [ordered]@{}
         foreach ($auftrag in 'system32', 'treiber') {
             try { $cache[$auftrag] = Invoke-MorpheusSysWerkzeug -DataRoot $script:SysDataRoot -Auftrag $auftrag }
@@ -576,10 +591,10 @@ if ($script:SpeicherLib) { try { $script:SpielOrdner = @(Read-MorpheusSpielordne
 $script:KnownHarmless = @{
     # Dienstfehler (Name oder Anzeigename des Dienstes)
     ServiceErrors   = [ordered]@{
-        '^dam$'                    = 'Desktop Activity Moderator: nur für Laptops mit Modern Standby, auf Desktops normal'
-        '^Steam Client Service$'   = 'startet nur bei Bedarf und meldet sonst einen Fehler'
-        '^(edgeupdate|MicrosoftEdgeElevationService|GoogleUpdater)' = 'Update-Dienst, startet nur bei Bedarf'
-        '^(gupdate|gupdatem)$'     = 'Update-Dienst, startet nur bei Bedarf'
+        '^dam$'                    = (T 'scan.harmlos.dam')
+        '^Steam Client Service$'   = (T 'scan.harmlos.steam')
+        '^(edgeupdate|MicrosoftEdgeElevationService|GoogleUpdater)' = (T 'scan.harmlos.updateDienst')
+        '^(gupdate|gupdatem)$'     = (T 'scan.harmlos.updateDienst')
     }
     # Code Integrity: DLLs von Overlays/Aufnahme-Tools, die Windows aus geschützten Systemprozessen fernhält
     CodeIntegrity   = 'nvspcap64\.dll|NvCamera|nvd3dumx|RTSSHooks|GameOverlayRenderer|DiscordHook|graphics-hook|obs-vulkan|igdumd|amdxx|atiu'
@@ -693,10 +708,10 @@ public static class PcCheckDisplay
 
 #endregion
 
-Write-Host "$ProductName - $ProductTagline $ScriptVersion  |  Admin: $($script:IsAdmin)  |  Ereignisse: letzte $EventDays Tage" -ForegroundColor Green
-if (-not $script:IsAdmin) { Write-Warning 'Ohne Adminrechte fehlen einige Prüfungen. Für den vollen Umfang als Administrator starten.' }
+Write-Host (T 'scan.start.kopf' $ProductName $ProductTagline $ScriptVersion $script:IsAdmin $EventDays) -ForegroundColor Green
+if (-not $script:IsAdmin) { Write-Warning (T 'scan.start.ohneAdmin') }
 $script:PackagedFrom = Get-PackagedAncestor
-if ($script:PackagedFrom) { Write-Warning "Gestartet aus der Store-App $($script:PackagedFrom): Ergebnisse unter HKCU können von der echten Registry abweichen. Für verlässliche Ergebnisse aus einer normalen Konsole starten." }
+if ($script:PackagedFrom) { Write-Warning (T 'scan.start.store' $script:PackagedFrom) }
 
 $script:OS = Get-CimInstance Win32_OperatingSystem
 $script:CS = Get-CimInstance Win32_ComputerSystem
@@ -710,7 +725,7 @@ if ($Profil -eq 'Auto') {
     $hasDgpu = [bool](Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'NVIDIA|AMD|Radeon|Arc' })
     $script:Profile = if ($hasBattery) { 'Laptop' } elseif ($hasDgpu) { 'Gaming' } else { 'Office' }
 }
-Write-Host "Profil: $($script:Profile)$(if ($script:ProfileAuto) { ' (automatisch erkannt, ändern mit -Profil)' })" -ForegroundColor Green
+Write-Host ((T 'scan.start.profil' $script:Profile) + $(if ($script:ProfileAuto) { ' ' + (T 'scan.start.profilAuto') } else { '' })) -ForegroundColor Green
 $script:Features = @()
 $script:DeviceGuard = $null
 $script:SecureBoot = $false
@@ -723,8 +738,8 @@ $script:WingetUpdates = @()
 Start-Section 'Sicherheit' 'System & Updates'
 
 Invoke-Check 'Ausführungsumgebung' {
-    if ($script:PackagedFrom) { Add-Finding WARN "Gestartet aus der Store-App $($script:PackagedFrom)" 'Store-Apps virtualisieren Teile der Registry (HKCU) für alle Prozesse, die sie starten, auch mit Adminrechten. Ergebnisse und Änderungen unter HKCU können daher abweichen. Für verlässliche Ergebnisse aus einer normalen Konsole (Git Bash, Windows Terminal) starten.' }
-    else { Add-Finding OK 'Normale Konsole, kein Store-App-Container' }
+    if ($script:PackagedFrom) { Add-Finding WARN (T 'scan.umgebung.store' $script:PackagedFrom) (T 'scan.umgebung.storeEmpf') }
+    else { Add-Finding OK (T 'scan.umgebung.normal') }
 }
 
 Invoke-Check 'Windows-Version' {
@@ -739,7 +754,7 @@ Invoke-Check 'Windows-Version' {
             Build        = $build
             Installiert  = Format-Date $script:OS.InstallDate
             LetzterStart = Format-Date $script:OS.LastBootUpTime
-            Laufzeit     = '{0} Tage {1} Std.' -f $uptime.Days, $uptime.Hours
+            Laufzeit     = (T 'scan.version.laufzeit' $uptime.Days $uptime.Hours)
             Hersteller   = $script:CS.Manufacturer
             Modell       = $script:CS.Model
         })
@@ -748,21 +763,21 @@ Invoke-Check 'Windows-Version' {
     if ($endOfService.ContainsKey($ver)) {
         $end = [datetime]$endOfService[$ver]
         $days = ($end - (Get-Date)).Days
-        $value = "Windows 11 $ver, Build $build, Support bis $($end.ToString('yyyy-MM-dd'))"
-        if ($days -lt 0) { Add-Finding CRIT $value 'Diese Version bekommt keine Sicherheitsupdates mehr: Funktionsupdate auf die aktuelle Windows-11-Version installieren.' }
-        elseif ($days -lt 90) { Add-Finding WARN $value 'Support endet bald: Funktionsupdate einplanen.' }
+        $value = T 'scan.version.support' $ver $build ($end.ToString('yyyy-MM-dd'))
+        if ($days -lt 0) { Add-Finding CRIT $value (T 'scan.version.abgelaufen') }
+        elseif ($days -lt 90) { Add-Finding WARN $value (T 'scan.version.bald') }
         else { Add-Finding OK $value }
     }
-    else { Add-Finding INFO "Windows $ver, Build $build" 'Supportende manuell prüfen.' }
+    else { Add-Finding INFO (T 'scan.version.info' $ver $build) (T 'scan.version.infoEmpf') }
 }
 
 Invoke-Check 'Windows-Aktivierung' {
     $lic = Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" | Select-Object -First 1
-    if (-not $lic) { Add-Finding WARN 'Kein Produktschlüssel gefunden' 'Aktivierung unter Einstellungen > System > Aktivierung prüfen.'; return }
-    $states = @{ 0 = 'Nicht lizenziert'; 1 = 'Aktiviert'; 2 = 'Kulanzzeit'; 3 = 'Kulanzzeit (Hardwareänderung)'; 4 = 'Nicht original'; 5 = 'Benachrichtigungsmodus'; 6 = 'Verlängerte Kulanzzeit' }
+    if (-not $lic) { Add-Finding WARN (T 'scan.aktivierung.keinSchluessel') (T 'scan.aktivierung.keinSchluesselEmpf'); return }
+    $states = @{ 0 = (T 'scan.aktivierung.status0'); 1 = (T 'scan.aktivierung.status1'); 2 = (T 'scan.aktivierung.status2'); 3 = (T 'scan.aktivierung.status3'); 4 = (T 'scan.aktivierung.status4'); 5 = (T 'scan.aktivierung.status5'); 6 = (T 'scan.aktivierung.status6') }
     $state = $states[[int]$lic.LicenseStatus]
     if ($lic.LicenseStatus -eq 1) { Add-Finding OK "$state ($($lic.Name))" }
-    else { Add-Finding WARN "$state ($($lic.Name))" 'Windows aktivieren; nicht aktivierte Systeme sind oft mit fragwürdigen Aktivierungstools behandelt.' }
+    else { Add-Finding WARN "$state ($($lic.Name))" (T 'scan.aktivierung.warnEmpf') }
 }
 
 Invoke-Check 'Windows Update: Verlauf' {
@@ -771,7 +786,7 @@ Invoke-Check 'Windows Update: Verlauf' {
     $history = @()
     # Defender-Signaturen kommen mehrmals täglich und verdrängen sonst alles andere aus dem Verlauf.
     if ($total -gt 0) { $history = @($searcher.QueryHistory(0, $total) | Where-Object { $_.Title -and $_.Title -notmatch 'KB2267602|Security Intelligence|Sicherheitsinformationen' }) }
-    $results = @{ 0 = 'Nicht gestartet'; 1 = 'Läuft'; 2 = 'Erfolgreich'; 3 = 'Mit Fehlern'; 4 = 'Fehlgeschlagen'; 5 = 'Abgebrochen' }
+    $results = @{ 0 = (T 'scan.verlauf.nichtGestartet'); 1 = (T 'scan.verlauf.laeuft'); 2 = (T 'scan.verlauf.erfolgreich'); 3 = (T 'scan.verlauf.mitFehlern'); 4 = (T 'scan.verlauf.fehlgeschlagenStatus'); 5 = (T 'scan.verlauf.abgebrochen') }
     $rows = foreach ($h in ($history | Select-Object -First 40)) {
         [pscustomobject][ordered]@{ Datum = Format-Date $h.Date.ToLocalTime(); Ergebnis = $results[[int]$h.ResultCode]; Titel = $h.Title }
     }
@@ -783,22 +798,22 @@ Invoke-Check 'Windows Update: Verlauf' {
     } | Sort-Object Date -Descending | Select-Object -First 1
     if ($cu) {
         $age = ((Get-Date).ToUniversalTime() - $cu.Date).Days
-        $value = "Letztes kumulatives Update vor $age Tagen: $($cu.Title)"
-        if ($age -gt 60) { Add-Finding CRIT $value 'Windows Update ausführen: seit über zwei Monaten fehlen Sicherheitsupdates.' }
-        elseif ($age -gt 40) { Add-Finding WARN $value 'Windows Update ausführen, der letzte Patchday wurde nicht installiert.' }
+        $value = T 'scan.verlauf.letztes' $age ($cu.Title)
+        if ($age -gt 60) { Add-Finding CRIT $value (T 'scan.verlauf.critEmpf') }
+        elseif ($age -gt 40) { Add-Finding WARN $value (T 'scan.verlauf.warnEmpf') }
         else { Add-Finding OK $value }
     }
-    else { Add-Finding WARN 'Kein erfolgreiches kumulatives Update im Verlauf gefunden' 'Windows Update manuell prüfen.' }
+    else { Add-Finding WARN (T 'scan.verlauf.keins') (T 'scan.verlauf.keinsEmpf') }
     $failed = @($history | Where-Object { $_.ResultCode -eq 4 -and $_.Date -gt (Get-Date).AddDays(-30) })
     if ($failed.Count) {
-        Add-Finding WARN ('{0} fehlgeschlagene Installationen in 30 Tagen: {1}' -f $failed.Count, (($failed | Select-Object -ExpandProperty Title -Unique | Select-Object -First 3) -join '; ')) `
-            'Fehlgeschlagene Updates erneut versuchen, sonst Problembehandlung für Windows Update.' -Check 'Windows Update: Fehler'
+        Add-Finding WARN (T 'scan.verlauf.fehlgeschlagen' $failed.Count (($failed | Select-Object -ExpandProperty Title -Unique | Select-Object -First 3) -join '; ')) `
+            (T 'scan.verlauf.fehlgeschlagenEmpf') -Check 'Windows Update: Fehler'
     }
 }
 
 if ($SkipUpdateSearch) {
     $script:CheckName = 'Windows Update: ausstehend'
-    Add-Finding SKIP 'Übersprungen (-SkipUpdateSearch)'
+    Add-Finding SKIP (T 'scan.update.uebersprungen')
 }
 else {
     Invoke-Check 'Windows Update: ausstehend' {
@@ -809,7 +824,7 @@ else {
             [pscustomobject][ordered]@{
                 Titel          = $u.Title
                 Schweregrad    = [string]$u.MsrcSeverity
-                Typ            = $(if ($u.Type -eq 2) { 'Treiber' } else { 'Software' })
+                Typ            = $(if ($u.Type -eq 2) { T 'scan.update.typTreiber' } else { T 'scan.update.typSoftware' })
                 Heruntergladen = [bool]$u.IsDownloaded
             }
         }
@@ -817,27 +832,27 @@ else {
         # Defender-Signaturen holt Defender mehrmals täglich selbst; ein gerade fälliges ist kein Handlungsbedarf.
         $sigPattern = 'KB2267602|Security Intelligence|Sicherheitsinformationen'
         $sw = @($ups | Where-Object { $_.Type -ne 2 -and $_.Title -notmatch $sigPattern })
-        $other = @($ups | Where-Object { $_.Type -eq 2 -or $_.Title -match $sigPattern } | ForEach-Object { $(if ($_.Type -eq 2) { 'Treiber' } else { 'Defender-Signaturen' }) } | Select-Object -Unique)
-        if (-not $ups.Count) { Add-Finding OK 'Keine ausstehenden Updates' }
-        elseif ($sw | Where-Object { $_.MsrcSeverity -eq 'Critical' }) { Add-Finding CRIT "$($sw.Count) ausstehende Updates, darunter kritische" 'Windows Update jetzt ausführen.' }
-        elseif ($sw.Count) { Add-Finding WARN "$($sw.Count) ausstehende Updates" 'Windows Update ausführen.' }
-        else { Add-Finding INFO "Nur optional bzw. automatisch: $($other -join ', ')" 'Defender lädt Signaturen selbst; optionale Treiber nur bei Problemen installieren, Grafiktreiber besser direkt vom Hersteller.' }
+        $other = @($ups | Where-Object { $_.Type -eq 2 -or $_.Title -match $sigPattern } | ForEach-Object { $(if ($_.Type -eq 2) { T 'scan.update.typTreiber' } else { T 'scan.update.defenderSignaturen' }) } | Select-Object -Unique)
+        if (-not $ups.Count) { Add-Finding OK (T 'scan.update.keine') }
+        elseif ($sw | Where-Object { $_.MsrcSeverity -eq 'Critical' }) { Add-Finding CRIT (T 'scan.update.kritisch' $sw.Count) (T 'scan.update.kritischEmpf') }
+        elseif ($sw.Count) { Add-Finding WARN (T 'scan.update.ausstehend' $sw.Count) (T 'scan.update.ausstehendEmpf') }
+        else { Add-Finding INFO (T 'scan.update.nurOptional' ($other -join ', ')) (T 'scan.update.nurOptionalEmpf') }
     }
 }
 
 Invoke-Check 'Neustart ausstehend' {
     $reasons = @()
-    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { $reasons += 'Komponentenwartung' }
+    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { $reasons += (T 'scan.neustart.komponenten') }
     if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { $reasons += 'Windows Update' }
-    if ($reasons) { Add-Finding WARN ('Neustart erforderlich: ' + ($reasons -join ', ')) 'PC neu starten, damit installierte Updates wirksam werden.' }
-    else { Add-Finding OK 'Kein Neustart ausstehend' }
+    if ($reasons) { Add-Finding WARN (T 'scan.neustart.erforderlich' ($reasons -join ', ')) (T 'scan.neustart.erforderlichEmpf') }
+    else { Add-Finding OK (T 'scan.neustart.keiner') }
 }
 
 Invoke-Check 'Windows Update: Einstellungen' {
     $blocked = @(); $notes = @()
-    if ((Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'NoAutoUpdate') -eq 1) { $blocked += 'Automatische Updates per Richtlinie abgeschaltet' }
+    if ((Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'NoAutoUpdate') -eq 1) { $blocked += (T 'scan.wuEinst.richtlinie') }
     $wu = $script:Services | Where-Object Name -EQ 'wuauserv'
-    if ($wu.StartMode -eq 'Disabled') { $blocked += 'Dienst wuauserv deaktiviert' }
+    if ($wu.StartMode -eq 'Disabled') { $blocked += (T 'scan.wuEinst.dienst') }
     $wuPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
     foreach ($n in 'DeferFeatureUpdatesPeriodInDays', 'DeferQualityUpdatesPeriodInDays', 'TargetReleaseVersionInfo', 'ProductVersion') {
         $v = Get-RegValue $wuPol $n
@@ -852,10 +867,10 @@ Invoke-Check 'Windows Update: Einstellungen' {
         }
         catch {}
     }
-    if ($blocked) { Add-Finding CRIT ($blocked -join '; ') 'Automatische Updates wieder zulassen (Tweak-Tools setzen solche Sperren gern).' }
-    elseif ($paused) { Add-Finding WARN "Updates pausiert bis $($paused.ToString('yyyy-MM-dd'))" 'Pause beenden, sobald möglich.' }
-    elseif ($notes) { Add-Finding INFO ('Richtlinien: ' + ($notes -join '; ')) }
-    else { Add-Finding OK 'Automatische Updates aktiv, nicht pausiert' }
+    if ($blocked) { Add-Finding CRIT ($blocked -join '; ') (T 'scan.wuEinst.sperreEmpf') }
+    elseif ($paused) { Add-Finding WARN (T 'scan.wuEinst.pausiert' ($paused.ToString('yyyy-MM-dd'))) (T 'scan.wuEinst.pausiertEmpf') }
+    elseif ($notes) { Add-Finding INFO (T 'scan.wuEinst.richtlinien' ($notes -join '; ')) }
+    else { Add-Finding OK (T 'scan.wuEinst.ok') }
 }
 
 #endregion
@@ -871,15 +886,15 @@ Invoke-Check 'Registrierte Schutzprogramme' {
         [pscustomobject][ordered]@{
             Produkt    = $a.displayName
             Aktiv      = ($hex.Substring(2, 2) -in '10', '11')
-            Signaturen = $(if ($hex.Substring(4, 2) -eq '00') { 'aktuell' } else { 'veraltet' })
+            Signaturen = $(if ($hex.Substring(4, 2) -eq '00') { T 'scan.av.aktuell' } else { T 'scan.av.veraltet' })
             Pfad       = $a.pathToSignedReportingExe
         }
     }
     Add-Table 'Virenschutzprogramme (Sicherheitscenter)' $rows
     $active = @($rows | Where-Object Aktiv)
-    if (-not $active) { Add-Finding CRIT 'Kein aktiver Virenschutz registriert' 'Microsoft Defender einschalten.' }
-    elseif ($active.Count -gt 1) { Add-Finding WARN ('Mehrere aktive Virenscanner: ' + (($active | ForEach-Object Produkt) -join ', ')) 'Nur einen Echtzeit-Scanner betreiben; zwei bremsen sich gegenseitig und das System.' }
-    else { Add-Finding OK "Aktiv: $($active[0].Produkt), Signaturen $($active[0].Signaturen)" }
+    if (-not $active) { Add-Finding CRIT (T 'scan.av.keiner') (T 'scan.av.keinerEmpf') }
+    elseif ($active.Count -gt 1) { Add-Finding WARN (T 'scan.av.mehrere' (($active | ForEach-Object Produkt) -join ', ')) (T 'scan.av.mehrereEmpf') }
+    else { Add-Finding OK (T 'scan.av.ok' ($active[0].Produkt) ($active[0].Signaturen)) }
 }
 
 Invoke-Check 'Microsoft Defender: Status' {
@@ -898,28 +913,28 @@ Invoke-Check 'Microsoft Defender: Status' {
             Plattform             = $s.AMProductVersion
         })
     if ($s.AMRunningMode -and $s.AMRunningMode -ne 'Normal') {
-        Add-Finding INFO "Defender im Modus '$($s.AMRunningMode)'" 'Erwartet, wenn ein anderer Virenscanner aktiv ist.'
+        Add-Finding INFO (T 'scan.defender.modus' ($s.AMRunningMode)) (T 'scan.defender.modusEmpf')
         return
     }
     $off = @()
-    if (-not $s.AntivirusEnabled) { $off += 'Virenschutz' }
-    if (-not $s.RealTimeProtectionEnabled) { $off += 'Echtzeitschutz' }
-    if (-not $s.BehaviorMonitorEnabled) { $off += 'Verhaltensüberwachung' }
-    if (-not $s.IoavProtectionEnabled) { $off += 'Download-Prüfung' }
-    if (-not $s.OnAccessProtectionEnabled) { $off += 'Zugriffsschutz' }
-    if ($off) { Add-Finding CRIT ('Abgeschaltet: ' + ($off -join ', ')) 'Schutzkomponenten in Windows-Sicherheit wieder einschalten.' }
-    else { Add-Finding OK 'Echtzeit-, Verhaltens- und Download-Schutz aktiv' }
+    if (-not $s.AntivirusEnabled) { $off += (T 'scan.defender.kompVirenschutz') }
+    if (-not $s.RealTimeProtectionEnabled) { $off += (T 'scan.defender.kompEchtzeit') }
+    if (-not $s.BehaviorMonitorEnabled) { $off += (T 'scan.defender.kompVerhalten') }
+    if (-not $s.IoavProtectionEnabled) { $off += (T 'scan.defender.kompDownload') }
+    if (-not $s.OnAccessProtectionEnabled) { $off += (T 'scan.defender.kompZugriff') }
+    if ($off) { Add-Finding CRIT (T 'scan.defender.abgeschaltet' ($off -join ', ')) (T 'scan.defender.abgeschaltetEmpf') }
+    else { Add-Finding OK (T 'scan.defender.ok') }
 
-    if ($s.IsTamperProtected) { Add-Finding OK 'An' -Check 'Defender: Manipulationsschutz' }
-    else { Add-Finding WARN 'Aus' 'Windows-Sicherheit > Viren- & Bedrohungsschutz > Einstellungen verwalten > Manipulationsschutz einschalten.' -Check 'Defender: Manipulationsschutz' }
+    if ($s.IsTamperProtected) { Add-Finding OK (T 'scan.allg.an') -Check 'Defender: Manipulationsschutz' }
+    else { Add-Finding WARN (T 'scan.allg.aus') (T 'scan.defender.manipulationEmpf') -Check 'Defender: Manipulationsschutz' }
 
     $age = [int]$s.AntivirusSignatureAge
-    $value = "Stand $(Format-Date $s.AntivirusSignatureLastUpdated) ($age Tage)"
-    if ($age -gt 7) { Add-Finding CRIT $value 'Signaturen veraltet: Windows Update bzw. Defender-Update prüfen.' -Check 'Defender: Signaturen' }
-    elseif ($age -gt 1) { Add-Finding WARN $value 'Signaturen sollten täglich aktualisiert werden.' -Check 'Defender: Signaturen' }
+    $value = T 'scan.defender.stand' (Format-Date $s.AntivirusSignatureLastUpdated) $age
+    if ($age -gt 7) { Add-Finding CRIT $value (T 'scan.defender.sigCritEmpf') -Check 'Defender: Signaturen' }
+    elseif ($age -gt 1) { Add-Finding WARN $value (T 'scan.defender.sigWarnEmpf') -Check 'Defender: Signaturen' }
     else { Add-Finding OK $value -Check 'Defender: Signaturen' }
 
-    if ([int]$s.QuickScanAge -gt 14) { Add-Finding INFO "Letzter Schnellscan vor $($s.QuickScanAge) Tagen" 'Defender scannt normalerweise in der Wartungszeit; läuft der PC dann nie, gelegentlich manuell scannen.' -Check 'Defender: Scans' }
+    if ([int]$s.QuickScanAge -gt 14) { Add-Finding INFO (T 'scan.defender.schnellscan' ($s.QuickScanAge)) (T 'scan.defender.schnellscanEmpf') -Check 'Defender: Scans' }
 }
 
 Invoke-Check 'Microsoft Defender: Einstellungen' {
@@ -927,40 +942,40 @@ Invoke-Check 'Microsoft Defender: Einstellungen' {
     $notes = @(); $warn = @()
     switch ([int]$p.PUAProtection) {
         1 { }
-        2 { $warn += 'PUA-Schutz nur im Überwachungsmodus' }
-        default { $warn += 'Blockieren potenziell unerwünschter Apps (PUA) aus' }
+        2 { $warn += (T 'scan.defEinst.puaUeberwachung') }
+        default { $warn += (T 'scan.defEinst.puaAus') }
     }
-    if ([int]$p.MAPSReporting -eq 0) { $warn += 'Cloudbasierter Schutz aus' }
-    if ([int]$p.SubmitSamplesConsent -eq 2) { $notes += 'Automatische Beispielübermittlung aus' }
-    if ([int]$p.EnableNetworkProtection -ne 1) { $notes += 'Netzwerkschutz aus' }
-    if ([int]$p.EnableControlledFolderAccess -ne 1) { $notes += 'Überwachter Ordnerzugriff (Ransomware-Schutz) aus' }
-    if ($warn) { Add-Finding WARN (($warn + $notes) -join '; ') 'Windows-Sicherheit > App- & Browsersteuerung > Zuverlässigkeitsbasierter Schutz: PUA blockieren einschalten; cloudbasierten Schutz aktivieren.' }
-    elseif ($notes) { Add-Finding INFO ($notes -join '; ') 'Netzwerkschutz blockiert bekannte Schad-Domains in allen Programmen (Set-MpPreference -EnableNetworkProtection Enabled). Überwachter Ordnerzugriff schützt vor Ransomware, meldet aber bei Spielen/Tools gelegentlich Fehlalarme.' }
-    else { Add-Finding OK 'PUA-Schutz, Cloud-Schutz, Netzwerkschutz und Ordnerschutz aktiv' }
+    if ([int]$p.MAPSReporting -eq 0) { $warn += (T 'scan.defEinst.cloudAus') }
+    if ([int]$p.SubmitSamplesConsent -eq 2) { $notes += (T 'scan.defEinst.beispiele') }
+    if ([int]$p.EnableNetworkProtection -ne 1) { $notes += (T 'scan.defEinst.netzwerkschutz') }
+    if ([int]$p.EnableControlledFolderAccess -ne 1) { $notes += (T 'scan.defEinst.ordnerzugriff') }
+    if ($warn) { Add-Finding WARN (($warn + $notes) -join '; ') (T 'scan.defEinst.warnEmpf') }
+    elseif ($notes) { Add-Finding INFO ($notes -join '; ') (T 'scan.defEinst.infoEmpf') }
+    else { Add-Finding OK (T 'scan.defEinst.ok') }
 
     # Regeln zur Verringerung der Angriffsfläche (ASR)
     $asrNames = @{
-        '56a863a9-875e-4185-98a7-b882c64b5ce5' = 'Missbrauch anfälliger signierter Treiber blockieren'
-        '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2' = 'Diebstahl von Anmeldedaten aus LSASS blockieren'
-        'd4f940ab-401b-4efc-aadc-ad5f3c50688a' = 'Office: untergeordnete Prozesse blockieren'
-        '3b576869-a4ec-4529-8536-b80a7769e899' = 'Office: ausführbare Inhalte erstellen blockieren'
-        '75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84' = 'Office: Code-Injektion blockieren'
-        '92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b' = 'Office-Makros: Win32-API-Aufrufe blockieren'
-        '26190899-1602-49e8-8b27-eb1d0a1ce869' = 'Office-Kommunikations-Apps: untergeordnete Prozesse blockieren'
-        '7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c' = 'Adobe Reader: untergeordnete Prozesse blockieren'
-        'be9ba2d9-53ea-4cdc-84e5-9b1eeee46550' = 'Ausführbare Inhalte aus E-Mails blockieren'
-        '01443614-cd74-433a-b99e-2ecdc07bfc25' = 'Unbekannte ausführbare Dateien blockieren (Verbreitung/Alter)'
-        '5beb7efe-fd9a-4556-801d-275e5ffc04cc' = 'Verschleierte Skripte blockieren'
-        'd3e037e1-3eb8-44c8-a917-57927947596d' = 'JS/VBS starten heruntergeladene Programme: blockieren'
-        'e6db77e5-3df2-4cf1-b95a-636979351e5b' = 'Persistenz über WMI-Ereignisse blockieren'
-        'd1e49aac-8f56-4280-b9ba-993a6d77406c' = 'Prozesse aus PsExec/WMI blockieren'
-        'b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4' = 'Unsignierte Prozesse von USB blockieren'
-        'c1db55ab-c21a-4637-bb3f-a12568109d35' = 'Erweiterter Ransomware-Schutz'
-        '33ddedf1-c6e0-47cb-833e-de6133960387' = 'Neustart in abgesicherten Modus blockieren'
-        'c0033c00-d16d-4114-a5a0-dc9b3a7d2ceb' = 'Kopierte/getarnte Systemtools blockieren'
-        'a8f5898e-1dc8-49a9-9878-85004b8a61e6' = 'Webshell-Erstellung auf Servern blockieren'
+        '56a863a9-875e-4185-98a7-b882c64b5ce5' = (T 'scan.asr.treiber')
+        '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2' = (T 'scan.asr.lsass')
+        'd4f940ab-401b-4efc-aadc-ad5f3c50688a' = (T 'scan.asr.officeKind')
+        '3b576869-a4ec-4529-8536-b80a7769e899' = (T 'scan.asr.officeExe')
+        '75668c1f-73b5-4cf0-bb93-3ecf5cb7cc84' = (T 'scan.asr.officeInj')
+        '92e97fa1-2edf-4476-bdd6-9dd0b4dddc7b' = (T 'scan.asr.officeMakro')
+        '26190899-1602-49e8-8b27-eb1d0a1ce869' = (T 'scan.asr.officeKomm')
+        '7674ba52-37eb-4a4f-a9a1-f0f9a1619a2c' = (T 'scan.asr.adobe')
+        'be9ba2d9-53ea-4cdc-84e5-9b1eeee46550' = (T 'scan.asr.email')
+        '01443614-cd74-433a-b99e-2ecdc07bfc25' = (T 'scan.asr.unbekannt')
+        '5beb7efe-fd9a-4556-801d-275e5ffc04cc' = (T 'scan.asr.skripte')
+        'd3e037e1-3eb8-44c8-a917-57927947596d' = (T 'scan.asr.jsvbs')
+        'e6db77e5-3df2-4cf1-b95a-636979351e5b' = (T 'scan.asr.wmi')
+        'd1e49aac-8f56-4280-b9ba-993a6d77406c' = (T 'scan.asr.psexec')
+        'b2b3f03d-6a65-4f7b-a9c7-1c7ef74a9ba4' = (T 'scan.asr.usb')
+        'c1db55ab-c21a-4637-bb3f-a12568109d35' = (T 'scan.asr.ransomware')
+        '33ddedf1-c6e0-47cb-833e-de6133960387' = (T 'scan.asr.abgesichert')
+        'c0033c00-d16d-4114-a5a0-dc9b3a7d2ceb' = (T 'scan.asr.kopiert')
+        'a8f5898e-1dc8-49a9-9878-85004b8a61e6' = (T 'scan.asr.webshell')
     }
-    $actNames = @{ 0 = 'Aus'; 1 = 'Blockieren'; 2 = 'Überwachen'; 5 = 'Nicht konfiguriert'; 6 = 'Warnen' }
+    $actBlock = T 'scan.asr.aktBlock'; $actWarn = T 'scan.asr.aktWarnen'; $actNames = @{ 0 = (T 'scan.asr.aktAus'); 1 = $actBlock; 2 = (T 'scan.asr.aktUeberwachen'); 5 = (T 'scan.asr.aktNichtKonf'); 6 = $actWarn }
     $ids = @($p.AttackSurfaceReductionRules_Ids | Where-Object { $_ })
     $acts = @($p.AttackSurfaceReductionRules_Actions)
     $asrRows = for ($i = 0; $i -lt $ids.Count; $i++) {
@@ -969,11 +984,11 @@ Invoke-Check 'Microsoft Defender: Einstellungen' {
         [pscustomobject][ordered]@{ Regel = $name; Aktion = $actNames[[int]$acts[$i]] }
     }
     Add-Table 'Defender: ASR-Regeln' $asrRows
-    $activeAsr = @($asrRows | Where-Object { $_.Aktion -in 'Blockieren', 'Warnen' })
-    if ($activeAsr.Count) { Add-Finding OK "$($activeAsr.Count) Regeln aktiv" -Check 'Defender: ASR-Regeln' }
+    $activeAsr = @($asrRows | Where-Object { $_.Aktion -in $actBlock, $actWarn })
+    if ($activeAsr.Count) { Add-Finding OK (T 'scan.asr.aktiv' $activeAsr.Count) -Check 'Defender: ASR-Regeln' }
     else {
-        Add-Finding INFO 'Keine Regeln zur Verringerung der Angriffsfläche aktiv' `
-            'Ohne Nebenwirkungen für Gaming/Entwicklung: "Missbrauch anfälliger signierter Treiber blockieren" und "Diebstahl von Anmeldedaten aus LSASS blockieren" (Add-MpPreference -AttackSurfaceReductionRules_Ids <GUID> -AttackSurfaceReductionRules_Actions Enabled).' `
+        Add-Finding INFO (T 'scan.asr.keine') `
+            (T 'scan.asr.keineEmpf') `
             -Check 'Defender: ASR-Regeln'
     }
 
@@ -983,7 +998,7 @@ Invoke-Check 'Microsoft Defender: Einstellungen' {
     $excl += @($p.ExclusionProcess | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ Typ = 'Prozess'; Wert = $_ } })
     $excl += @($p.ExclusionExtension | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ Typ = 'Endung'; Wert = $_ } })
     if ($excl | Where-Object { $_.Wert -like 'N/A*' }) {
-        Add-Finding SKIP 'Ausnahmen nur mit Adminrechten lesbar' -Check 'Defender: Ausnahmen'
+        Add-Finding SKIP (T 'scan.ausnahmen.nurAdmin') -Check 'Defender: Ausnahmen'
     }
     else {
         $exclRows = foreach ($e in $excl) {
@@ -992,11 +1007,11 @@ Invoke-Check 'Microsoft Defender: Einstellungen' {
         Add-Table 'Defender: Ausnahmen' $exclRows
         $crit = @($exclRows | Where-Object Risiko -EQ 'CRIT')
         $warn = @($exclRows | Where-Object Risiko -EQ 'WARN')
-        $rec = 'Ausnahmen so eng wie möglich fassen (einzelne Ordner statt Laufwerke/Benutzerordner, keine Skript-Interpreter). Für Entwicklungsordner besser ein Dev Drive nutzen.'
-        if ($crit) { Add-Finding CRIT ('Gefährliche Ausnahmen: ' + (($crit | ForEach-Object { "$($_.Typ) $($_.Wert)" }) -join '; ')) $rec -Check 'Defender: Ausnahmen' }
-        elseif ($warn) { Add-Finding WARN ('Riskante Ausnahmen: ' + (($warn | ForEach-Object { "$($_.Typ) $($_.Wert)" }) -join '; ')) $rec -Check 'Defender: Ausnahmen' }
-        elseif ($exclRows) { Add-Finding INFO "$(@($exclRows).Count) Ausnahmen, keine auffälligen (Liste im Anhang)" -Check 'Defender: Ausnahmen' }
-        else { Add-Finding OK 'Keine Ausnahmen' -Check 'Defender: Ausnahmen' }
+        $rec = T 'scan.ausnahmen.empf'
+        if ($crit) { Add-Finding CRIT (T 'scan.ausnahmen.gefaehrlich' (($crit | ForEach-Object { "$($_.Typ) $($_.Wert)" }) -join '; ')) $rec -Check 'Defender: Ausnahmen' }
+        elseif ($warn) { Add-Finding WARN (T 'scan.ausnahmen.riskant' (($warn | ForEach-Object { "$($_.Typ) $($_.Wert)" }) -join '; ')) $rec -Check 'Defender: Ausnahmen' }
+        elseif ($exclRows) { Add-Finding INFO (T 'scan.ausnahmen.info' (@($exclRows).Count)) -Check 'Defender: Ausnahmen' }
+        else { Add-Finding OK (T 'scan.ausnahmen.keine') -Check 'Defender: Ausnahmen' }
     }
 }
 
@@ -1016,9 +1031,9 @@ Invoke-Check 'Microsoft Defender: Funde' {
     }
     Add-Table 'Defender: Funde im Zeitraum' $rows
     $active = @($threats | Where-Object IsActive)
-    if ($active) { Add-Finding CRIT ('Aktive Bedrohung: ' + (($active | ForEach-Object ThreatName) -join ', ')) 'Vollständigen Scan und Microsoft-Defender-Offlinescan ausführen.' }
-    elseif ($det) { Add-Finding WARN ("$($det.Count) Funde in $EventDays Tagen: " + ((@($rows | ForEach-Object Bedrohung | Select-Object -Unique)) -join ', ')) 'Herkunft der Funde prüfen (Liste im Anhang).' }
-    else { Add-Finding OK "Keine Funde in $EventDays Tagen" }
+    if ($active) { Add-Finding CRIT (T 'scan.funde.aktiv' (($active | ForEach-Object ThreatName) -join ', ')) (T 'scan.funde.aktivEmpf') }
+    elseif ($det) { Add-Finding WARN (T 'scan.funde.warn' $det.Count $EventDays ((@($rows | ForEach-Object Bedrohung | Select-Object -Unique)) -join ', ')) (T 'scan.funde.warnEmpf') }
+    else { Add-Finding OK (T 'scan.funde.keine' $EventDays) }
 }
 
 #endregion
@@ -1036,10 +1051,10 @@ Invoke-Check 'Firewall-Profile' {
     $thirdParty = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName FirewallProduct -ErrorAction SilentlyContinue | ForEach-Object displayName)
     $off = @($rows | Where-Object { $_.Aktiv -ne 'True' } | ForEach-Object Profil)
     $open = @($rows | Where-Object { $_.Eingehend -eq 'Allow' } | ForEach-Object Profil)
-    if ($off -and -not $thirdParty) { Add-Finding CRIT ('Firewall aus für: ' + ($off -join ', ')) 'Windows-Firewall für alle Profile einschalten.' }
-    elseif ($open) { Add-Finding CRIT ('Eingehend standardmäßig erlaubt: ' + ($open -join ', ')) 'Standardaktion für eingehende Verbindungen auf Blockieren setzen.' }
-    elseif ($off) { Add-Finding INFO ("Windows-Firewall aus, stattdessen: " + ($thirdParty -join ', ')) }
-    else { Add-Finding OK 'Alle Profile aktiv, eingehend blockiert' }
+    if ($off -and -not $thirdParty) { Add-Finding CRIT (T 'scan.fw.aus' ($off -join ', ')) (T 'scan.fw.ausEmpf') }
+    elseif ($open) { Add-Finding CRIT (T 'scan.fw.eingehend' ($open -join ', ')) (T 'scan.fw.eingehendEmpf') }
+    elseif ($off) { Add-Finding INFO (T 'scan.fw.drittanbieter' ($thirdParty -join ', ')) }
+    else { Add-Finding OK (T 'scan.fw.ok') }
 }
 
 Invoke-Check 'Netzwerkprofile' {
@@ -1047,7 +1062,7 @@ Invoke-Check 'Netzwerkprofile' {
         [pscustomobject][ordered]@{ Netzwerk = $n.Name; Adapter = $n.InterfaceAlias; Kategorie = [string]$n.NetworkCategory; IPv4 = [string]$n.IPv4Connectivity }
     }
     Add-Table 'Netzwerkprofile' $rows
-    Add-Finding INFO (($rows | ForEach-Object { "$($_.Adapter): $($_.Kategorie)" }) -join '; ') 'Im eigenen Heimnetz ist "Privat" in Ordnung; in fremden Netzen immer "Öffentlich".'
+    Add-Finding INFO (($rows | ForEach-Object { "$($_.Adapter): $($_.Kategorie)" }) -join '; ') (T 'scan.netz.empf')
 }
 
 Invoke-Check 'Firewall: eigene Eingangsregeln' {
@@ -1071,10 +1086,10 @@ Invoke-Check 'Firewall: eigene Eingangsregeln' {
     $publicNow = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object { [string]$_.NetworkCategory -eq 'Public' }).Count -gt 0
     if ($open) {
         $apps = @($open | ForEach-Object { if ($_.Programm -and $_.Programm -ne 'Any') { [IO.Path]::GetFileName($_.Programm) } else { $_.Name } } | Select-Object -Unique)
-        Add-Finding WARN ('{0} von {1} eigenen Regeln ({2} Programme) erlauben eingehende Verbindungen im Profil Öffentlich von überall{3}' -f $open.Count, @($rows).Count, $apps.Count, $(if ($publicNow) { '; dein Netzwerk ist aktuell als Öffentlich eingestuft, die Regeln greifen also' } else { '' })) `
-            'Regeln alter/deinstallierter Spiele entfernen und die übrigen auf das Profil Privat beschränken (Liste im Anhang). Spiele brauchen eingehende Verbindungen meist nur für Host/P2P-Funktionen.'
+        Add-Finding WARN (T 'scan.eingang.offen' $open.Count (@($rows).Count) $apps.Count $(if ($publicNow) { T 'scan.eingang.netzOeffentlich' } else { '' })) `
+            (T 'scan.eingang.offenEmpf')
     }
-    else { Add-Finding OK "$(@($rows).Count) eigene Regeln, keine im Profil Öffentlich offen" }
+    else { Add-Finding OK (T 'scan.eingang.ok' (@($rows).Count)) }
 }
 
 Invoke-Check 'Offene Netzwerkports' {
@@ -1109,9 +1124,9 @@ Invoke-Check 'Offene Netzwerkports' {
     $other = @($tcpRows | Where-Object {
             -not $risky.ContainsKey($_.Port) -and -not ($_.Prozess -in $winProcs -and ($_.Port -in 135, 139, 445, 5040, 7680 -or $_.Port -ge 49664))
         } | ForEach-Object { "$($_.Port) ($($_.Prozess))" })
-    if ($hits) { Add-Finding WARN ('Dienste lauschen im Netzwerk: ' + ($hits -join ', ')) 'Prüfen, ob diese Dienste von anderen Geräten erreichbar sein müssen; sonst nur auf 127.0.0.1 binden oder beenden.' }
-    elseif ($other) { Add-Finding INFO ('Weitere offene TCP-Ports: ' + ($other -join ', ')) 'Zuordnung im Anhang prüfen; die Windows-Firewall blockiert sie, solange keine Zulassen-Regel existiert.' }
-    else { Add-Finding OK 'Nur Windows-Standardports offen' }
+    if ($hits) { Add-Finding WARN (T 'scan.ports.lauschen' ($hits -join ', ')) (T 'scan.ports.lauschenEmpf') }
+    elseif ($other) { Add-Finding INFO (T 'scan.ports.weitere' ($other -join ', ')) (T 'scan.ports.weitereEmpf') }
+    else { Add-Finding OK (T 'scan.ports.ok') }
 }
 
 Invoke-Check 'Router-Portweiterleitungen (UPnP)' {
@@ -1127,18 +1142,18 @@ Invoke-Check 'Router-Portweiterleitungen (UPnP)' {
     }
     if (-not (Wait-Job $job -Timeout 30)) {
         Stop-Job $job; Remove-Job $job -Force
-        Add-Finding SKIP 'Keine Antwort vom Router (Zeitüberschreitung)'
+        Add-Finding SKIP (T 'scan.upnp.zeit')
         return
     }
     $res = @(Receive-Job $job -ErrorAction SilentlyContinue)
     Remove-Job $job -Force
     $maps = @($res | Where-Object { $_ -isnot [string] } | Select-Object Extern, Protokoll, Intern, Ziel, Beschreibung, Aktiv)
-    if (-not $maps) { Add-Finding OK 'Keine UPnP-Portweiterleitungen sichtbar (oder UPnP am Router aus)'; return }
+    if (-not $maps) { Add-Finding OK (T 'scan.upnp.keine'); return }
     Add-Table 'Router-Portweiterleitungen (UPnP)' $maps
     $myIps = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object IPAddress)
     $mine = @($maps | Where-Object { $_.Ziel -in $myIps })
-    if ($mine) { Add-Finding WARN ('Aus dem Internet auf diesen PC weitergeleitet: ' + (($mine | ForEach-Object { "$($_.Extern)/$($_.Protokoll) $($_.Beschreibung)" }) -join '; ')) 'Prüfen, ob die Programme noch genutzt werden; UPnP am Router abschalten, wenn kein Spiel/Programm es braucht.' }
-    else { Add-Finding INFO "$($maps.Count) Weiterleitungen zu anderen Geräten im Netz" 'UPnP am Router abschalten, wenn nicht benötigt.' }
+    if ($mine) { Add-Finding WARN (T 'scan.upnp.meinPc' (($mine | ForEach-Object { "$($_.Extern)/$($_.Protokoll) $($_.Beschreibung)" }) -join '; ')) (T 'scan.upnp.meinPcEmpf') }
+    else { Add-Finding INFO (T 'scan.upnp.andere' $maps.Count) (T 'scan.upnp.andereEmpf') }
 }
 
 Invoke-Check 'SMB-Konfiguration' {
@@ -1147,25 +1162,25 @@ Invoke-Check 'SMB-Konfiguration' {
     try { $srv = Get-SmbServerConfiguration -ErrorAction Stop } catch {}
     try { $cli = Get-SmbClientConfiguration -ErrorAction Stop } catch {}
     if ($srv) {
-        if ($srv.EnableSMB1Protocol) { $issues += 'SMBv1-Server aktiv' }
-        if (-not $srv.RequireSecuritySignature) { $notes += 'Server erzwingt keine SMB-Signierung' }
+        if ($srv.EnableSMB1Protocol) { $issues += (T 'scan.smb.v1Server') }
+        if (-not $srv.RequireSecuritySignature) { $notes += (T 'scan.smb.srvSignierung') }
     }
-    else { $notes += 'Serverkonfiguration nicht lesbar' }
+    else { $notes += (T 'scan.smb.srvNichtLesbar') }
     $mrx = 'HKLM:\SYSTEM\CurrentControlSet\Services\mrxsmb10'
-    if ((Test-Path $mrx) -and (Get-RegValue $mrx 'Start') -ne 4) { $issues += 'SMBv1-Client aktiv' }
+    if ((Test-Path $mrx) -and (Get-RegValue $mrx 'Start') -ne 4) { $issues += (T 'scan.smb.v1Client') }
     if ($cli) {
-        if ($cli.EnableInsecureGuestLogons) { $issues += 'Unsichere Gastanmeldungen erlaubt' }
-        if (-not $cli.RequireSecuritySignature) { $notes += 'Client erzwingt keine SMB-Signierung' }
+        if ($cli.EnableInsecureGuestLogons) { $issues += (T 'scan.smb.gast') }
+        if (-not $cli.RequireSecuritySignature) { $notes += (T 'scan.smb.cliSignierung') }
     }
-    if ($issues -match 'SMBv1') { Add-Finding CRIT (($issues + $notes) -join '; ') 'SMBv1 deinstallieren (Windows-Features > SMB 1.0/CIFS). Alte NAS ggf. auf SMB2/3 umstellen.' }
-    elseif ($issues) { Add-Finding WARN (($issues + $notes) -join '; ') 'Unsichere Gastanmeldungen abschalten; NAS-Freigaben mit Benutzer/Kennwort einbinden.' }
+    if ($issues -match 'SMBv1') { Add-Finding CRIT (($issues + $notes) -join '; ') (T 'scan.smb.v1Empf') }
+    elseif ($issues) { Add-Finding WARN (($issues + $notes) -join '; ') (T 'scan.smb.gastEmpf') }
     elseif ($notes) { Add-Finding INFO ($notes -join '; ') }
-    else { Add-Finding OK 'Kein SMBv1, Signierung erzwungen, keine Gastanmeldungen' }
+    else { Add-Finding OK (T 'scan.smb.ok') }
 }
 
 Invoke-Check 'Freigaben' {
     $shares = @(Get-CimInstance Win32_Share | Where-Object { $_.Name -notmatch '\$$' })
-    if (-not $shares) { Add-Finding OK 'Keine Benutzerfreigaben'; return }
+    if (-not $shares) { Add-Finding OK (T 'scan.freigaben.keine'); return }
     $everyone = ([Security.Principal.SecurityIdentifier]'S-1-1-0').Translate([Security.Principal.NTAccount]).Value
     $rows = foreach ($s in $shares) {
         $access = ''
@@ -1174,37 +1189,37 @@ Invoke-Check 'Freigaben' {
     }
     Add-Table 'Freigaben' $rows
     $open = @($rows | Where-Object { $_.Zugriff -match ([regex]::Escape($everyone) + ': (Full|Change)') })
-    if ($open) { Add-Finding WARN ('Schreibzugriff für Jeder: ' + (($open | ForEach-Object Name) -join ', ')) 'Freigaberechte auf bestimmte Benutzer beschränken.' }
-    else { Add-Finding INFO ('Freigaben: ' + (($rows | ForEach-Object { "$($_.Name) ($($_.Pfad))" }) -join ', ')) 'Nicht mehr benötigte Freigaben entfernen.' }
+    if ($open) { Add-Finding WARN (T 'scan.freigaben.schreib' (($open | ForEach-Object Name) -join ', ')) (T 'scan.freigaben.schreibEmpf') }
+    else { Add-Finding INFO (T 'scan.freigaben.info' (($rows | ForEach-Object { "$($_.Name) ($($_.Pfad))" }) -join ', ')) (T 'scan.freigaben.infoEmpf') }
 }
 
 Invoke-Check 'LLMNR / NetBIOS' {
     $llmnr = Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient' 'EnableMulticast'
-    $nbNames = @{ 0 = 'Standard (DHCP)'; 1 = 'an'; 2 = 'aus' }
+    $nbNames = @{ 0 = (T 'scan.llmnr.standardDhcp'); 1 = (T 'scan.allg.anKlein'); 2 = (T 'scan.allg.ausKlein') }
     $nb = @(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' | ForEach-Object { '{0}: {1}' -f $_.Description, $nbNames[[int]$_.TcpipNetbiosOptions] })
-    $value = 'LLMNR ' + $(if ($llmnr -eq 0) { 'aus' } else { 'an (Standard)' }) + '; NetBIOS: ' + ($nb -join '; ')
+    $value = T 'scan.llmnr.wert' $(if ($llmnr -eq 0) { T 'scan.allg.ausKlein' } else { T 'scan.llmnr.anStandard' }) ($nb -join '; ')
     if ($llmnr -eq 0) { Add-Finding OK $value }
-    else { Add-Finding INFO $value 'Im eigenen Heimnetz geringes Risiko. In fremden Netzen lassen sich über LLMNR/NetBIOS Anmelde-Hashes abgreifen; abschaltbar per Gruppenrichtlinie (DNS-Client > Multicastnamensauflösung deaktivieren).' }
+    else { Add-Finding INFO $value (T 'scan.llmnr.empf') }
 }
 
 Invoke-Check 'Proxy und Hosts-Datei' {
     $is = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
     $proxy = @()
-    if ((Get-RegValue $is 'ProxyEnable') -eq 1) { $proxy += "Benutzer-Proxy $(Get-RegValue $is 'ProxyServer')" }
+    if ((Get-RegValue $is 'ProxyEnable') -eq 1) { $proxy += (T 'scan.proxy.benutzer' (Get-RegValue $is 'ProxyServer')) }
     $pac = Get-RegValue $is 'AutoConfigURL'
-    if ($pac) { $proxy += "Proxy-Skript $pac" }
+    if ($pac) { $proxy += (T 'scan.proxy.skript' $pac) }
     $winhttp = (Invoke-Native "$script:Sys32\netsh.exe" @('winhttp', 'show', 'proxy')) -join ' '
-    if ($winhttp -and $winhttp -notmatch 'Direkt|Direct') { $proxy += 'WinHTTP-Proxy: ' + ($winhttp -replace '\s+', ' ').Trim() }
+    if ($winhttp -and $winhttp -notmatch 'Direkt|Direct') { $proxy += (T 'scan.proxy.winhttp' (($winhttp -replace '\s+', ' ').Trim())) }
 
     $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
     $entries = @(Get-Content -LiteralPath $hostsPath -ErrorAction SilentlyContinue | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
     Add-Table 'Hosts-Datei (aktive Einträge)' @($entries | Select-Object -First 200 | ForEach-Object { [pscustomobject]@{ Eintrag = $_ } })
     $blocked = @($entries | Where-Object { $_ -match 'update|defender|smartscreen|wdcp|wd\.microsoft|mp\.microsoft|delivery\.mp' })
 
-    if ($blocked) { Add-Finding WARN "Hosts-Datei sperrt Update-/Defender-Adressen ($($blocked.Count) Einträge)" 'Einträge stammen meist von "Anti-Telemetrie"-Tools und verhindern Updates bzw. Cloud-Schutz: entfernen.' }
-    elseif ($proxy) { Add-Finding WARN ('Proxy aktiv: ' + ($proxy -join '; ')) 'Prüfen, ob gewollt: Schadsoftware leitet Verkehr gern über einen Proxy um.' }
-    elseif ($entries) { Add-Finding INFO "Kein Proxy; Hosts-Datei mit $($entries.Count) eigenen Einträgen (Anhang)" }
-    else { Add-Finding OK 'Kein Proxy, Hosts-Datei unverändert' }
+    if ($blocked) { Add-Finding WARN (T 'scan.proxy.hostsSperrt' $blocked.Count) (T 'scan.proxy.hostsSperrtEmpf') }
+    elseif ($proxy) { Add-Finding WARN (T 'scan.proxy.aktiv' ($proxy -join '; ')) (T 'scan.proxy.aktivEmpf') }
+    elseif ($entries) { Add-Finding INFO (T 'scan.proxy.hostsEintraege' $entries.Count) }
+    else { Add-Finding OK (T 'scan.proxy.ok') }
 }
 
 Invoke-Check 'DNS-Server' {
@@ -1213,7 +1228,7 @@ Invoke-Check 'DNS-Server' {
         [pscustomobject][ordered]@{ Adapter = $a.Name; DNS = (@($d.ServerAddresses) -join ', ') }
     }
     Add-Table 'DNS-Server' $rows
-    Add-Finding INFO (($rows | ForEach-Object { "$($_.Adapter): $($_.DNS)" }) -join '; ') 'Unerwartete DNS-Server (nicht Router/Provider/bekannter Anbieter) können auf eine Manipulation hinweisen.'
+    Add-Finding INFO (($rows | ForEach-Object { "$($_.Adapter): $($_.DNS)" }) -join '; ') (T 'scan.dns.empf')
 }
 
 #endregion
@@ -1238,15 +1253,15 @@ Invoke-Check 'Lokale Benutzerkonten' {
     Add-Table 'Lokale Benutzerkonten' $rows
     $crit = @(); $warn = @()
     $admin = $users | Where-Object { $_.SID.Value -like '*-500' }
-    if ($admin.Enabled) { $warn += "Eingebautes Administratorkonto '$($admin.Name)' aktiv" }
+    if ($admin.Enabled) { $warn += (T 'scan.konten.admin' $admin.Name) }
     $guest = $users | Where-Object { $_.SID.Value -like '*-501' }
-    if ($guest.Enabled) { $crit += "Gastkonto '$($guest.Name)' aktiv" }
+    if ($guest.Enabled) { $crit += (T 'scan.konten.gast' $guest.Name) }
     $noPw = @($users | Where-Object { $_.Enabled -and -not $_.PasswordRequired -and [string]$_.PrincipalSource -ne 'MicrosoftAccount' -and $_.SID.Value -notlike '*-50?' })
-    if ($noPw) { $warn += 'Konten ohne Kennwortpflicht: ' + (($noPw | ForEach-Object Name) -join ', ') }
+    if ($noPw) { $warn += (T 'scan.konten.ohneKennwort' (($noPw | ForEach-Object Name) -join ', ')) }
     $enabled = @($users | Where-Object Enabled)
-    if ($crit) { Add-Finding CRIT (($crit + $warn) -join '; ') 'Gastkonto deaktivieren.' }
-    elseif ($warn) { Add-Finding WARN ($warn -join '; ') 'Eingebautes Administratorkonto deaktivieren; jedes Konto mit Kennwort/PIN schützen.' }
-    else { Add-Finding OK "$($enabled.Count) aktive Konten: $(($enabled | ForEach-Object Name) -join ', ')" }
+    if ($crit) { Add-Finding CRIT (($crit + $warn) -join '; ') (T 'scan.konten.gastEmpf') }
+    elseif ($warn) { Add-Finding WARN ($warn -join '; ') (T 'scan.konten.adminEmpf') }
+    else { Add-Finding OK (T 'scan.konten.ok' $enabled.Count (($enabled | ForEach-Object Name) -join ', ')) }
 }
 
 Invoke-Check 'Administratorgruppe' {
@@ -1258,9 +1273,9 @@ Invoke-Check 'Administratorgruppe' {
     Add-Table 'Administratoren' @($members | ForEach-Object { [pscustomobject]@{ Mitglied = $_ } })
     $tokenGroups = (Invoke-Native "$script:Sys32\whoami.exe" @('/groups', '/fo', 'csv', '/nh')) -join "`n"
     $meIsAdmin = $tokenGroups -match '"S-1-5-32-544"'
-    $value = "$($members.Count) Mitglieder: $($members -join ', ')"
-    if ($members.Count -gt 2) { Add-Finding WARN $value 'Nicht mehr benötigte Administratorkonten entfernen.' }
-    elseif ($meIsAdmin) { Add-Finding INFO "$value. Das angemeldete Konto ($env:USERNAME) ist Administrator." 'Am sichersten: Standardkonto für den Alltag, Admin-Konto nur für Installationen. Mindestens UAC nie abschalten.' }
+    $value = T 'scan.admin.mitglieder' $members.Count ($members -join ', ')
+    if ($members.Count -gt 2) { Add-Finding WARN $value (T 'scan.admin.zuviele') }
+    elseif ($meIsAdmin) { Add-Finding INFO (T 'scan.admin.ichBinAdmin' $value $env:USERNAME) (T 'scan.admin.ichBinAdminEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -1276,16 +1291,16 @@ Invoke-Check 'Kennwort- und Sperrrichtlinie' -NeedsAdmin {
     Add-Table 'Lokale Sicherheitsrichtlinie' @($keys | ForEach-Object { [pscustomobject]@{ Einstellung = $_; Wert = $cfg[$_] } })
     $lockout = [int]$cfg['LockoutBadCount']
     $minLen = [int]$cfg['MinimumPasswordLength']
-    if ($cfg['ClearTextPassword'] -eq '1') { Add-Finding CRIT 'Kennwörter werden mit umkehrbarer Verschlüsselung gespeichert' 'ClearTextPassword in der lokalen Sicherheitsrichtlinie deaktivieren.' }
-    elseif ($lockout -eq 0) { Add-Finding WARN "Keine Kontosperre bei falschen Kennwörtern (Mindestlänge $minLen)" 'Kontosperrungsschwelle setzen, z. B. net accounts /lockoutthreshold:10 /lockoutduration:10 /lockoutwindow:10 (Windows-Standard bei Neuinstallation).' }
-    else { Add-Finding OK "Sperre nach $lockout Fehlversuchen für $($cfg['LockoutDuration']) Min.; Mindestlänge $minLen" }
+    if ($cfg['ClearTextPassword'] -eq '1') { Add-Finding CRIT (T 'scan.kennwort.klartext') (T 'scan.kennwort.klartextEmpf') }
+    elseif ($lockout -eq 0) { Add-Finding WARN (T 'scan.kennwort.keineSperre' $minLen) (T 'scan.kennwort.keineSperreEmpf') }
+    else { Add-Finding OK (T 'scan.kennwort.ok' $lockout ($cfg['LockoutDuration']) $minLen) }
 }
 
 Invoke-Check 'Automatische Anmeldung' {
     $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
-    if (Get-RegValue $wl 'DefaultPassword') { Add-Finding CRIT 'Kennwort im Klartext in der Registry (Winlogon\DefaultPassword)' 'Wert löschen; für Autologon Sysinternals Autologon verwenden (speichert verschlüsselt).' }
-    elseif ((Get-RegValue $wl 'AutoAdminLogon') -eq '1') { Add-Finding WARN 'Automatische Anmeldung aktiv' 'Jeder mit Zugang zum PC ist nach dem Einschalten angemeldet.' }
-    else { Add-Finding OK 'Aus' }
+    if (Get-RegValue $wl 'DefaultPassword') { Add-Finding CRIT (T 'scan.autologon.klartext') (T 'scan.autologon.klartextEmpf') }
+    elseif ((Get-RegValue $wl 'AutoAdminLogon') -eq '1') { Add-Finding WARN (T 'scan.autologon.aktiv') (T 'scan.autologon.aktivEmpf') }
+    else { Add-Finding OK (T 'scan.allg.aus') }
 }
 
 Invoke-Check 'Bildschirmsperre' {
@@ -1294,10 +1309,10 @@ Invoke-Check 'Bildschirmsperre' {
     $ssOn = (Get-RegValue $d 'ScreenSaveActive') -eq '1' -and (Get-RegValue $d 'ScreenSaverIsSecure') -eq '1' -and (Get-RegValue $d 'SCRNSAVE.EXE')
     $timeout = [int](Get-RegValue $d 'ScreenSaveTimeOut')
     $dynLock = (Get-RegValue 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' 'EnableGoodbye') -eq 1
-    if ($inact -gt 0) { Add-Finding OK "Sperre nach $([int]($inact / 60)) Min. Inaktivität (Richtlinie)" }
-    elseif ($ssOn) { Add-Finding OK "Bildschirmschoner mit Sperre nach $([int]($timeout / 60)) Min." }
-    elseif ($dynLock) { Add-Finding OK 'Dynamische Sperre aktiv' }
-    else { Add-Finding INFO 'Keine automatische Sperre bei Inaktivität' 'Für einen Heim-PC optional: beim Weggehen Win+L, oder Sperre per Bildschirmschoner-Einstellung.' }
+    if ($inact -gt 0) { Add-Finding OK (T 'scan.sperre.richtlinie' ([int]($inact / 60))) }
+    elseif ($ssOn) { Add-Finding OK (T 'scan.sperre.schoner' ([int]($timeout / 60))) }
+    elseif ($dynLock) { Add-Finding OK (T 'scan.sperre.dynamisch') }
+    else { Add-Finding INFO (T 'scan.sperre.keine') (T 'scan.sperre.keineEmpf') }
 }
 
 #endregion
@@ -1312,37 +1327,37 @@ Invoke-Check 'Benutzerkontensteuerung (UAC)' {
     $cpba = Get-RegValue $k 'ConsentPromptBehaviorAdmin'
     $sd = Get-RegValue $k 'PromptOnSecureDesktop'
     $apm = Get-RegValue $k 'TypeOfAdminApprovalMode'
-    $levels = @{ 0 = 'ohne Nachfrage'; 1 = 'Kennwort (sicherer Desktop)'; 2 = 'immer benachrichtigen'; 3 = 'Kennwort'; 4 = 'Zustimmung'; 5 = 'Standard' }
-    if ($lua -eq 0) { Add-Finding CRIT 'UAC vollständig deaktiviert' 'UAC wieder einschalten (EnableLUA = 1), sonst läuft jedes Programm mit vollen Rechten.' }
-    elseif ($cpba -eq 0) { Add-Finding CRIT 'Adminrechte werden ohne Nachfrage erteilt' 'UAC-Regler mindestens auf Standard stellen.' }
-    elseif ($sd -eq 0) { Add-Finding WARN 'UAC-Abfrage nicht auf dem sicheren Desktop' 'Schieberegler auf Standard: Schadprogramme können die Abfrage sonst fernsteuern.' }
-    else { Add-Finding OK ("Aktiv, Stufe: $($levels[[int]$cpba])" + $(if ($apm -eq 2) { ', Administratorschutz an' } else { '' })) }
+    $levels = @{ 0 = (T 'scan.uac.ohneNachfrage'); 1 = (T 'scan.uac.kennwortSicher'); 2 = (T 'scan.uac.immer'); 3 = (T 'scan.uac.kennwort'); 4 = (T 'scan.uac.zustimmung'); 5 = (T 'scan.uac.standard') }
+    if ($lua -eq 0) { Add-Finding CRIT (T 'scan.uac.aus') (T 'scan.uac.ausEmpf') }
+    elseif ($cpba -eq 0) { Add-Finding CRIT (T 'scan.uac.ohneFrage') (T 'scan.uac.ohneFrageEmpf') }
+    elseif ($sd -eq 0) { Add-Finding WARN (T 'scan.uac.nichtSicher') (T 'scan.uac.nichtSicherEmpf') }
+    else { Add-Finding OK (T 'scan.uac.aktiv' ($levels[[int]$cpba]) $(if ($apm -eq 2) { T 'scan.uac.adminschutz' } else { '' })) }
 }
 
 Invoke-Check 'Kernisolierung (VBS / Speicherintegrität)' {
     $dg = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard
     $script:DeviceGuard = $dg
-    $vbs = @{ 0 = 'aus'; 1 = 'konfiguriert, läuft nicht'; 2 = 'läuft' }[[int]$dg.VirtualizationBasedSecurityStatus]
+    $vbs = @{ 0 = (T 'scan.allg.ausKlein'); 1 = (T 'scan.kern.vbsKonfiguriert'); 2 = (T 'scan.kern.vbsLaeuft') }[[int]$dg.VirtualizationBasedSecurityStatus]
     $running = @($dg.SecurityServicesRunning)
     $hvci = $running -contains 2
     $mbec = @($dg.AvailableSecurityProperties) -contains 7
-    $value = "VBS $vbs, Speicherintegrität $(if ($hvci) { 'an' } else { 'aus' }), MBEC $(if ($mbec) { 'vorhanden' } else { 'fehlt' })"
+    $value = T 'scan.kern.wert' $vbs $(if ($hvci) { T 'scan.allg.anKlein' } else { T 'scan.allg.ausKlein' }) $(if ($mbec) { T 'scan.allg.vorhanden' } else { T 'scan.allg.fehlt' })
     if ($hvci) { Add-Finding OK $value }
-    else { Add-Finding WARN $value 'Windows-Sicherheit > Gerätesicherheit > Kernisolierung > Speicherintegrität einschalten (blockiert manipulierte und anfällige Treiber). Leistungsabwägung siehe Performance-Teil.' }
+    else { Add-Finding WARN $value (T 'scan.kern.empf') }
 }
 
 Invoke-Check 'LSA-Schutz' {
     $ppl = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' 'RunAsPPL'
-    if ($ppl -in 1, 2) { Add-Finding OK "An (RunAsPPL = $ppl)" }
-    else { Add-Finding WARN 'Aus' 'Windows-Sicherheit > Gerätesicherheit > Kernisolierung > Schutz der lokalen Sicherheitsautorität einschalten (erschwert das Auslesen von Anmeldedaten).' }
+    if ($ppl -in 1, 2) { Add-Finding OK (T 'scan.lsa.an' $ppl) }
+    else { Add-Finding WARN (T 'scan.allg.aus') (T 'scan.lsa.empf') }
 }
 
 Invoke-Check 'Treiber-Sperrliste und Smart App Control' {
     $bl = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config' 'VulnerableDriverBlocklistEnable'
     $sac = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' 'VerifiedAndReputablePolicyState'
-    $sacText = @{ 0 = 'aus'; 1 = 'an'; 2 = 'Evaluierung' }[[int]$sac]
-    $value = 'Sperrliste für anfällige Treiber ' + $(if ($bl -eq 0) { 'aus' } else { 'an' }) + "; Smart App Control $sacText"
-    if ($bl -eq 0) { Add-Finding WARN $value 'Windows-Sicherheit > Gerätesicherheit > Kernisolierung > Microsoft-Sperrliste für anfällige Treiber einschalten.' }
+    $sacText = @{ 0 = (T 'scan.allg.ausKlein'); 1 = (T 'scan.allg.anKlein'); 2 = (T 'scan.sperrliste.evaluierung') }[[int]$sac]
+    $value = T 'scan.sperrliste.wert' $(if ($bl -eq 0) { T 'scan.allg.ausKlein' } else { T 'scan.allg.anKlein' }) $sacText
+    if ($bl -eq 0) { Add-Finding WARN $value (T 'scan.sperrliste.empf') }
     else { Add-Finding OK $value }
 }
 
@@ -1351,27 +1366,27 @@ Invoke-Check 'SmartScreen' {
     $pol = Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' 'EnableSmartScreen'
     $edgePol = Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'SmartScreenEnabled'
     $off = @()
-    if ($exp -eq 'Off' -or $pol -eq 0) { $off += 'Apps und Dateien' }
-    if ($edgePol -eq 0) { $off += 'Edge (Richtlinie)' }
-    if ($off) { Add-Finding WARN ('SmartScreen aus für: ' + ($off -join ', ')) 'Windows-Sicherheit > App- & Browsersteuerung > Zuverlässigkeitsbasierter Schutz: SmartScreen einschalten.' }
-    else { Add-Finding OK 'Nicht abgeschaltet' }
+    if ($exp -eq 'Off' -or $pol -eq 0) { $off += (T 'scan.smartscreen.appsDateien') }
+    if ($edgePol -eq 0) { $off += (T 'scan.smartscreen.edge') }
+    if ($off) { Add-Finding WARN (T 'scan.smartscreen.aus' ($off -join ', ')) (T 'scan.smartscreen.ausEmpf') }
+    else { Add-Finding OK (T 'scan.smartscreen.ok') }
 }
 
 Invoke-Check 'Exploit-Schutz (systemweit)' {
     $m = Get-ProcessMitigation -System
     $vals = [ordered]@{ 'DEP' = $m.Dep.Enable; 'ASLR Bottom-up' = $m.Aslr.BottomUp; 'ASLR hohe Entropie' = $m.Aslr.HighEntropy; 'CFG' = $m.Cfg.Enable; 'SEHOP' = $m.SEHOP.Enable }
     $off = @($vals.Keys | Where-Object { "$($vals[$_])" -eq 'OFF' })
-    if ($off) { Add-Finding WARN ('Abgeschaltet: ' + ($off -join ', ')) 'Windows-Sicherheit > App- & Browsersteuerung > Exploit-Schutz: Systemeinstellungen auf Standard zurücksetzen.' }
-    else { Add-Finding OK 'DEP, ASLR, CFG und SEHOP auf Standard' }
+    if ($off) { Add-Finding WARN (T 'scan.exploit.aus' ($off -join ', ')) (T 'scan.exploit.ausEmpf') }
+    else { Add-Finding OK (T 'scan.exploit.ok') }
 }
 
 Invoke-Check 'Spectre/Meltdown-Schutz' {
     $mm = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management'
     $o = Get-RegValue $mm 'FeatureSettingsOverride'
     $mask = Get-RegValue $mm 'FeatureSettingsOverrideMask'
-    if ($null -eq $o) { Add-Finding OK 'Windows-Standard (Abschwächungen aktiv)' }
-    elseif (([int]$o -band 3) -ne 0) { Add-Finding CRIT "Abschwächungen per Registry deaktiviert (FeatureSettingsOverride = $o)" 'Typischer "Performance-Tweak": Werte FeatureSettingsOverride und FeatureSettingsOverrideMask löschen. Der Leistungsgewinn ist auf aktuellen CPUs klein, die Lücken sind real.' }
-    else { Add-Finding INFO "Angepasst: FeatureSettingsOverride = $o, Mask = $mask (zusätzliche Abschwächungen)" }
+    if ($null -eq $o) { Add-Finding OK (T 'scan.spectre.standard') }
+    elseif (([int]$o -band 3) -ne 0) { Add-Finding CRIT (T 'scan.spectre.aus' $o) (T 'scan.spectre.ausEmpf') }
+    else { Add-Finding INFO (T 'scan.spectre.angepasst' $o $mask) }
 }
 
 Invoke-Check 'CPU-Microcode' {
@@ -1381,39 +1396,39 @@ Invoke-Check 'CPU-Microcode' {
         param($b)
         if ($b -is [byte[]] -and $b.Length -ge 8) { '0x{0:X}' -f [BitConverter]::ToUInt32($b, 4) }
         elseif ($b -is [byte[]] -and $b.Length -ge 4) { '0x{0:X}' -f [BitConverter]::ToUInt32($b, 0) }
-        else { 'unbekannt' }
+        else { T 'scan.allg.unbekannt' }
     }
     $cur = & $fmt (Get-RegValue $k 'Update Revision')
     $prev = & $fmt (Get-RegValue $k 'Previous Update Revision')
-    Add-Finding INFO "Aktiv: $cur, vom BIOS geladen: $prev" 'Windows lädt neueren Microcode selbst nach; ein aktuelles BIOS bringt ihn bereits beim Start mit.'
+    Add-Finding INFO (T 'scan.microcode.wert' $cur $prev) (T 'scan.microcode.empf')
 }
 
 Invoke-Check 'PowerShell-Sicherheit' {
     $lm = [string](Get-ExecutionPolicy -Scope LocalMachine)
     $cu = [string](Get-ExecutionPolicy -Scope CurrentUser)
     $sbl = Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging' 'EnableScriptBlockLogging'
-    $value = "Ausführungsrichtlinie LocalMachine = $lm, CurrentUser = $cu; Skriptblock-Protokollierung " + $(if ($sbl -eq 1) { 'an' } else { 'Standard' })
-    if ($lm -in 'Unrestricted', 'Bypass' -or $cu -in 'Unrestricted', 'Bypass') { Add-Finding WARN $value 'Set-ExecutionPolicy RemoteSigned -Scope CurrentUser reicht für eigene Skripte; Unrestricted/Bypass lässt heruntergeladene Skripte ohne Warnung laufen.' }
+    $value = T 'scan.ps.wert' $lm $cu $(if ($sbl -eq 1) { T 'scan.allg.anKlein' } else { T 'scan.allg.standard' })
+    if ($lm -in 'Unrestricted', 'Bypass' -or $cu -in 'Unrestricted', 'Bypass') { Add-Finding WARN $value (T 'scan.ps.empf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Veraltete Anmeldeverfahren und Protokolle' {
     $lsa = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
     $crit = @(); $warn = @()
-    if ((Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' 'UseLogonCredential') -eq 1) { $crit += 'WDigest hält Klartext-Kennwörter im Speicher' }
+    if ((Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' 'UseLogonCredential') -eq 1) { $crit += (T 'scan.altprot.wdigest') }
     $lm = Get-RegValue $lsa 'LmCompatibilityLevel'
-    if ($null -ne $lm -and $lm -lt 3) { $warn += "LmCompatibilityLevel = $lm (LM/NTLMv1 erlaubt)" }
-    if ((Get-RegValue $lsa 'NoLMHash') -eq 0) { $warn += 'LM-Hashes werden gespeichert' }
-    if ((Get-RegValue $lsa 'RestrictAnonymousSAM') -eq 0) { $warn += 'Anonyme Aufzählung von Konten erlaubt' }
+    if ($null -ne $lm -and $lm -lt 3) { $warn += (T 'scan.altprot.lm' $lm) }
+    if ((Get-RegValue $lsa 'NoLMHash') -eq 0) { $warn += (T 'scan.altprot.lmHash') }
+    if ((Get-RegValue $lsa 'RestrictAnonymousSAM') -eq 0) { $warn += (T 'scan.altprot.anonym') }
     foreach ($proto in 'SSL 2.0', 'SSL 3.0', 'TLS 1.0', 'TLS 1.1') {
         foreach ($side in 'Client', 'Server') {
             $e = Get-RegValue "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\$proto\$side" 'Enabled'
-            if ($null -ne $e -and $e -ne 0) { $warn += "$proto ($side) ausdrücklich aktiviert" }
+            if ($null -ne $e -and $e -ne 0) { $warn += (T 'scan.altprot.protokoll' $proto $side) }
         }
     }
-    if ($crit) { Add-Finding CRIT (($crit + $warn) -join '; ') 'Wert UseLogonCredential löschen bzw. auf 0 setzen.' }
-    elseif ($warn) { Add-Finding WARN ($warn -join '; ') 'Werte auf Windows-Standard zurücksetzen.' }
-    else { Add-Finding OK 'WDigest aus, NTLMv2, keine alten SSL/TLS-Versionen erzwungen' }
+    if ($crit) { Add-Finding CRIT (($crit + $warn) -join '; ') (T 'scan.altprot.critEmpf') }
+    elseif ($warn) { Add-Finding WARN ($warn -join '; ') (T 'scan.altprot.warnEmpf') }
+    else { Add-Finding OK (T 'scan.altprot.ok') }
 }
 
 Invoke-Check 'Optionale Windows-Features' -NeedsAdmin {
@@ -1423,24 +1438,24 @@ Invoke-Check 'Optionale Windows-Features' -NeedsAdmin {
     $risky = [ordered]@{
         'SMB1Protocol'                     = 'SMBv1'
         'MicrosoftWindowsPowerShellV2Root' = 'PowerShell 2.0'
-        'TelnetClient'                     = 'Telnet-Client'
-        'TFTP'                             = 'TFTP-Client'
-        'SimpleTCP'                        = 'Einfache TCP/IP-Dienste'
-        'IIS-WebServerRole'                = 'IIS-Webserver'
+        'TelnetClient'                     = (T 'scan.features.telnetClient')
+        'TFTP'                             = (T 'scan.features.tftp')
+        'SimpleTCP'                        = (T 'scan.features.simpleTcp')
+        'IIS-WebServerRole'                = (T 'scan.features.iis')
         'Internet-Explorer-Optional-amd64' = 'Internet Explorer'
     }
     $found = @($risky.Keys | Where-Object { $_ -in $script:Features } | ForEach-Object { $risky[$_] })
-    if ($found -contains 'SMBv1') { Add-Finding CRIT ('Aktiv: ' + ($found -join ', ')) 'SMBv1 und andere Alt-Features unter "Windows-Features aktivieren oder deaktivieren" abwählen.' }
-    elseif ($found) { Add-Finding WARN ('Aktiv: ' + ($found -join ', ')) 'Nicht benötigte Alt-Features unter "Windows-Features aktivieren oder deaktivieren" abwählen.' }
-    else { Add-Finding OK "$($feat.Count) Features aktiv, keine veralteten" }
+    if ($found -contains 'SMBv1') { Add-Finding CRIT (T 'scan.features.aktiv' ($found -join ', ')) (T 'scan.features.critEmpf') }
+    elseif ($found) { Add-Finding WARN (T 'scan.features.aktiv' ($found -join ', ')) (T 'scan.features.warnEmpf') }
+    else { Add-Finding OK (T 'scan.features.ok' $feat.Count) }
 }
 
 Invoke-Check 'Entwicklermodus und sudo' {
     $dev = (Get-RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' 'AllowDevelopmentWithoutDevLicense') -eq 1
     $sudo = Get-RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Sudo' 'Enabled'
-    $sudoText = @{ 0 = 'aus'; 1 = 'neues Fenster'; 2 = 'Eingabe gesperrt'; 3 = 'inline' }[[int]$sudo]
-    $value = 'Entwicklermodus ' + $(if ($dev) { 'an' } else { 'aus' }) + "; sudo $sudoText"
-    if ($sudo -eq 3) { Add-Finding INFO $value 'sudo im Modus "inline" ist laut Microsoft der unsicherste; "neues Fenster" genügt meist.' }
+    $sudoText = @{ 0 = (T 'scan.allg.ausKlein'); 1 = (T 'scan.dev.neuesFenster'); 2 = (T 'scan.dev.eingabeGesperrt'); 3 = (T 'scan.dev.inline') }[[int]$sudo]
+    $value = T 'scan.dev.wert' $(if ($dev) { T 'scan.allg.anKlein' } else { T 'scan.allg.ausKlein' }) $sudoText
+    if ($sudo -eq 3) { Add-Finding INFO $value (T 'scan.dev.inlineEmpf') }
     else { Add-Finding INFO $value }
 }
 Invoke-Check 'Systemdateien: Signaturen (Sigcheck)' -NeedsAdmin {
@@ -1468,13 +1483,13 @@ Invoke-Check 'Secure Boot' {
     $sb = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State' 'UEFISecureBootEnabled'
     if ($script:IsAdmin) { try { $sb = [int](Confirm-SecureBootUEFI) } catch {} }
     $script:SecureBoot = ($sb -eq 1)
-    if ($fw -and $fw -ne 'UEFI') { Add-Finding WARN "Firmware-Modus $fw" 'Auf UEFI umstellen (mbr2gpt), Voraussetzung für Secure Boot.' }
-    elseif ($sb -eq 1) { Add-Finding OK 'UEFI, Secure Boot an' }
-    else { Add-Finding WARN 'UEFI, Secure Boot aus' 'Im BIOS Secure Boot einschalten (CSM aus). Schützt vor Bootkits; Anti-Cheat-Systeme wie Vanguard oder Javelin setzen es zunehmend voraus.' }
+    if ($fw -and $fw -ne 'UEFI') { Add-Finding WARN (T 'scan.boot.firmware' $fw) (T 'scan.boot.firmwareEmpf') }
+    elseif ($sb -eq 1) { Add-Finding OK (T 'scan.boot.ok') }
+    else { Add-Finding WARN (T 'scan.boot.aus') (T 'scan.boot.ausEmpf') }
 }
 
 Invoke-Check 'Secure-Boot-Zertifikate 2023' -NeedsAdmin {
-    if (-not $script:SecureBoot) { Add-Finding INFO 'Secure Boot aus, Zertifikatsstand nicht relevant'; return }
+    if (-not $script:SecureBoot) { Add-Finding INFO (T 'scan.cert.nichtRelevant'); return }
     $db = [Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name db).Bytes)
     $kek = [Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI -Name KEK).Bytes)
     $has = [ordered]@{
@@ -1485,17 +1500,17 @@ Invoke-Check 'Secure-Boot-Zertifikate 2023' -NeedsAdmin {
     $status = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing' 'UEFICA2023Status'
     Add-Table 'Secure-Boot-Zertifikate' @($has.Keys | ForEach-Object { [pscustomobject]@{ Zertifikat = $_; Vorhanden = $has[$_] } })
     $missing = @($has.Keys | Where-Object { -not $has[$_] })
-    $value = $(if ($missing) { 'Fehlt: ' + ($missing -join ', ') } else { 'Alle 2023er-Zertifikate vorhanden' }) + $(if ($status) { "; Update-Status: $status" } else { '' })
-    if ($missing) { Add-Finding WARN $value 'Die Secure-Boot-Zertifikate von 2011 sind 2026 abgelaufen. Windows Update spielt die 2023er-Zertifikate ein; hängt das, BIOS-Update vom Mainboard-Hersteller prüfen.' }
+    $value = $(if ($missing) { T 'scan.cert.fehlt' ($missing -join ', ') } else { T 'scan.cert.alle' }) + $(if ($status) { T 'scan.cert.status' $status } else { '' })
+    if ($missing) { Add-Finding WARN $value (T 'scan.cert.empf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'TPM' -NeedsAdmin {
     $t = Get-Tpm
     $spec = [string](Get-CimInstance -Namespace root\cimv2\Security\MicrosoftTpm -ClassName Win32_Tpm -ErrorAction SilentlyContinue).SpecVersion
-    $value = "Vorhanden: $($t.TpmPresent), bereit: $($t.TpmReady), Version $(($spec -split ',')[0]), Hersteller $($t.ManufacturerIdTxt)"
-    if (-not $t.TpmPresent) { Add-Finding WARN 'Kein TPM gefunden' 'Intel PTT im BIOS einschalten.' }
-    elseif (-not $t.TpmReady) { Add-Finding WARN $value 'TPM ist nicht einsatzbereit: tpm.msc prüfen.' }
+    $value = T 'scan.tpm.wert' $t.TpmPresent $t.TpmReady (($spec -split ',')[0]) $t.ManufacturerIdTxt
+    if (-not $t.TpmPresent) { Add-Finding WARN (T 'scan.tpm.keins') (T 'scan.tpm.keinsEmpf') }
+    elseif (-not $t.TpmReady) { Add-Finding WARN $value (T 'scan.tpm.nichtBereit') }
     else { Add-Finding OK $value }
 }
 
@@ -1522,17 +1537,17 @@ Invoke-Check 'BitLocker' {
         $v = (New-Object -ComObject Shell.Application).NameSpace("$($env:SystemDrive)\").Self.ExtendedProperty('System.Volume.BitLockerProtection')
         $osOn = $v -in 1, 3, 5
     }
-    if ($osOn -and -not $recovery) { Add-Finding WARN 'Systemlaufwerk verschlüsselt, aber ohne Wiederherstellungskennwort' 'Wiederherstellungskennwort hinzufügen und sicher ablegen.' }
-    elseif ($osOn) { Add-Finding OK 'Systemlaufwerk verschlüsselt' }
-    else { Add-Finding WARN 'Systemlaufwerk nicht verschlüsselt' 'BitLocker mit TPM einschalten und den Wiederherstellungsschlüssel sicher ablegen (Microsoft-Konto oder Ausdruck). Schützt bei Diebstahl, Reparatur und Entsorgung der SSD; Leistungseinbuße auf NVMe meist gering.' }
+    if ($osOn -and -not $recovery) { Add-Finding WARN (T 'scan.bitlocker.ohneRecovery') (T 'scan.bitlocker.ohneRecoveryEmpf') }
+    elseif ($osOn) { Add-Finding OK (T 'scan.bitlocker.ok') }
+    else { Add-Finding WARN (T 'scan.bitlocker.nein') (T 'scan.bitlocker.neinEmpf') }
 }
 
 Invoke-Check 'BIOS/UEFI-Version' {
     $b = Get-CimInstance Win32_BIOS
     $bb = Get-CimInstance Win32_BaseBoard
     $age = ((Get-Date) - $b.ReleaseDate).Days
-    $value = "$($bb.Manufacturer) $($bb.Product), BIOS $($b.SMBIOSBIOSVersion) vom $((Get-Date $b.ReleaseDate).ToString('yyyy-MM-dd'))"
-    if ($age -gt 3 * 365) { Add-Finding INFO $value 'Beim Hersteller nach neuerer BIOS-Version sehen (CPU-Microcode, Intel-ME-Fixes, Secure-Boot-Zertifikate). Achtung: Ein BIOS-Update setzt die OC-Einstellungen zurück, vorher Profil sichern.' }
+    $value = T 'scan.bios.wert' $bb.Manufacturer $bb.Product $b.SMBIOSBIOSVersion ((Get-Date $b.ReleaseDate).ToString('yyyy-MM-dd'))
+    if ($age -gt 3 * 365) { Add-Finding INFO $value (T 'scan.bios.empf') }
     else { Add-Finding OK $value }
 }
 
@@ -1541,7 +1556,7 @@ Invoke-Check 'Wiederherstellung' -NeedsAdmin {
     $reOn = $re -cmatch '\b(Enabled|Aktiviert)\b'
     $rp = @(Get-ComputerRestorePoint -ErrorAction SilentlyContinue)
     $last = $rp | Sort-Object SequenceNumber | Select-Object -Last 1
-    $lastText = if ($last) { ' (letzter ' + [Management.ManagementDateTimeConverter]::ToDateTime($last.CreationTime).ToString('yyyy-MM-dd') + ')' } else { '' }
+    $lastText = if ($last) { ' ' + (T 'scan.wh.letzter' ([Management.ManagementDateTimeConverter]::ToDateTime($last.CreationTime).ToString('yyyy-MM-dd'))) } else { '' }
     # Computerschutz an? (wie die Aktion system.wiederherstellung). Fehlende Punkte allein heißen NICHT „aus“:
     # Windows löscht Punkte auch selbst, wenn der Speicher dafür zu klein ist (volsnap-Ereignis 33).
     $sr = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
@@ -1554,7 +1569,7 @@ Invoke-Check 'Wiederherstellung' -NeedsAdmin {
         $vol = Get-CimInstance Win32_Volume -Filter "DriveLetter='$($env:SystemDrive)'" -ErrorAction Stop
         $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { $_.Volume.DeviceID -eq $vol.DeviceID }) | Select-Object -First 1
         if ($ss) {
-            if ([uint64]$ss.MaxSpace -eq [uint64]::MaxValue) { $maxText = 'unbegrenzt' }
+            if ([uint64]$ss.MaxSpace -eq [uint64]::MaxValue) { $maxText = (T 'scan.wh.unbegrenzt') }
             else {
                 $pct = [Math]::Round(100 * [double]$ss.MaxSpace / [double]$vol.Capacity, 1)
                 $maxText = '{0} ({1} %)' -f (Format-Size ([double]$ss.MaxSpace)), $pct
@@ -1565,26 +1580,26 @@ Invoke-Check 'Wiederherstellung' -NeedsAdmin {
     }
     catch { }
     $geloescht = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; Id = 33; StartTime = $script:Since } -ErrorAction SilentlyContinue).Count
-    $value = 'Windows RE ' + $(if ($reOn) { 'an' } else { 'aus' }) + '; Computerschutz ' + $env:SystemDrive + ' ' + $(if ($schutzAn) { 'an' } else { 'aus' }) +
-        $(if ($maxText) { ", Speicher max $maxText" } else { '' }) + "; Wiederherstellungspunkte: $($rp.Count)$lastText" +
-        $(if ($geloescht) { "; von Windows gelöscht: $geloescht in $EventDays Tagen" } else { '' })
-    if (-not $reOn) { Add-Finding WARN $value 'Wiederherstellungsumgebung einschalten: reagentc /enable.' }
-    elseif (-not $schutzAn) { Add-Finding INFO $value 'Systemschutz für C: einschalten: hilfreich vor Treiber- und OC-Experimenten.' }
+    $value = T 'scan.wh.wert' $(if ($reOn) { T 'scan.allg.anKlein' } else { T 'scan.allg.ausKlein' }) $env:SystemDrive $(if ($schutzAn) { T 'scan.allg.anKlein' } else { T 'scan.allg.ausKlein' }) `
+        $(if ($maxText) { T 'scan.wh.speicherMax' $maxText } else { '' }) $rp.Count $lastText `
+        $(if ($geloescht) { T 'scan.wh.geloescht' $geloescht $EventDays } else { '' })
+    if (-not $reOn) { Add-Finding WARN $value (T 'scan.wh.reAus') }
+    elseif (-not $schutzAn) { Add-Finding INFO $value (T 'scan.wh.schutzAus') }
     elseif ($klein) {
         # Point-in-time restore (Windows 11) setzt die VSS-Grenze bei jedem Start auf seine eigene Einstellung (Standard 2 %)
         $pitr = $null
         try { $pitr = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Setup\' -TaskName 'PITRTask' -ErrorAction Stop } catch { }
         if ($pitr -and ([string]$pitr.State -ne 'Disabled')) {
-            Add-Finding WARN ($value + '; Speicher zu klein, verwaltet von Point-in-time restore') 'Windows löscht ältere Wiederherstellungspunkte, sobald der Speicher voll ist, und setzt die Grenze bei jedem Start auf die Einstellung von Point-in-time restore zurück. Einstellungen > System > Wiederherstellung > Point-in-time restore > Anzeigen oder bearbeiten: Regler auf etwa 10 %.'
+            Add-Finding WARN (T 'scan.wh.zuKleinPitr' $value) (T 'scan.wh.zuKleinPitrEmpf')
         }
-        else { Add-Finding WARN ($value + '; Speicher zu klein') 'Windows löscht ältere Wiederherstellungspunkte, sobald der Speicher voll ist. Speicher auf etwa 10 % vergrößern, damit Punkte vor Änderungen erhalten bleiben.' }
+        else { Add-Finding WARN (T 'scan.wh.zuKlein' $value) (T 'scan.wh.zuKleinEmpf') }
     }
-    elseif (-not $rp) { Add-Finding OK ($value + ' (Morpheus legt vor jeder Änderung einen an)') }
+    elseif (-not $rp) { Add-Finding OK (T 'scan.wh.okMorpheus' $value) }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Datensicherung' {
-    if (-not $script:SicherungLib) { Add-Finding SKIP 'gui\lib\Sicherung.ps1 fehlt'; return }
+    if (-not $script:SicherungLib) { Add-Finding SKIP (T 'scan.allg.dateiFehlt' 'gui\lib\Sicherung.ps1'); return }
     # Get-MorpheusSicherung ermittelt die Adminrechte selbst und reicht sie an das Systemabbild weiter
     $e = @(Get-MorpheusSicherung)
     $rows = foreach ($x in $e) {
@@ -1613,25 +1628,25 @@ Invoke-Check 'Remotedesktop' {
     # Eine Gruppenrichtlinie hat Vorrang vor der Einstellung in den Systemeigenschaften
     $ra = Get-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' 'fAllowToGetHelp'
     if ($null -eq $ra) { $ra = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' 'fAllowToGetHelp' }
-    if ($deny -eq 0 -and $nla -ne 1) { Add-Finding CRIT "RDP an (Port $port) ohne Authentifizierung auf Netzwerkebene" 'Remotedesktop ausschalten (Einstellungen > System > Remotedesktop).' }
-    elseif ($deny -eq 0) { Add-Finding WARN "RDP an (Port $port)" 'Wenn du Remotedesktop nicht bewusst nutzt: Einstellungen > System > Remotedesktop ausschalten. Sonst in accepted.psd1 eintragen.' }
-    else { Add-Finding OK 'Aus' }
-    if ($ra -eq 1) { Add-Finding INFO 'Remoteunterstützung erlaubt' 'Wenn nicht genutzt: Systemeigenschaften > Remote > Remoteunterstützungsverbindungen nicht zulassen.' -Check 'Remoteunterstützung' }
-    else { Add-Finding OK 'Nicht erlaubt' -Check 'Remoteunterstützung' }
+    if ($deny -eq 0 -and $nla -ne 1) { Add-Finding CRIT (T 'scan.rdp.ohneNla' $port) (T 'scan.rdp.ohneNlaEmpf') }
+    elseif ($deny -eq 0) { Add-Finding WARN (T 'scan.rdp.an' $port) (T 'scan.rdp.anEmpf') }
+    else { Add-Finding OK (T 'scan.allg.aus') }
+    if ($ra -eq 1) { Add-Finding INFO (T 'scan.rdp.hilfeErlaubt') (T 'scan.rdp.hilfeErlaubtEmpf') -Check 'Remoteunterstützung' }
+    else { Add-Finding OK (T 'scan.rdp.hilfeNicht') -Check 'Remoteunterstützung' }
 }
 
 Invoke-Check 'Fernzugriffsdienste und -programme' {
-    $svcCheck = [ordered]@{ WinRM = 'WinRM'; sshd = 'OpenSSH-Server'; RemoteRegistry = 'Remoteregistrierung'; TlntSvr = 'Telnet-Server'; SNMP = 'SNMP'; FTPSVC = 'FTP-Server'; W3SVC = 'IIS-Webserver' }
+    $svcCheck = [ordered]@{ WinRM = 'WinRM'; sshd = 'OpenSSH-Server'; RemoteRegistry = (T 'scan.fern.remoteregistrierung'); TlntSvr = (T 'scan.fern.telnetServer'); SNMP = 'SNMP'; FTPSVC = (T 'scan.fern.ftpServer'); W3SVC = (T 'scan.features.iis') }
     $active = foreach ($n in $svcCheck.Keys) {
         $s = $script:Services | Where-Object Name -EQ $n
         if ($s -and ($s.State -eq 'Running' -or $s.StartMode -eq 'Auto')) { "$($svcCheck[$n]) ($($s.State), $($s.StartMode))" }
     }
     $toolPattern = 'TeamViewer|AnyDesk|RustDesk|Parsec|Splashtop|VNC|LogMeIn|ScreenConnect|ConnectWise|Radmin|Ammyy|Supremo|NoMachine|nxservice|chromoting|remoting_host|Sunshine|Zoho Assist|DWService|MeshAgent|HopToDesk|rutserv|Dameware|BeyondTrust|Bomgar|GoToAssist|Atera|NinjaRMM|Kaseya|Tailscale|ZeroTier|ngrok'
     $tools = @($script:Services | Where-Object { $_.Name -match $toolPattern -or $_.DisplayName -match $toolPattern -or $_.PathName -match $toolPattern } | ForEach-Object { "$($_.DisplayName) ($($_.State))" })
-    $tools += @(Get-Process | Where-Object { $_.ProcessName -match $toolPattern } | ForEach-Object { "Prozess $($_.ProcessName)" } | Select-Object -Unique)
+    $tools += @(Get-Process | Where-Object { $_.ProcessName -match $toolPattern } | ForEach-Object { T 'scan.fern.prozess' $_.ProcessName } | Select-Object -Unique)
     $all = @($active) + $tools
-    if ($all) { Add-Finding WARN ('Gefunden: ' + ($all -join '; ')) 'Prüfen, ob du das nutzt; sonst deinstallieren bzw. Dienst deaktivieren. Ungenutzte Fernwartung ist ein häufiger Einfallsweg.' }
-    else { Add-Finding OK 'Keine Fernwartungsdienste oder -programme aktiv' }
+    if ($all) { Add-Finding WARN (T 'scan.fern.gefunden' ($all -join '; ')) (T 'scan.fern.gefundenEmpf') }
+    else { Add-Finding OK (T 'scan.fern.ok') }
 }
 
 Invoke-Check 'Dienste von Drittanbietern' {
@@ -1656,8 +1671,8 @@ Invoke-Check 'Dienste von Drittanbietern' {
     Add-Table 'Dienste von Drittanbietern' $rows
     $bad = @($rows | Where-Object { $_.Signatur -notin 'Valid', 'Datei fehlt' })
     $auto = @($rows | Where-Object Start -EQ 'Auto')
-    if ($bad) { Add-Finding WARN ('Ohne gültige Signatur: ' + (($bad | ForEach-Object { "$($_.Name) ($($_.Signatur))" }) -join ', ')) 'Herkunft der Dienste prüfen (Pfad im Anhang).' }
-    else { Add-Finding OK "$($rows.Count) Drittanbieter-Dienste ($($auto.Count) mit Autostart), alle gültig signiert" }
+    if ($bad) { Add-Finding WARN (T 'scan.dienste.ohneSignatur' (($bad | ForEach-Object { "$($_.Name) ($($_.Signatur))" }) -join ', ')) (T 'scan.dienste.ohneSignaturEmpf') }
+    else { Add-Finding OK (T 'scan.dienste.ok' $rows.Count $auto.Count) }
 }
 
 Invoke-Check 'Dienstpfade und Berechtigungen' {
@@ -1686,10 +1701,10 @@ Invoke-Check 'Dienstpfade und Berechtigungen' {
         }
     }
     $weak = @($weak | Select-Object -Unique)
-    Add-Table 'Dienste: ungeschützte Pfade und schreibbare Ordner' @(@($unquoted | ForEach-Object { [pscustomobject]@{ Art = 'Pfad ohne Anführungszeichen'; Eintrag = $_ } }) + @($weak | ForEach-Object { [pscustomobject]@{ Art = 'Für Benutzer schreibbar'; Eintrag = $_ } }))
-    if ($weak) { Add-Finding WARN ("$($weak.Count) Dienst-Programme/-Ordner für normale Benutzer schreibbar: " + (($weak | Select-Object -First 5) -join '; ')) 'Darüber kann sich Schadsoftware Systemrechte verschaffen. Programm aktualisieren/neu installieren oder Ordnerrechte korrigieren.' }
-    elseif ($unquoted) { Add-Finding WARN ("Dienstpfade mit Leerzeichen ohne Anführungszeichen: " + ($unquoted -join '; ')) 'Programm aktualisieren; der Hersteller muss den Pfad in Anführungszeichen setzen.' }
-    else { Add-Finding OK 'Keine angreifbaren Dienstpfade' }
+    Add-Table 'Dienste: ungeschützte Pfade und schreibbare Ordner' @(@($unquoted | ForEach-Object { [pscustomobject]@{ Art = (T 'scan.dienstpfade.ohneAnfuehrung'); Eintrag = $_ } }) + @($weak | ForEach-Object { [pscustomobject]@{ Art = (T 'scan.dienstpfade.schreibbarArt'); Eintrag = $_ } }))
+    if ($weak) { Add-Finding WARN (T 'scan.dienstpfade.schreibbar' $weak.Count (($weak | Select-Object -First 5) -join '; ')) (T 'scan.dienstpfade.schreibbarEmpf') }
+    elseif ($unquoted) { Add-Finding WARN (T 'scan.dienstpfade.ohneAnfuehrungWarn' ($unquoted -join '; ')) (T 'scan.dienstpfade.ohneAnfuehrungEmpf') }
+    else { Add-Finding OK (T 'scan.dienstpfade.ok') }
 }
 
 Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
@@ -1698,7 +1713,7 @@ Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
     'DBUtilDrv2.sys', 'Capcom.sys', 'atillk64.sys', 'HwRwDrv.sys', 'PhyMemx64.sys', 'speedfan.sys', 'inpoutx64.sys', 'GLCKIO2.sys', 'BS_RCIO64.sys', 'MsIo64.sys',
     'AODDriver2.sys', 'mhyprot2.sys', 'ALSysIO64.sys', 'ATSZIO64.sys', 'TfSysMon.sys', 'zam64.sys', 'LHA.sys',
     'GVCIDrv64.sys', 'GVCIDrv.sys', 'GPCIDrv64.sys', 'GPCIDrv.sys'
-    $drv = @(Get-CimInstance Win32_SystemDriver)
+    $drv = @(Get-CimInstance Win32_SystemDriver); $trGeladen = T 'scan.treiber.geladen'; $trVorhanden = T 'scan.treiber.vorhanden'; $trEntfernt = T 'scan.treiber.entferntStatus'
     $driverDir = Join-Path $env:SystemRoot 'System32\drivers'
     # Version mit ausgeben, damit eine gepatchte Version gezielt in accepted.psd1 akzeptiert werden kann.
     $fileVersion = { param($p) try { (([string](Get-Item -LiteralPath $p -ErrorAction Stop).VersionInfo.FileVersion) -split ' ')[0] } catch { '' } }
@@ -1710,7 +1725,7 @@ Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
             [pscustomobject][ordered]@{
                 Treiber = $n
                 Version = & $fileVersion $path
-                Status  = $(if ($svc | Where-Object State -EQ 'Running') { 'geladen' } else { 'vorhanden' })
+                Status  = $(if ($svc | Where-Object State -EQ 'Running') { $trGeladen } else { $trVorhanden })
                 Dienst  = (($svc | ForEach-Object Name) -join ', ')
                 Pfad    = $path
             }
@@ -1728,8 +1743,8 @@ Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
             [pscustomobject][ordered]@{
                 Treiber = $_.Name
                 Version = & $fileVersion $path
-                Status  = $(if ($exists) { 'geladen' } else { 'entfernt' })
-                Dienst  = "$($_.Count)x installiert in $EventDays Tagen" + $(if (-not $exists) { ', Datei inzwischen gelöscht' } else { '' })
+                Status  = $(if ($exists) { $trGeladen } else { $trEntfernt })
+                Dienst  = (T 'scan.treiber.installiert' $_.Count $EventDays $(if (-not $exists) { T 'scan.treiber.geloescht' } else { '' }))
                 Pfad    = $path
             }
         })
@@ -1746,15 +1761,15 @@ Invoke-Check 'Treiber: bekannt anfällige und unsignierte' {
     Add-Table 'Treiber: bekannt anfällige' $found
     Add-Table 'Treiber: geladene Drittanbieter-Treiber' $third
     $unsigned = @($third | Where-Object { $_.Signatur -notin 'Valid', 'Datei fehlt' })
-    $loaded = @($found | Where-Object Status -EQ 'geladen')
-    $rest = @($found | Where-Object Status -EQ 'vorhanden' | ForEach-Object { "$($_.Treiber) ($($_.Status))" })
+    $loaded = @($found | Where-Object Status -EQ $trGeladen)
+    $rest = @($found | Where-Object Status -EQ $trVorhanden | ForEach-Object { "$($_.Treiber) ($($_.Status))" })
     # Nur kurz installierte und wieder gelöschte Treiber sind kein Befund mehr, nur eine Spur im Protokoll
-    $gone = @($found | Where-Object Status -EQ 'entfernt' | ForEach-Object Treiber)
-    $goneText = if ($gone) { "; früher installiert, inzwischen entfernt: $($gone -join ', ')" } else { '' }
-    if ($loaded) { Add-Finding WARN ('Geladen: ' + (($loaded | ForEach-Object { "$($_.Treiber) $($_.Version) ($($_.Dienst))" }) -join ', ') + $(if ($rest) { '; außerdem: ' + ($rest -join ', ') } else { '' })) 'Treiber dieser Art (direkter Hardwarezugriff) wurden schon oft von Schadsoftware und Cheats missbraucht. Zugehöriges Tool (RGB/OC/Monitoring) aktuell halten oder deinstallieren; Speicherintegrität blockiert bekannt unsichere Versionen.' }
-    elseif ($rest) { Add-Finding INFO ('Nicht geladen: ' + ($rest -join ', ') + $goneText) 'Reste alter Tools; zugehöriges Programm deinstallieren.' }
-    elseif ($unsigned) { Add-Finding WARN ('Ohne gültige Signatur geladen: ' + (($unsigned | ForEach-Object Name) -join ', ') + $goneText) 'Herkunft prüfen.' }
-    else { Add-Finding OK "Keine bekannt anfälligen Treiber; $($third.Count) Drittanbieter-Treiber geladen (Anhang)$goneText" }
+    $gone = @($found | Where-Object Status -EQ $trEntfernt | ForEach-Object Treiber)
+    $goneText = if ($gone) { T 'scan.treiber.frueher' ($gone -join ', ') } else { '' }
+    if ($loaded) { Add-Finding WARN (T 'scan.treiber.geladenMeldung' (($loaded | ForEach-Object { "$($_.Treiber) $($_.Version) ($($_.Dienst))" }) -join ', ') $(if ($rest) { T 'scan.treiber.ausserdem' ($rest -join ', ') } else { '' })) (T 'scan.treiber.geladenEmpf') }
+    elseif ($rest) { Add-Finding INFO (T 'scan.treiber.nichtGeladen' ($rest -join ', ') $goneText) (T 'scan.treiber.nichtGeladenEmpf') }
+    elseif ($unsigned) { Add-Finding WARN (T 'scan.treiber.unsigniert' (($unsigned | ForEach-Object Name) -join ', ') $goneText) (T 'scan.treiber.unsigniertEmpf') }
+    else { Add-Finding OK (T 'scan.treiber.ok' $third.Count $goneText) }
 }
 
 #endregion
@@ -1766,7 +1781,7 @@ Start-Section 'Sicherheit' 'Autostart & Persistenz'
 Invoke-Check 'Autostart-Einträge' {
     $runKeys = @(
         @{ Ort = 'HKLM Run'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' }
-        @{ Ort = 'HKLM Run (32 Bit)'; Path = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32' }
+        @{ Ort = (T 'scan.autostart.hklmRun32'); Path = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32' }
         @{ Ort = 'HKCU Run'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; Approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run' }
         @{ Ort = 'HKLM RunOnce'; Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'; Approved = $null }
         @{ Ort = 'HKCU RunOnce'; Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'; Approved = $null }
@@ -1790,8 +1805,8 @@ Invoke-Check 'Autostart-Einträge' {
     }
     $shell = New-Object -ComObject WScript.Shell
     $folders = @(
-        @{ Ort = 'Autostart-Ordner (Benutzer)'; Path = [Environment]::GetFolderPath('Startup'); Approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' }
-        @{ Ort = 'Autostart-Ordner (alle)'; Path = [Environment]::GetFolderPath('CommonStartup'); Approved = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' }
+        @{ Ort = (T 'scan.autostart.ordnerBenutzer'); Path = [Environment]::GetFolderPath('Startup'); Approved = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' }
+        @{ Ort = (T 'scan.autostart.ordnerAlle'); Path = [Environment]::GetFolderPath('CommonStartup'); Approved = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder' }
     )
     foreach ($f in $folders) {
         foreach ($file in @(Get-ChildItem -LiteralPath $f.Path -File -Force -ErrorAction SilentlyContinue | Where-Object Name -NE 'desktop.ini')) {
@@ -1806,9 +1821,9 @@ Invoke-Check 'Autostart-Einträge' {
     $sus = @($rows | Where-Object { $_.Aktiv -and $_.Signatur -notin 'Valid', 'Datei fehlt' -and (Test-UserWritablePath $_.Befehl) })
     $unsigned = @($rows | Where-Object { $_.Aktiv -and $_.Signatur -notin 'Valid', 'Datei fehlt' })
     $activeCount = @($rows | Where-Object Aktiv).Count
-    if ($sus) { Add-Finding WARN ('Unsignierte Programme aus Benutzerordnern im Autostart: ' + (($sus | ForEach-Object Name) -join ', ')) 'Einträge prüfen (Anhang); typisches Muster von Schadsoftware, aber auch kleiner Tools.' }
-    elseif ($unsigned) { Add-Finding INFO ("$activeCount aktive Einträge, davon ohne gültige Signatur: " + (($unsigned | ForEach-Object Name) -join ', ')) 'Einträge im Anhang prüfen.' }
-    else { Add-Finding OK "$activeCount aktive Einträge, alle signiert" }
+    if ($sus) { Add-Finding WARN (T 'scan.autostart.unsigniertBenutzer' (($sus | ForEach-Object Name) -join ', ')) (T 'scan.autostart.unsigniertBenutzerEmpf') }
+    elseif ($unsigned) { Add-Finding INFO (T 'scan.autostart.info' $activeCount (($unsigned | ForEach-Object Name) -join ', ')) (T 'scan.autostart.infoEmpf') }
+    else { Add-Finding OK (T 'scan.autostart.ok' $activeCount) }
 }
 
 Invoke-Check 'Autostarts: Signaturen (Autoruns)' -NeedsAdmin {
@@ -1822,7 +1837,7 @@ Invoke-Check 'Autostarts: Signaturen (Autoruns)' -NeedsAdmin {
 
 Invoke-Check 'Autostarts: beschreibbare Pfade (Autoruns)' -NeedsAdmin {
     # Nicht vertrauenswürdiges Werkzeug nur einmal als Warnung zählen (bei der Signatur-Prüfung)
-    if ($script:Autoruns -and $script:Autoruns.nichtVertrauenswuerdig) { Add-Finding SKIP 'Autoruns nicht ausgeführt (siehe Autostarts: Signaturen)'; return }
+    if ($script:Autoruns -and $script:Autoruns.nichtVertrauenswuerdig) { Add-Finding SKIP (T 'scan.autoruns.nichtAusgefuehrt'); return }
     $e = Get-SysAutoruns
     if ($null -eq $e) { return }
     $b = Get-MorpheusAutorunsPfadBefund -Eintraege $e -Aufgaben (Get-SysAufgaben)
@@ -1836,11 +1851,11 @@ Invoke-Check 'Systemnahe Autostarts (Winlogon, IFEO, AppInit)' {
     $ui = [string](Get-RegValue $wl 'Userinit')
     if ($ui -and $ui.TrimEnd(', ') -notmatch '^[A-Za-z]:\\Windows\\system32\\userinit\.exe$') { $issues += "Winlogon Userinit = $ui" }
     $hkcuShell = Get-RegValue 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon' 'Shell'
-    if ($hkcuShell) { $issues += "Benutzer-Shell = $hkcuShell" }
+    if ($hkcuShell) { $issues += (T 'scan.systemnah.benutzerShell' $hkcuShell) }
     $ifeo = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
     foreach ($k in @(Get-ChildItem -LiteralPath $ifeo -ErrorAction SilentlyContinue)) {
         $dbg = $k.GetValue('Debugger')
-        if ($dbg) { $issues += "Debugger für $($k.PSChildName): $dbg" }
+        if ($dbg) { $issues += (T 'scan.systemnah.debugger' ($k.PSChildName) $dbg) }
     }
     foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows') {
         $dll = Get-RegValue $k 'AppInit_DLLs'
@@ -1848,8 +1863,8 @@ Invoke-Check 'Systemnahe Autostarts (Winlogon, IFEO, AppInit)' {
     }
     $boot = (Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' 'BootExecute') -join ' '
     if ($boot -and $boot -notmatch '^\s*autocheck autochk \*\s*$') { $issues += "BootExecute = $boot" }
-    if ($issues) { Add-Finding WARN ($issues -join '; ') 'Einträge prüfen: Ein "Debugger" für taskmgr.exe stammt z. B. von Process Explorer; alles Unbekannte ist ein starkes Warnzeichen.' }
-    else { Add-Finding OK 'Shell, Userinit, IFEO und AppInit unverändert' }
+    if ($issues) { Add-Finding WARN ($issues -join '; ') (T 'scan.systemnah.empf') }
+    else { Add-Finding OK (T 'scan.systemnah.ok') }
 }
 
 Invoke-Check 'Geplante Aufgaben' {
@@ -1861,7 +1876,7 @@ Invoke-Check 'Geplante Aufgaben' {
             $exeRaw = (Expand-MorpheusUmgebung ([string]$a.Execute)).Trim().Trim('"')
             $arg = [string]$a.Arguments
             if (-not $exeRaw) {
-                if (-not $isMs) { $rows.Add([pscustomobject][ordered]@{ Aufgabe = "$($t.TaskPath)$($t.TaskName)"; Status = [string]$t.State; Konto = $t.Principal.UserId; Admin = ([string]$t.Principal.RunLevel -eq 'Highest'); Signierer = ''; Auffaellig = ''; Befehl = "COM-Handler $($a.ClassId)" }) }
+                if (-not $isMs) { $rows.Add([pscustomobject][ordered]@{ Aufgabe = "$($t.TaskPath)$($t.TaskName)"; Status = [string]$t.State; Konto = $t.Principal.UserId; Admin = ([string]$t.Principal.RunLevel -eq 'Highest'); Signierer = ''; Auffaellig = ''; Befehl = (T 'scan.aufgaben.comHandler' ($a.ClassId)) }) }
                 continue
             }
             $exe = Get-ExePath "`"$exeRaw`""
@@ -1869,9 +1884,9 @@ Invoke-Check 'Geplante Aufgaben' {
             if ($isMs -and -not $userPath) { continue }
             $sig = Get-FileSignatureInfo $exe
             $flags = @()
-            if ($isMs -and $userPath) { $flags += 'Microsoft-Ordner, aber Programm im Benutzerordner' }
-            elseif ($userPath -and $sig.Status -ne 'Valid') { $flags += 'unsigniert im Benutzerordner' }
-            if ("$exeRaw $arg" -match '(?i)-enc(odedcommand)?\s|frombase64string|downloadstring|downloadfile|invoke-webrequest|\biwr\b|\biex\b|invoke-expression|-w(indowstyle)?\s+h(idden)?\b|mshta|regsvr32.+/i:http|bitsadmin|certutil.+-urlcache') { $flags += 'verdächtige Befehlszeile' }
+            if ($isMs -and $userPath) { $flags += (T 'scan.aufgaben.msOrdnerBenutzer') }
+            elseif ($userPath -and $sig.Status -ne 'Valid') { $flags += (T 'scan.aufgaben.unsigniertBenutzer') }
+            if ("$exeRaw $arg" -match '(?i)-enc(odedcommand)?\s|frombase64string|downloadstring|downloadfile|invoke-webrequest|\biwr\b|\biex\b|invoke-expression|-w(indowstyle)?\s+h(idden)?\b|mshta|regsvr32.+/i:http|bitsadmin|certutil.+-urlcache') { $flags += (T 'scan.aufgaben.verdaechtig') }
             $rows.Add([pscustomobject][ordered]@{
                     Aufgabe    = "$($t.TaskPath)$($t.TaskName)"
                     Status     = [string]$t.State
@@ -1885,8 +1900,8 @@ Invoke-Check 'Geplante Aufgaben' {
     }
     Add-Table 'Geplante Aufgaben (Drittanbieter und auffällige)' $rows
     $sus = @($rows | Where-Object { $_.Auffaellig -and $_.Status -ne 'Disabled' })
-    if ($sus) { Add-Finding WARN ("$($sus.Count) auffällige Aufgaben: " + (($sus | Select-Object -First 5 | ForEach-Object { "$($_.Aufgabe) ($($_.Auffaellig))" }) -join '; ')) 'Aufgaben im Anhang prüfen; versteckte PowerShell-Befehle und unsignierte Programme aus Benutzerordnern sind typische Schadsoftware-Muster.' }
-    else { Add-Finding OK "$($rows.Count) Drittanbieter-Aufgaben, keine auffälligen" }
+    if ($sus) { Add-Finding WARN (T 'scan.aufgaben.warn' $sus.Count (($sus | Select-Object -First 5 | ForEach-Object { "$($_.Aufgabe) ($($_.Auffaellig))" }) -join '; ')) (T 'scan.aufgaben.warnEmpf') }
+    else { Add-Finding OK (T 'scan.aufgaben.ok' $rows.Count) }
 }
 
 Invoke-Check 'WMI-Ereignisabonnements' -NeedsAdmin {
@@ -1896,8 +1911,8 @@ Invoke-Check 'WMI-Ereignisabonnements' -NeedsAdmin {
     }
     Add-Table 'WMI-Ereignisabonnements' $rows
     $sus = @($rows | Where-Object { $_.Typ -in 'CommandLineEventConsumer', 'ActiveScriptEventConsumer' })
-    if ($sus) { Add-Finding WARN ('Ausführende WMI-Abonnements: ' + (($sus | ForEach-Object Name) -join ', ')) 'Unbekannte Einträge sind ein starkes Warnzeichen (dateilose Schadsoftware). Inhalt im Anhang prüfen.' }
-    else { Add-Finding OK "$($cons.Count) Abonnements, keine ausführenden" }
+    if ($sus) { Add-Finding WARN (T 'scan.wmi.warn' (($sus | ForEach-Object Name) -join ', ')) (T 'scan.wmi.warnEmpf') }
+    else { Add-Finding OK (T 'scan.wmi.ok' $cons.Count) }
 }
 
 Invoke-Check 'Laufende Programme (Signatur und Ort)' {
@@ -1913,9 +1928,9 @@ Invoke-Check 'Laufende Programme (Signatur und Ort)' {
     $rows = @($rows)
     Add-Table 'Laufende Programme ohne gültige Signatur' $rows
     $sus = @($rows | Where-Object Benutzerordner)
-    if ($sus) { Add-Finding WARN ('Unsignierte Programme aus Benutzerordnern aktiv: ' + (($sus | ForEach-Object Prozess | Select-Object -Unique) -join ', ')) 'Herkunft prüfen (Pfad im Anhang).' }
-    elseif ($rows) { Add-Finding INFO ('Ohne gültige Signatur: ' + (($rows | ForEach-Object Prozess | Select-Object -Unique) -join ', ')) 'Meist kleine Tools oder Spiele; Herkunft kurz prüfen.' }
-    else { Add-Finding OK "$($procs.Count) Programme, alle gültig signiert" }
+    if ($sus) { Add-Finding WARN (T 'scan.laufend.warn' (($sus | ForEach-Object Prozess | Select-Object -Unique) -join ', ')) (T 'scan.laufend.warnEmpf') }
+    elseif ($rows) { Add-Finding INFO (T 'scan.laufend.info' (($rows | ForEach-Object Prozess | Select-Object -Unique) -join ', ')) (T 'scan.laufend.infoEmpf') }
+    else { Add-Finding OK (T 'scan.laufend.ok' $procs.Count) }
 }
 
 Invoke-Check 'Browser-Erweiterungen' {
@@ -1968,8 +1983,8 @@ Invoke-Check 'Browser-Erweiterungen' {
     Add-Table 'Browser-Erweiterungen' $rows
     $broad = @($rows | Where-Object Vollzugriff)
     $broadNames = @($broad | ForEach-Object Name | Select-Object -Unique)
-    if ($rows.Count) { Add-Finding INFO ("$($rows.Count) Erweiterungen, davon $($broad.Count) mit Zugriff auf alle Webseiten" + $(if ($broadNames) { ': ' + ($broadNames -join ', ') } else { '' })) 'Liste im Anhang durchgehen und alles entfernen, was du nicht kennst oder nicht nutzt. Erweiterungen mit Vollzugriff können Passwörter und Sitzungen mitlesen; bei Werbeblockern und Passwortmanagern ist das technisch nötig.' }
-    else { Add-Finding OK 'Keine Erweiterungen gefunden' }
+    if ($rows.Count) { Add-Finding INFO (T 'scan.erweiterungen.anzahl' $rows.Count $broad.Count $(if ($broadNames) { ': ' + ($broadNames -join ', ') } else { '' })) (T 'scan.erweiterungen.empf') }
+    else { Add-Finding OK (T 'scan.erweiterungen.keine') }
 }
 
 #endregion
@@ -1990,7 +2005,7 @@ Invoke-Check 'Installierte Programme' {
                     Version     = [string]$_.DisplayVersion
                     Hersteller  = [string]$_.Publisher
                     Installiert = $(if ($date -match '^(\d{4})(\d{2})(\d{2})$') { "$($Matches[1])-$($Matches[2])-$($Matches[3])" } else { '' })
-                    Bereich     = $(if ($p -like 'HKCU*') { 'Benutzer' } else { 'System' })
+                    Bereich     = $(if ($p -like 'HKCU*') { (T 'scan.software.bereichBenutzer') } else { (T 'scan.software.bereichSystem') })
                 }
             }
     }
@@ -1998,18 +2013,18 @@ Invoke-Check 'Installierte Programme' {
     Add-Table 'Installierte Programme' $apps
 
     $eol = @(
-        @{ Pattern = '^Adobe Flash'; Text = 'Adobe Flash (seit 2020 ohne Support)' }
-        @{ Pattern = '^Microsoft Silverlight'; Text = 'Silverlight (seit 2021 ohne Support)' }
-        @{ Pattern = '^QuickTime'; Text = 'QuickTime für Windows (seit 2016 ohne Support)' }
-        @{ Pattern = '^Python 2\.'; Text = 'Python 2 (seit 2020 ohne Support)' }
-        @{ Pattern = '^Python 3\.[0-9]\.'; Text = 'Python 3.9 oder älter (ohne Support)' }
-        @{ Pattern = 'Microsoft Office.*(2007|2010|2013|2016|2019)'; Text = 'Office 2019 oder älter (ohne Support, 2016/2019 seit 14.10.2025)' }
-        @{ Pattern = '^Java(\(TM\))? [67]\b'; Text = 'Java 6/7' }
+        @{ Pattern = '^Adobe Flash'; Text = (T 'scan.software.eolFlash') }
+        @{ Pattern = '^Microsoft Silverlight'; Text = (T 'scan.software.eolSilverlight') }
+        @{ Pattern = '^QuickTime'; Text = (T 'scan.software.eolQuickTime') }
+        @{ Pattern = '^Python 2\.'; Text = (T 'scan.software.eolPython2') }
+        @{ Pattern = '^Python 3\.[0-9]\.'; Text = (T 'scan.software.eolPython3') }
+        @{ Pattern = 'Microsoft Office.*(2007|2010|2013|2016|2019)'; Text = (T 'scan.software.eolOffice') }
+        @{ Pattern = '^Java(\(TM\))? [67]\b'; Text = (T 'scan.software.eolJava') }
     )
     $minVersions = @(
-        @{ Pattern = '^WinRAR'; Min = '7.13'; Text = 'WinRAR vor 7.13 (aktiv ausgenutzte Lücke CVE-2025-8088)' }
-        @{ Pattern = '^7-Zip'; Min = '25.0'; Text = '7-Zip vor 25.00 (Lücken CVE-2025-0411 / CVE-2025-11001)' }
-        @{ Pattern = '^Node\.js'; Min = '22.0'; Text = 'Node.js vor 22 (ohne Support)' }
+        @{ Pattern = '^WinRAR'; Min = '7.13'; Text = (T 'scan.software.minWinRar') }
+        @{ Pattern = '^7-Zip'; Min = '25.0'; Text = (T 'scan.software.min7Zip') }
+        @{ Pattern = '^Node\.js'; Min = '22.0'; Text = (T 'scan.software.minNode') }
     )
     $hits = @()
     foreach ($a in $apps) {
@@ -2022,36 +2037,36 @@ Invoke-Check 'Installierte Programme' {
         }
     }
     $hits = @($hits | Select-Object -Unique)
-    if ($hits) { Add-Finding WARN ($hits -join '; ') 'Aktualisieren oder deinstallieren.' }
-    else { Add-Finding OK "$($apps.Count) Programme, keine bekannten Altversionen gefunden" }
+    if ($hits) { Add-Finding WARN ($hits -join '; ') (T 'scan.software.altEmpf') }
+    else { Add-Finding OK (T 'scan.software.ok' $apps.Count) }
 }
 
 if ($SkipWinget) {
     $script:CheckName = 'Software-Updates (winget)'
-    Add-Finding SKIP 'Übersprungen (-SkipWinget)'
+    Add-Finding SKIP (T 'scan.software.wingetUebersprungen')
 }
 else {
     Invoke-Check 'Software-Updates (winget)' {
         # winget nur aus dem signierten App-Installationsprogramm unter Program Files\WindowsApps, nie über PATH (2.3.3)
-        if (-not $script:PfadLib) { Add-Finding SKIP 'winget nicht geprüft: gui\lib\Systempfade.ps1 fehlt'; return }
-        if (-not $script:WingetLib) { Add-Finding SKIP 'gui\lib\Winget.ps1 fehlt'; return }
+        if (-not $script:PfadLib) { Add-Finding SKIP (T 'scan.software.wingetPfadLibFehlt'); return }
+        if (-not $script:WingetLib) { Add-Finding SKIP (T 'scan.software.wingetLibFehlt'); return }
         $wgInfo = Get-MorpheusWinget
-        if (-not $wgInfo.Pfad) { Add-Finding SKIP ('winget nicht gefunden: ' + $wgInfo.Grund) 'Morpheus startet winget nur aus dem signierten App-Installationsprogramm unter C:\Program Files\WindowsApps, nie über PATH. Abhilfe: App-Installer im Microsoft Store aktualisieren.'; return }
+        if (-not $wgInfo.Pfad) { Add-Finding SKIP (T 'scan.software.wingetNichtGefunden' $wgInfo.Grund) (T 'scan.software.wingetNichtGefundenEmpf'); return }
         $wu = Get-MorpheusWingetUpdates -InformationAction SilentlyContinue
         switch ($wu.status) {
-            'zeitlimit' { Add-Finding SKIP 'winget hat nicht innerhalb von 3 Minuten geantwortet'; return }
-            'fehler' { Add-Finding SKIP ('winget-Abfrage fehlgeschlagen: ' + $wu.fehler); return }
+            'zeitlimit' { Add-Finding SKIP (T 'scan.software.wingetZeitlimit'); return }
+            'fehler' { Add-Finding SKIP (T 'scan.software.wingetFehler' $wu.fehler); return }
             'unlesbar' { Add-Finding SKIP $wu.fehler; return }
-            'keine' { Add-Finding OK 'Alle über winget erkannten Programme aktuell'; return }
+            'keine' { Add-Finding OK (T 'scan.software.wingetAktuell'); return }
         }
         $rows = @($wu.zeilen)
         $script:WingetUpdates = $rows
         Add-Table 'Verfügbare Software-Updates (winget)' $rows
         $manual = @($rows | Where-Object Kategorie -EQ 'Programm')
         $other = @($rows | Where-Object Kategorie -NE 'Programm')
-        if ($manual.Count) { Add-Finding WARN "$($manual.Count) Programme mit verfügbaren Updates: $((($manual | Select-Object -First 8 | ForEach-Object Name) -join ', '))" 'In Morpheus unter Werkzeuge > Programme aktualisieren auswählen und installieren (oder am Ende des Konsolen-Laufs).' }
-        elseif ($other.Count) { Add-Finding INFO "Nur Spiele/Launcher bzw. selbstaktualisierende Programme offen ($($other.Count)): $((($other | ForEach-Object Name) -join ', '))" 'Aktualisieren sich beim nächsten Start selbst.' }
-        else { Add-Finding OK 'Alle über winget erkannten Programme aktuell' }
+        if ($manual.Count) { Add-Finding WARN (T 'scan.software.wingetProgramme' $manual.Count (($manual | Select-Object -First 8 | ForEach-Object Name) -join ', ')) (T 'scan.software.wingetProgrammeEmpf') }
+        elseif ($other.Count) { Add-Finding INFO (T 'scan.software.wingetNurSpiele' $other.Count (($other | ForEach-Object Name) -join ', ')) (T 'scan.software.wingetNurSpieleEmpf') }
+        else { Add-Finding OK (T 'scan.software.wingetAktuell') }
     }
 }
 
@@ -2075,12 +2090,15 @@ Invoke-Check 'Fehlgeschlagene Anmeldungen' -NeedsAdmin {
     # Anmeldetyp 3 = Netzwerk (Freigaben), 10 = Remotedesktop; 2/7/11 = Eingabe direkt am PC bzw. in einer App
     $net = @($rows | Where-Object { $_.Anmeldetyp -in '3', '10' })
     $local = @($rows | Where-Object { $_.Anmeldetyp -notin '3', '10' })
-    $byProc = { param($list) ($list | Group-Object { if ($_.Prozess -and $_.Prozess -ne '-') { [IO.Path]::GetFileName($_.Prozess) } else { "Konto $($_.Konto)" } } | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', ' }
-    if ($ext) { Add-Finding CRIT ("$($ext.Count) Fehlversuche von externen Adressen: " + (($ext | ForEach-Object Quelle | Select-Object -Unique -First 5) -join ', ')) 'Prüfen, welcher Dienst aus dem Internet erreichbar ist (RDP/SMB/SSH) und Router-Portweiterleitungen schließen.' }
-    elseif ($net.Count -gt 20) { Add-Finding WARN "$($net.Count) Fehlversuche über das Netzwerk in $EventDays Tagen: $(& $byProc $net)" 'Ursache prüfen (gespeichertes altes Kennwort auf einem anderen Gerät, z. B. NAS-Verbindung, oder Angriff im lokalen Netz).' }
-    elseif ($net) { Add-Finding INFO ("$($net.Count) Fehlversuche über das Netzwerk: $(& $byProc $net)" + $(if ($local) { "; außerdem $($local.Count) lokale Fehleingaben" } else { '' })) }
-    elseif ($local) { Add-Finding OK "Keine übers Netzwerk; $($local.Count) lokale Fehleingaben (Kennwort/PIN am PC oder in einer App: $(& $byProc $local))" }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    $byProc = { param($list) ($list | Group-Object { if ($_.Prozess -and $_.Prozess -ne '-') { [IO.Path]::GetFileName($_.Prozess) } else { (T 'scan.ereignisse.anmeldungKonto' $_.Konto) } } | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', ' }
+    if ($ext) { Add-Finding CRIT (T 'scan.ereignisse.anmeldungExtern' $ext.Count (($ext | ForEach-Object Quelle | Select-Object -Unique -First 5) -join ', ')) (T 'scan.ereignisse.anmeldungExternEmpf') }
+    elseif ($net.Count -gt 20) { Add-Finding WARN (T 'scan.ereignisse.anmeldungNetzViele' $net.Count $EventDays (& $byProc $net)) (T 'scan.ereignisse.anmeldungNetzVieleEmpf') }
+    elseif ($net) {
+        if ($local) { Add-Finding INFO (T 'scan.ereignisse.anmeldungNetzLokal' $net.Count (& $byProc $net) $local.Count) }
+        else { Add-Finding INFO (T 'scan.ereignisse.anmeldungNetz' $net.Count (& $byProc $net)) }
+    }
+    elseif ($local) { Add-Finding OK (T 'scan.ereignisse.anmeldungNurLokal' $local.Count (& $byProc $local)) }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Netzwerk- und RDP-Anmeldungen' -NeedsAdmin {
@@ -2097,13 +2115,13 @@ Invoke-Check 'Netzwerk- und RDP-Anmeldungen' -NeedsAdmin {
     $rdpRows = @($rdp | ForEach-Object { & $toRow $_ })
     $extRows = @($net | ForEach-Object { & $toRow $_ } | Where-Object { $_.Quelle -notmatch $script:LocalAddressPattern })
     Add-Table 'Remote-Anmeldungen (RDP und externe Netzwerkanmeldungen)' @($rdpRows + $extRows | Select-Object -First 100)
-    if ($extRows) { Add-Finding CRIT ("$($extRows.Count) Netzwerkanmeldungen von externen Adressen: " + (($extRows | ForEach-Object Quelle | Select-Object -Unique -First 5) -join ', ')) 'Sofort prüfen, wer sich angemeldet hat; Kennwort ändern, Portweiterleitungen schließen.' }
-    elseif ($rdpRows) { Add-Finding WARN ("$($rdpRows.Count) RDP-Anmeldungen von: " + (($rdpRows | ForEach-Object Quelle | Select-Object -Unique) -join ', ')) 'Prüfen, ob diese Anmeldungen von dir stammen; unbekannte Quellen sind ein starkes Warnzeichen.' }
-    else { Add-Finding OK 'Keine RDP- oder externen Netzwerkanmeldungen' }
+    if ($extRows) { Add-Finding CRIT (T 'scan.ereignisse.remoteExtern' $extRows.Count (($extRows | ForEach-Object Quelle | Select-Object -Unique -First 5) -join ', ')) (T 'scan.ereignisse.remoteExternEmpf') }
+    elseif ($rdpRows) { Add-Finding WARN (T 'scan.ereignisse.remoteRdp' $rdpRows.Count (($rdpRows | ForEach-Object Quelle | Select-Object -Unique) -join ', ')) (T 'scan.ereignisse.remoteRdpEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.remoteKeine') }
 }
 
 Invoke-Check 'Konto- und Gruppenänderungen' -NeedsAdmin {
-    $names = @{ 4720 = 'Konto erstellt'; 4722 = 'Konto aktiviert'; 4724 = 'Kennwort zurückgesetzt'; 4726 = 'Konto gelöscht'; 4728 = 'Zu globaler Gruppe hinzugefügt'; 4732 = 'Zu lokaler Gruppe hinzugefügt'; 4738 = 'Konto geändert'; 4756 = 'Zu universeller Gruppe hinzugefügt'; 4781 = 'Konto umbenannt' }
+    $names = @{ 4720 = (T 'scan.ereignisse.kontoErstellt'); 4722 = (T 'scan.ereignisse.kontoAktiviert'); 4724 = (T 'scan.ereignisse.kennwortZurueck'); 4726 = (T 'scan.ereignisse.kontoGeloescht'); 4728 = (T 'scan.ereignisse.zuGlobaler'); 4732 = (T 'scan.ereignisse.zuLokaler'); 4738 = (T 'scan.ereignisse.kontoGeaendert'); 4756 = (T 'scan.ereignisse.zuUniverseller'); 4781 = (T 'scan.ereignisse.kontoUmbenannt') }
     $ev = @(Get-RecentEvents @{ LogName = 'Security'; Id = [int[]]$names.Keys } -Max 300)
     $rows = foreach ($e in $ev) {
         $d = Get-EventData $e
@@ -2115,22 +2133,26 @@ Invoke-Check 'Konto- und Gruppenänderungen' -NeedsAdmin {
     }
     $rows = @($rows)
     Add-Table 'Konto- und Gruppenänderungen' $rows
-    $groupAdds = @($rows | Where-Object { $_.Ereignis -like 'Zu *' })
+    $groupNames = @($names[4728], $names[4732], $names[4756])
+    $groupAdds = @($rows | Where-Object { $_.Ereignis -in $groupNames })
     # "Konto geändert" durch das Computerkonto (Name endet auf $) macht Windows selbst, z. B. beim Abgleich mit dem Microsoft-Konto
-    $routine = @($rows | Where-Object { $_.Ereignis -eq 'Konto geändert' -and $_.Durch -match '\$$' })
+    $routine = @($rows | Where-Object { $_.Ereignis -eq $names[4738] -and $_.Durch -match '\$$' })
     $other = @($rows | Where-Object { $_ -notin $routine })
     $otherText = ($other | Group-Object Ereignis | ForEach-Object { "$($_.Count)x $($_.Name)" }) -join ', '
-    if ($groupAdds) { Add-Finding WARN ('Gruppenmitgliedschaften geändert: ' + (($groupAdds | ForEach-Object { "$($_.Mitglied) -> $($_.Ziel)" }) -join '; ')) 'Prüfen, ob du das selbst warst (z. B. durch eine Software-Installation).' }
-    elseif ($other) { Add-Finding INFO ("$otherText (Anhang)" + $(if ($routine) { "; dazu $($routine.Count) Routine-Änderungen durch Windows" } else { '' })) 'Prüfen, ob du die Konten selbst angelegt, gelöscht oder geändert hast (auch Programme legen eigene Konten an).' }
-    elseif ($routine) { Add-Finding OK "Nur $($routine.Count) Routine-Änderungen durch Windows selbst" }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($groupAdds) { Add-Finding WARN (T 'scan.ereignisse.gruppenGeaendert' (($groupAdds | ForEach-Object { "$($_.Mitglied) -> $($_.Ziel)" }) -join '; ')) (T 'scan.ereignisse.gruppenGeaendertEmpf') }
+    elseif ($other) {
+        if ($routine) { Add-Finding INFO (T 'scan.ereignisse.kontoSonstRoutine' $otherText $routine.Count) (T 'scan.ereignisse.kontoSonstEmpf') }
+        else { Add-Finding INFO (T 'scan.ereignisse.kontoSonst' $otherText) (T 'scan.ereignisse.kontoSonstEmpf') }
+    }
+    elseif ($routine) { Add-Finding OK (T 'scan.ereignisse.kontoNurRoutine' $routine.Count) }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Gelöschte Ereignisprotokolle' {
     $ev = @(Get-RecentEvents @{ LogName = 'System'; Id = 104; ProviderName = 'Microsoft-Windows-Eventlog' })
     if ($script:IsAdmin) { $ev += @(Get-RecentEvents @{ LogName = 'Security'; Id = 1102 }) }
-    if ($ev) { Add-Finding WARN ("$($ev.Count)x geleert, zuletzt $(Format-Date ($ev | Sort-Object TimeCreated | Select-Object -Last 1).TimeCreated)") 'Wenn nicht von dir oder einem Aufräum-Tool: Angreifer verwischen so ihre Spuren.' }
-    else { Add-Finding OK "Nicht geleert in $EventDays Tagen" }
+    if ($ev) { Add-Finding WARN (T 'scan.ereignisse.protokollGeleert' $ev.Count (Format-Date ($ev | Sort-Object TimeCreated | Select-Object -Last 1).TimeCreated)) (T 'scan.ereignisse.protokollGeleertEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.protokollNichtGeleert' $EventDays) }
 }
 
 Invoke-Check 'Neu installierte Dienste' {
@@ -2144,10 +2166,10 @@ Invoke-Check 'Neu installierte Dienste' {
     Add-Table 'Neu installierte Dienste' $rows
     $bad = @($rows | Where-Object { $_.Signatur -notin 'Valid', 'Datei fehlt' })
     $signers = ($rows | Where-Object Signierer | Group-Object Signierer | Sort-Object Count -Descending | Select-Object -First 4 | ForEach-Object Name) -join ', '
-    $value = "$($rows.Count) Dienste ($($ev.Count) Installationen), alle gültig signiert" + $(if ($signers) { " ($signers …)" } else { '' })
-    if ($bad) { Add-Finding WARN ('Neue Dienste ohne gültige Signatur: ' + (($bad | ForEach-Object Dienst) -join ', ')) 'Herkunft prüfen (Pfad im Anhang).' }
+    $value = if ($signers) { T 'scan.ereignisse.diensteSigner' $rows.Count $ev.Count $signers } else { T 'scan.ereignisse.dienste' $rows.Count $ev.Count }
+    if ($bad) { Add-Finding WARN (T 'scan.ereignisse.diensteUnsigniert' (($bad | ForEach-Object Dienst) -join ', ')) (T 'scan.ereignisse.diensteUnsigniertEmpf') }
     elseif ($rows) { Add-Finding OK $value }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Defender-Ereignisse' {
@@ -2162,11 +2184,11 @@ Invoke-Check 'Defender-Ereignisse' {
     }
     Add-Table 'Defender-Ereignisse: Erkennungen' $rows
     $issues = @()
-    if ($off) { $issues += "Schutz $($off.Count)x abgeschaltet" }
-    if ($exclAdded) { $issues += "Ausnahmen $($exclAdded.Count)x geändert" }
-    if ($det) { $issues += "$($det.Count) Erkennungsereignisse: " + ((@($rows) | ForEach-Object Bedrohung | Select-Object -Unique -First 5) -join ', ') }
-    if ($issues) { Add-Finding WARN ($issues -join '; ') 'Prüfen, ob du das selbst warst; Schadsoftware schaltet Defender gern ab oder trägt Ausnahmen ein.' }
-    else { Add-Finding OK "Keine Erkennungen, Abschaltungen oder neuen Ausnahmen ($($cfg.Count) sonstige Konfigurationsänderungen)" }
+    if ($off) { $issues += (T 'scan.ereignisse.defenderAus' $off.Count) }
+    if ($exclAdded) { $issues += (T 'scan.ereignisse.defenderAusnahmen' $exclAdded.Count) }
+    if ($det) { $issues += (T 'scan.ereignisse.defenderErkennungen' $det.Count ((@($rows) | ForEach-Object Bedrohung | Select-Object -Unique -First 5) -join ', ')) }
+    if ($issues) { Add-Finding WARN ($issues -join '; ') (T 'scan.ereignisse.defenderEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.defenderOk' $cfg.Count) }
 }
 
 Invoke-Check 'Auffällige PowerShell-Skripte' {
@@ -2183,38 +2205,40 @@ Invoke-Check 'Auffällige PowerShell-Skripte' {
     }
     $rows = @($rows)
     Add-Table 'Auffällige PowerShell-Skriptblöcke' @($rows | Select-Object -First 50)
-    if ($rows) { Add-Finding INFO "$($rows.Count) Skriptblöcke von Windows als verdächtig protokolliert" 'Auszüge im Anhang prüfen; oft harmlos (Installer, Admin-Skripte).' }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($rows) { Add-Finding INFO (T 'scan.ereignisse.psSkripte' $rows.Count) (T 'scan.ereignisse.psSkripteEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Neue Firewall-Regeln' {
     $ev = @(Get-RecentEvents @{ LogName = 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall'; Id = 2004, 2097 } -Max 300)
+    $dirIn = T 'scan.ereignisse.richtungEingehend'
+    $dirOut = T 'scan.ereignisse.richtungAusgehend'
     $rows = foreach ($e in $ev) {
         $d = Get-EventData $e
-        [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Regel = $d['RuleName']; Richtung = $(if ($d['Direction'] -eq '1') { 'Eingehend' } else { 'Ausgehend' }); Programm = $d['ApplicationPath']; Durch = $d['ModifyingApplication'] }
+        [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Regel = $d['RuleName']; Richtung = $(if ($d['Direction'] -eq '1') { $dirIn } else { $dirOut }); Programm = $d['ApplicationPath']; Durch = $d['ModifyingApplication'] }
     }
     $rows = @($rows)
     Add-Table 'Neue Firewall-Regeln' @($rows | Select-Object -First 100)
     # Regeln, die der Windows-Firewalldienst (svchost) selbst anlegt, stammen von App-Installationen und -Updates aus dem Store bzw. von Windows
     $byWindows = @($rows | Where-Object { [string]$_.Durch -match '\\(svchost|MsMpEng)\.exe$' -or -not $_.Durch })
-    $inbound = @($rows | Where-Object { $_.Richtung -eq 'Eingehend' -and $_ -notin $byWindows })
+    $inbound = @($rows | Where-Object { $_.Richtung -eq $dirIn -and $_ -notin $byWindows })
     $tools = ($inbound | ForEach-Object { [IO.Path]::GetFileName([string]$_.Durch) } | Select-Object -Unique -First 5) -join ', '
-    if ($inbound) { Add-Finding INFO "$($inbound.Count) neue eingehende Regeln durch Programme ($tools); dazu $($byWindows.Count) von Windows selbst" 'Prüfen, ob du die Programme kennst und die Regeln brauchst (Liste im Anhang).' }
-    elseif ($rows) { Add-Finding OK "$($rows.Count) neue Regeln, alle von Windows selbst (App-Installationen und -Updates)" }
-    else { Add-Finding OK "Keine neuen eingehenden Regeln in $EventDays Tagen" }
+    if ($inbound) { Add-Finding INFO (T 'scan.ereignisse.fwEingehend' $inbound.Count $tools $byWindows.Count) (T 'scan.ereignisse.fwEingehendEmpf') }
+    elseif ($rows) { Add-Finding OK (T 'scan.ereignisse.fwNurWindows' $rows.Count) }
+    else { Add-Finding OK (T 'scan.ereignisse.fwKeine' $EventDays) }
 }
 
 Invoke-Check 'Blockierte Treiber/Dateien (Code Integrity)' {
     $ev = @(Get-RecentEvents @{ LogName = 'Microsoft-Windows-CodeIntegrity/Operational'; Id = 3033, 3077 } -Max 300)
     $rows = @($ev | Group-Object { (([string]$_.Message) -split "`n")[0].Trim() } | Sort-Object Count -Descending | Select-Object -First 20 | ForEach-Object {
-            [pscustomobject][ordered]@{ Anzahl = $_.Count; Einordnung = $(if ($_.Name -match $script:KnownHarmless.CodeIntegrity) { 'bekannt harmlos (Overlay-/Aufnahme-DLL)' } else { '' }); Meldung = $_.Name }
+            [pscustomobject][ordered]@{ Anzahl = $_.Count; Einordnung = $(if ($_.Name -match $script:KnownHarmless.CodeIntegrity) { (T 'scan.ereignisse.ciBekanntHarmlos') } else { '' }); Meldung = $_.Name }
         })
     Add-Table 'Code Integrity: blockierte Dateien' $rows
     $unknown = @($rows | Where-Object { -not $_.Einordnung })
     $unknownCount = ($unknown | Measure-Object Anzahl -Sum).Sum
-    if ($unknown) { Add-Finding INFO "$unknownCount Blockierungen ungeklärter Herkunft (insgesamt $($ev.Count))" 'Meist harmlos (z. B. nicht signierte DLLs in Spielen); bei Treibern prüfen, welches Tool betroffen ist (Anhang).' }
-    elseif ($ev) { Add-Finding OK "$($ev.Count) Blockierungen, alle bekannt harmlos (Overlay-/Aufnahme-DLLs, die Windows aus Systemprozessen fernhält)" }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($unknown) { Add-Finding INFO (T 'scan.ereignisse.ciUngeklaert' $unknownCount $ev.Count) (T 'scan.ereignisse.ciUngeklaertEmpf') }
+    elseif ($ev) { Add-Finding OK (T 'scan.ereignisse.ciAlleHarmlos' $ev.Count) }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 #endregion
@@ -2232,7 +2256,7 @@ Invoke-Check 'Prozessor' {
         Start-Sleep -Milliseconds 300
     }
     $mhz = [int]($cpu.MaxClockSpeed * $maxPerf / 100)
-    Add-Finding INFO "$($cpu.Name.Trim()): $($cpu.NumberOfCores) Kerne / $($cpu.NumberOfLogicalProcessors) Threads, Basistakt $($cpu.MaxClockSpeed) MHz, gemessen bis $mhz MHz"
+    Add-Finding INFO (T 'scan.hardware.cpu' $cpu.Name.Trim() $cpu.NumberOfCores $cpu.NumberOfLogicalProcessors $cpu.MaxClockSpeed $mhz)
 }
 
 Invoke-Check 'Arbeitsspeicher' {
@@ -2244,12 +2268,12 @@ Invoke-Check 'Arbeitsspeicher' {
     $total = ($mods | Measure-Object Capacity -Sum).Sum
     $cfg = ($mods | Measure-Object ConfiguredClockSpeed -Minimum).Minimum
     $channels = @($mods | ForEach-Object { if ("$($_.DeviceLocator)" -match 'Channel\s*([A-D])') { $Matches[1] } } | Select-Object -Unique)
-    $value = "$(Format-Size $total) in $($mods.Count) Modulen, $cfg MT/s" + $(if ($channels) { ", Kanäle: $($channels -join ', ')" } else { '' })
-    if ($mods.Count -eq 1) { Add-Finding WARN "$value (Single-Channel)" 'Ein zweites, gleiches Modul aktiviert Dual-Channel; das bringt in CPU-lastigen Spielen deutlich mehr FPS.' }
-    elseif ($channels.Count -eq 1) { Add-Finding WARN "$value (beide Module im selben Kanal)" 'Module laut Handbuch in A2 und B2 stecken.' }
-    elseif ($cfg -le 2133) { Add-Finding WARN "$value (JEDEC-Standardtakt)" 'XMP-Profil im BIOS aktivieren.' }
-    elseif ($cfg -le 2666) { Add-Finding INFO "$value (Intel-Spezifikation)" 'Wenn das Kit mehr kann (Modellnummer/Aufkleber), XMP aktivieren.' }
-    else { Add-Finding OK "$value (XMP/OC aktiv)" }
+    $value = if ($channels) { T 'scan.hardware.ramKanaele' (Format-Size $total) $mods.Count $cfg ($channels -join ', ') } else { T 'scan.hardware.ram' (Format-Size $total) $mods.Count $cfg }
+    if ($mods.Count -eq 1) { Add-Finding WARN (T 'scan.hardware.ramSingle' $value) (T 'scan.hardware.ramSingleEmpf') }
+    elseif ($channels.Count -eq 1) { Add-Finding WARN (T 'scan.hardware.ramGleicherKanal' $value) (T 'scan.hardware.ramGleicherKanalEmpf') }
+    elseif ($cfg -le 2133) { Add-Finding WARN (T 'scan.hardware.ramJedec' $value) (T 'scan.hardware.ramJedecEmpf') }
+    elseif ($cfg -le 2666) { Add-Finding INFO (T 'scan.hardware.ramIntel' $value) (T 'scan.hardware.ramIntelEmpf') }
+    else { Add-Finding OK (T 'scan.hardware.ramXmp' $value) }
 }
 
 Invoke-Check 'Grafikkarte und Treiber' {
@@ -2261,13 +2285,14 @@ Invoke-Check 'Grafikkarte und Treiber' {
     }
     Add-Table 'Grafikkarten' $rows
     $dgpu = @($gpus | Where-Object { $_.Name -match 'NVIDIA|AMD|Radeon|Arc' })
-    if (-not $dgpu) { Add-Finding INFO ('Nur integrierte Grafik: ' + (($gpus | ForEach-Object Name) -join ', ')); return }
+    if (-not $dgpu) { Add-Finding INFO (T 'scan.hardware.nurIntegriert' (($gpus | ForEach-Object Name) -join ', ')); return }
     foreach ($g in $dgpu) {
         $age = ((Get-Date) - $g.DriverDate).Days
         $row = $rows | Where-Object Name -EQ $g.Name | Select-Object -First 1
-        $value = "$($g.Name), Treiber $(if ($row.NvidiaVersion) { $row.NvidiaVersion } else { $g.DriverVersion }) vom $((Get-Date $g.DriverDate).ToString('yyyy-MM-dd')) ($age Tage)"
-        if ($age -gt 180) { Add-Finding WARN $value 'Aktuellen Treiber direkt vom Hersteller installieren (Spieleoptimierungen und Sicherheitsfixes).' }
-        elseif ($age -gt 90) { Add-Finding INFO $value 'Neuere Treiberversion prüfen.' }
+        $treiber = if ($row.NvidiaVersion) { $row.NvidiaVersion } else { $g.DriverVersion }
+        $value = T 'scan.hardware.gpuTreiber' $g.Name $treiber ((Get-Date $g.DriverDate).ToString('yyyy-MM-dd')) $age
+        if ($age -gt 180) { Add-Finding WARN $value (T 'scan.hardware.gpuTreiberAltEmpf') }
+        elseif ($age -gt 90) { Add-Finding INFO $value (T 'scan.hardware.gpuTreiberPruefenEmpf') }
         else { Add-Finding OK $value }
     }
 }
@@ -2282,7 +2307,7 @@ Invoke-Check 'Bildschirme und Bildwiederholrate' {
     Add-Table 'Bildschirme' $rows
     $slow = @($mons | Where-Object { $_.MaxHzAtResolution -gt $_.Hz + 1 })
     $nameText = if ($names) { ' (' + ($names -join ', ') + ')' } else { '' }
-    if ($slow) { Add-Finding WARN ((($slow | ForEach-Object { "$($_.Device) ($($_.Width)x$($_.Height)) läuft mit $($_.Hz) Hz, kann $($_.MaxHzAtResolution) Hz" }) -join '; ') + $nameText) 'Einstellungen > System > Anzeige > Erweiterte Anzeige > Bildwiederholrate auf das Maximum stellen (bei Problemen DisplayPort-Kabel nutzen).' }
+    if ($slow) { Add-Finding WARN ((($slow | ForEach-Object { (T 'scan.hardware.monitorLangsam' $_.Device $_.Width $_.Height $_.Hz $_.MaxHzAtResolution) }) -join '; ') + $nameText) (T 'scan.hardware.monitorLangsamEmpf') }
     else { Add-Finding OK ((($mons | ForEach-Object { "$($_.Width)x$($_.Height) @ $($_.Hz) Hz" }) -join '; ') + $nameText) }
 }
 
@@ -2291,9 +2316,9 @@ Invoke-Check 'Geräte mit Problemen' {
     $rows = foreach ($d in $bad) { [pscustomobject][ordered]@{ Geraet = $d.Name; Code = $d.ConfigManagerErrorCode; Klasse = $d.PNPClass; ID = $d.DeviceID } }
     Add-Table 'Geräte mit Problemen' $rows
     $real = @($bad | Where-Object { $_.ConfigManagerErrorCode -ne 22 })
-    if ($real) { Add-Finding WARN (($real | ForEach-Object { "$($_.Name) (Code $($_.ConfigManagerErrorCode))" }) -join '; ') 'Im Geräte-Manager Treiber installieren oder aktualisieren.' }
-    elseif ($bad) { Add-Finding INFO ("Deaktiviert: " + (($bad | ForEach-Object Name) -join ', ')) }
-    else { Add-Finding OK 'Keine' }
+    if ($real) { Add-Finding WARN (($real | ForEach-Object { (T 'scan.hardware.geraetCode' $_.Name $_.ConfigManagerErrorCode) }) -join '; ') (T 'scan.hardware.geraeteEmpf') }
+    elseif ($bad) { Add-Finding INFO (T 'scan.hardware.geraeteDeaktiviert' (($bad | ForEach-Object Name) -join ', ')) }
+    else { Add-Finding OK (T 'scan.hardware.geraeteKeine') }
 }
 
 Invoke-Check 'Wichtige Treiber' {
@@ -2303,8 +2328,8 @@ Invoke-Check 'Wichtige Treiber' {
         })
     Add-Table 'Herstellertreiber' $rows
     $me = $rows | Where-Object { $_.Geraet -match 'Management Engine|MEI' } | Select-Object -First 1
-    $meText = if ($me) { "; Intel ME-Treiber $($me.Version) vom $($me.Datum)" } else { '' }
-    Add-Finding INFO "$($rows.Count) Herstellertreiber (Anhang)$meText" 'Chipsatz-, Netzwerk- und Audiotreiber gelegentlich mit der Supportseite des Mainboard- bzw. PC-Herstellers abgleichen.'
+    if ($me) { Add-Finding INFO (T 'scan.hardware.treiberMe' $rows.Count $me.Version $me.Datum) (T 'scan.hardware.treiberEmpf') }
+    else { Add-Finding INFO (T 'scan.hardware.treiber' $rows.Count) (T 'scan.hardware.treiberEmpf') }
 }
 
 #endregion
@@ -2340,12 +2365,13 @@ Invoke-Check 'Laufwerke (Typ und Zustand)' {
     $unhealthy = @($rows | Where-Object { $_.Zustand -ne 'Healthy' })
     $worn = @($rows | Where-Object { $_.Verschleiss -ge 80 })
     $hdds = @($rows | Where-Object Typ -EQ 'HDD')
-    if ($unhealthy) { Add-Finding CRIT ('Laufwerk meldet Fehler: ' + (($unhealthy | ForEach-Object { "$($_.Name) ($($_.Zustand))" }) -join ', ')) 'Sofort Datensicherung machen und Laufwerk ersetzen.' }
-    elseif ($worn) { Add-Finding WARN ('Hoher Verschleiß: ' + (($worn | ForEach-Object { "$($_.Name) $($_.Verschleiss) %" }) -join ', ')) 'Austausch einplanen, Datensicherung aktuell halten.' }
-    elseif ($sys.Typ -eq 'HDD') { Add-Finding CRIT "Windows liegt auf einer Festplatte (HDD): $($sys.Name)" 'Größter Leistungshebel überhaupt: Windows auf eine SSD/NVMe umziehen.' }
-    elseif ($sys.Bus -eq 'SATA') { Add-Finding INFO "Windows auf SATA-SSD: $($sys.Name)" 'NVMe im M.2-Slot lädt schneller; im Spielealltag meist kaum spürbar.' }
-    else { Add-Finding OK ("Windows auf $($sys.Bus)-$($sys.Typ): $($sys.Name)" + $(if ($hdds) { "; HDDs: $(($hdds | ForEach-Object Name) -join ', ')" } else { '' })) }
-    if ($hdds -and $sys.Typ -ne 'HDD') { Add-Finding INFO ('Festplatten im System: ' + (($hdds | ForEach-Object Name) -join ', ')) 'Spiele von HDD laden deutlich langsamer und können beim Nachladen ruckeln; HDDs eher für Daten/Backups nutzen.' -Check 'Festplatten (HDD)' }
+    if ($unhealthy) { Add-Finding CRIT (T 'scan.laufwerke.fehler' (($unhealthy | ForEach-Object { "$($_.Name) ($($_.Zustand))" }) -join ', ')) (T 'scan.laufwerke.fehlerEmpf') }
+    elseif ($worn) { Add-Finding WARN (T 'scan.laufwerke.verschleiss' (($worn | ForEach-Object { "$($_.Name) $($_.Verschleiss) %" }) -join ', ')) (T 'scan.laufwerke.verschleissEmpf') }
+    elseif ($sys.Typ -eq 'HDD') { Add-Finding CRIT (T 'scan.laufwerke.windowsHdd' $sys.Name) (T 'scan.laufwerke.windowsHddEmpf') }
+    elseif ($sys.Bus -eq 'SATA') { Add-Finding INFO (T 'scan.laufwerke.windowsSata' $sys.Name) (T 'scan.laufwerke.windowsSataEmpf') }
+    elseif ($hdds) { Add-Finding OK (T 'scan.laufwerke.windowsAufHdds' $sys.Bus $sys.Typ $sys.Name (($hdds | ForEach-Object Name) -join ', ')) }
+    else { Add-Finding OK (T 'scan.laufwerke.windowsAuf' $sys.Bus $sys.Typ $sys.Name) }
+    if ($hdds -and $sys.Typ -ne 'HDD') { Add-Finding INFO (T 'scan.laufwerke.festplatten' (($hdds | ForEach-Object Name) -join ', ')) (T 'scan.laufwerke.festplattenEmpf') -Check 'Festplatten (HDD)' }
 }
 
 Invoke-Check 'Freier Speicherplatz' {
@@ -2357,26 +2383,26 @@ Invoke-Check 'Freier Speicherplatz' {
     Add-Table 'Laufwerke (Volumes)' $rows
     $sys = $rows | Where-Object Laufwerk -EQ $env:SystemDrive
     $low = @($rows | Where-Object { $_.FreiProzent -lt 10 -and $_.Laufwerk -ne $env:SystemDrive })
-    $summary = ($rows | ForEach-Object { "$($_.Laufwerk) $($_.FreiProzent) % frei" }) -join ', '
-    if ($sys.FreiProzent -lt 10) { Add-Finding CRIT $summary 'Auf C: Platz schaffen: Windows und SSDs werden mit wenig freiem Platz langsamer, Updates scheitern.' }
-    elseif ($sys.FreiProzent -lt 15 -or $low) { Add-Finding WARN $summary 'Mindestens 15–20 % frei lassen.' }
+    $summary = ($rows | ForEach-Object { (T 'scan.laufwerke.frei' $_.Laufwerk $_.FreiProzent) }) -join ', '
+    if ($sys.FreiProzent -lt 10) { Add-Finding CRIT $summary (T 'scan.laufwerke.freiCritEmpf') }
+    elseif ($sys.FreiProzent -lt 15 -or $low) { Add-Finding WARN $summary (T 'scan.laufwerke.freiWarnEmpf') }
     else { Add-Finding OK $summary }
 }
 
 if ($SkipSpeicher) {
     $script:CheckName = 'Größte Speicherverbraucher'
-    Add-Finding SKIP 'Übersprungen (-SkipSpeicher)'
+    Add-Finding SKIP (T 'scan.laufwerke.speicherUebersprungen')
 }
 else {
     Invoke-Check 'Größte Speicherverbraucher' {
-        if (-not $script:SpeicherLib) { Add-Finding SKIP 'gui\lib\Speicher.ps1 fehlt'; return }
+        if (-not $script:SpeicherLib) { Add-Finding SKIP (T 'scan.laufwerke.speicherLibFehlt'); return }
         $script:Speicher = Get-MorpheusSpeicher -Manuell $script:SpielOrdner -Fortschritt { param($Text) if ($Text -match '^[A-Z]: |^Spiele') { Write-Host "      $Text" -ForegroundColor DarkGray } }
         $ordnerRows = New-Object System.Collections.Generic.List[object]
         $dateiRows = New-Object System.Collections.Generic.List[object]
         $parts = New-Object System.Collections.Generic.List[string]
         $skipped = 0
         foreach ($d in @($script:Speicher.laufwerke)) {
-            if ($d.fehler) { $parts.Add("$($d.laufwerk) nicht lesbar"); continue }
+            if ($d.fehler) { $parts.Add((T 'scan.laufwerke.nichtLesbar' $d.laufwerk)); continue }
             $skipped += [int]$d.uebersprungen
             foreach ($o in @($d.ordner)) {
                 $ordnerRows.Add([pscustomobject][ordered]@{ Laufwerk = $d.laufwerk; Pfad = $o.pfad; Groesse = Format-Size ([double]$o.bytes); Bytes = [double]$o.bytes })
@@ -2390,8 +2416,8 @@ else {
         Add-Table 'Speicherverbraucher: Ordner' $ordnerRows.ToArray()
         Add-Table 'Speicherverbraucher: Dateien' $dateiRows.ToArray()
         $value = $parts -join '; '
-        if ($skipped -gt 0) { $value += " ($skipped Ordner ohne Zugriff übersprungen)" }
-        Add-Finding INFO $value 'Die größten Ordner und Dateien je Laufwerk stehen in der GUI beim Laufwerk in der Statusleiste und im Anhang. Systemdateien wie pagefile.sys nicht löschen.'
+        if ($skipped -gt 0) { $value += (T 'scan.laufwerke.ohneZugriff' $skipped) }
+        Add-Finding INFO $value (T 'scan.laufwerke.speicherEmpf')
     }
 }
 
@@ -2400,19 +2426,21 @@ Invoke-Check 'TRIM und Laufwerksoptimierung' {
     $trim = if ($out -match 'NTFS DisableDeleteNotify\s*=\s*(\d)') { [int]$Matches[1] } else { $null }
     $task = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Defrag\' -TaskName 'ScheduledDefrag' -ErrorAction SilentlyContinue
     $last = if ($task) { (Get-ScheduledTaskInfo -InputObject $task -ErrorAction SilentlyContinue).LastRunTime } else { $null }
-    $value = 'TRIM ' + $(switch ($trim) { 0 { 'an' } 1 { 'aus' } default { 'unbekannt' } }) + '; geplante Optimierung ' + $(if ($task) { [string]$task.State } else { 'nicht gefunden' }) + $(if ($last) { ", zuletzt $(Format-Date $last)" } else { '' })
-    if ($trim -eq 1) { Add-Finding WARN $value 'TRIM einschalten: fsutil behavior set DisableDeleteNotify 0 (Admin).' }
-    elseif ($task -and [string]$task.State -eq 'Disabled') { Add-Finding WARN $value 'SSDs brauchen den regelmäßigen ReTrim: "Laufwerke optimieren" > geplante Optimierung einschalten.' }
+    $trimText = switch ($trim) { 0 { (T 'scan.leistung.wert.an') } 1 { (T 'scan.leistung.wert.aus') } default { (T 'scan.leistung.wert.unbekannt') } }
+    $taskText = if ($task) { [string]$task.State } else { T 'scan.laufwerke.nichtGefunden' }
+    $value = if ($last) { T 'scan.laufwerke.trimZuletzt' $trimText $taskText (Format-Date $last) } else { T 'scan.laufwerke.trim' $trimText $taskText }
+    if ($trim -eq 1) { Add-Finding WARN $value (T 'scan.laufwerke.trimAusEmpf') }
+    elseif ($task -and [string]$task.State -eq 'Disabled') { Add-Finding WARN $value (T 'scan.laufwerke.trimTaskEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Auslagerungsdatei' {
     $use = @(Get-CimInstance Win32_PageFileUsage)
-    $mode = if ($script:CS.AutomaticManagedPagefile) { 'systemverwaltet' } else { 'manuell' }
-    if (-not $use) { Add-Finding WARN 'Keine Auslagerungsdatei' 'Systemverwaltete Größe wieder einschalten: Ohne Auslagerungsdatei stürzen Spiele und IDEs bei vollem RAM ab, statt nur langsamer zu werden.'; return }
-    $value = "$mode; " + (($use | ForEach-Object { "$($_.Name) $($_.AllocatedBaseSize) MB, Spitze $($_.PeakUsage) MB" }) -join '; ')
+    $mode = if ($script:CS.AutomaticManagedPagefile) { T 'scan.laufwerke.systemverwaltet' } else { T 'scan.laufwerke.manuell' }
+    if (-not $use) { Add-Finding WARN (T 'scan.laufwerke.keineAuslagerung') (T 'scan.laufwerke.keineAuslagerungEmpf'); return }
+    $value = T 'scan.laufwerke.auslagerung' $mode (($use | ForEach-Object { (T 'scan.laufwerke.auslagerungEintrag' $_.Name $_.AllocatedBaseSize $_.PeakUsage) }) -join '; ')
     $tight = @($use | Where-Object { $_.PeakUsage -gt 0.8 * $_.AllocatedBaseSize })
-    if ($tight -and -not $script:CS.AutomaticManagedPagefile) { Add-Finding WARN $value 'Auslagerungsdatei war fast voll: auf "systemverwaltet" stellen.' }
+    if ($tight -and -not $script:CS.AutomaticManagedPagefile) { Add-Finding WARN $value (T 'scan.laufwerke.auslagerungVollEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -2420,33 +2448,39 @@ Invoke-Check 'Schnellstart und Ruhezustand' {
     $hb = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' 'HiberbootEnabled'
     $hib = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\Power' 'HibernateEnabled'
     $hf = Get-Item -LiteralPath "$env:SystemDrive\hiberfil.sys" -Force -ErrorAction SilentlyContinue
-    $value = 'Schnellstart ' + $(if ($hb -eq 1) { 'an' } else { 'aus' }) + '; Ruhezustand ' + $(if ($hib -eq 0) { 'aus' } else { 'an' }) + $(if ($hf) { "; hiberfil.sys $(Format-Size $hf.Length)" } else { '' })
-    if ($hb -eq 1) { Add-Finding INFO $value 'Mit NVMe spart der Schnellstart kaum Zeit, aber "Herunterfahren" ist dann kein echter Neustart (Treiber, Updates und BIOS/OC-Änderungen greifen erst nach "Neu starten"). Bei Problemen ausschalten.' }
+    $hbText = if ($hb -eq 1) { T 'scan.leistung.wert.an' } else { T 'scan.leistung.wert.aus' }
+    $hibText = if ($hib -eq 0) { T 'scan.leistung.wert.aus' } else { T 'scan.leistung.wert.an' }
+    $value = if ($hf) { T 'scan.laufwerke.schnellstartHiberfil' $hbText $hibText (Format-Size $hf.Length) } else { T 'scan.laufwerke.schnellstart' $hbText $hibText }
+    if ($hb -eq 1) { Add-Finding INFO $value (T 'scan.laufwerke.schnellstartEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Temporäre Dateien und Caches' {
-    $targets = [ordered]@{
-        'Benutzer-Temp'              = $script:BenutzerTemp
-        'Windows-Temp'               = "$env:SystemRoot\Temp"
-        'Update-Downloads'           = "$env:SystemRoot\SoftwareDistribution\Download"
-        'Absturzabbilder (Programme)' = "$env:LOCALAPPDATA\CrashDumps"
-        'Minidumps (Bluescreens)'    = "$env:SystemRoot\Minidump"
-        'Shader-Cache DirectX'       = "$env:LOCALAPPDATA\D3DSCache"
-        'Shader-Cache NVIDIA'        = "$env:LOCALAPPDATA\NVIDIA\DXCache"
-    }
-    $rows = foreach ($k in $targets.Keys) {
-        $s = Get-FolderSize $targets[$k]
-        if ($s) { [pscustomobject][ordered]@{ Ort = $k; Groesse = Format-Size $s.Bytes; Bytes = $s.Bytes; Dateien = $s.Files; Pfad = $targets[$k] } }
+    $targets = @(
+        @{ Ort = (T 'scan.laufwerke.ortBenutzerTemp'); Pfad = $script:BenutzerTemp; Shader = $false }
+        @{ Ort = (T 'scan.laufwerke.ortWindowsTemp'); Pfad = "$env:SystemRoot\Temp"; Shader = $false }
+        @{ Ort = (T 'scan.laufwerke.ortUpdateDownloads'); Pfad = "$env:SystemRoot\SoftwareDistribution\Download"; Shader = $false }
+        @{ Ort = (T 'scan.laufwerke.ortAbsturzabbilder'); Pfad = "$env:LOCALAPPDATA\CrashDumps"; Shader = $false }
+        @{ Ort = (T 'scan.laufwerke.ortMinidumps'); Pfad = "$env:SystemRoot\Minidump"; Shader = $false }
+        @{ Ort = (T 'scan.laufwerke.ortShaderDx'); Pfad = "$env:LOCALAPPDATA\D3DSCache"; Shader = $true }
+        @{ Ort = (T 'scan.laufwerke.ortShaderNv'); Pfad = "$env:LOCALAPPDATA\NVIDIA\DXCache"; Shader = $true }
+    )
+    $junk = 0
+    $rows = foreach ($t in $targets) {
+        $s = Get-FolderSize $t.Pfad
+        if ($s) {
+            if (-not $t.Shader) { $junk += $s.Bytes }
+            [pscustomobject][ordered]@{ Ort = $t.Ort; Groesse = Format-Size $s.Bytes; Bytes = $s.Bytes; Dateien = $s.Files; Pfad = $t.Pfad }
+        }
     }
     $dump = Get-Item -LiteralPath "$env:SystemRoot\MEMORY.DMP" -Force -ErrorAction SilentlyContinue
-    if ($dump) { $rows = @($rows) + [pscustomobject][ordered]@{ Ort = 'Speicherabbild MEMORY.DMP'; Groesse = Format-Size $dump.Length; Bytes = [double]$dump.Length; Dateien = 1; Pfad = $dump.FullName } }
+    if ($dump) { $junk += [double]$dump.Length; $rows = @($rows) + [pscustomobject][ordered]@{ Ort = (T 'scan.laufwerke.ortMemoryDmp'); Groesse = Format-Size $dump.Length; Bytes = [double]$dump.Length; Dateien = 1; Pfad = $dump.FullName } }
     $rows = @($rows)
     Add-Table 'Temporäre Dateien und Caches' @($rows | Select-Object Ort, Groesse, Dateien, Pfad)
-    $junk = ($rows | Where-Object { $_.Ort -notlike 'Shader*' } | Measure-Object Bytes -Sum).Sum
     $sense = (Get-RegValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy' '01') -eq 1
-    $value = "Aufräumbar ca. $(Format-Size $junk); Speicheroptimierung " + $(if ($sense) { 'an' } else { 'aus' })
-    if ($junk -gt 5GB) { Add-Finding INFO $value 'Datenträgerbereinigung bzw. Einstellungen > System > Speicher > Bereinigungsempfehlungen nutzen. Shader-Caches nicht löschen (sonst Ruckler beim nächsten Spielstart).' }
+    $senseText = if ($sense) { T 'scan.leistung.wert.an' } else { T 'scan.leistung.wert.aus' }
+    $value = T 'scan.laufwerke.aufraeumbar' (Format-Size $junk) $senseText
+    if ($junk -gt 5GB) { Add-Finding INFO $value (T 'scan.laufwerke.aufraeumbarEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -2454,7 +2488,7 @@ Invoke-Check 'Dev Drive (Entwicklung)' {
     $refs = @(Get-Volume | Where-Object { $_.DriveLetter -and $_.FileSystem -eq 'ReFS' })
     if ($refs) {
         $detail = foreach ($v in $refs) { "$($v.DriveLetter): " + (((Invoke-Native "$script:Sys32\fsutil.exe" @('devdrv', 'query', "$($v.DriveLetter):")) | Where-Object { $_.Trim() } | Select-Object -First 1)) }
-        Add-Finding OK ('ReFS-Volumes: ' + ($detail -join '; '))
+        Add-Finding OK (T 'scan.laufwerke.refsVolumes' ($detail -join '; '))
     }
     else {
         # Nur relevant, wenn auf dem PC entwickelt wird
@@ -2465,8 +2499,8 @@ Invoke-Check 'Dev Drive (Entwicklung)' {
                 foreach ($d in $devOrdner) { try { if ([IO.File]::Exists([IO.Path]::Combine($d.Trim(), $n))) { return $true } } catch { } }
                 $false
             } | ForEach-Object { $_ -replace '\.exe$' })
-        if ($dev) { Add-Finding INFO "Kein Dev Drive vorhanden (Entwicklungswerkzeuge gefunden: $($dev -join ', '))" 'Für Repos, node_modules und Build-Ordner ein Dev Drive anlegen (Einstellungen > System > Speicher > Datenträger und Volumes). ReFS plus Defender-Leistungsmodus beschleunigt git, npm und Builds spürbar, ohne den Virenschutz abzuschalten.' }
-        else { Add-Finding OK 'Kein Dev Drive, keine Entwicklungswerkzeuge gefunden (nicht nötig)' }
+        if ($dev) { Add-Finding INFO (T 'scan.laufwerke.keinDevDriveTools' ($dev -join ', ')) (T 'scan.laufwerke.keinDevDriveEmpf') }
+        else { Add-Finding OK (T 'scan.laufwerke.keinDevDriveNoetig') }
     }
 }
 
@@ -2484,14 +2518,14 @@ Invoke-Check 'Energieplan' {
     Add-Table 'Energiepläne' $plans
     $highPerf = $guid -in '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c', 'e9a42b02-d5df-448d-aa00-03f14749eb61' -or $name -match 'Ultimat|High performance|Höchstleistung'
     if ($script:Profile -eq 'Laptop') {
-        if ($highPerf) { Add-Finding WARN "Aktiv: $name" 'Auf einem Laptop leert "Höchstleistung" den Akku schnell und heizt das Gerät auf. "Ausbalanciert" wählen; für Spiele am Netzteil reicht der Energiemodus "Beste Leistung" (Einstellungen > System > Netzbetrieb und Akku).' }
-        else { Add-Finding OK "Aktiv: $name" }
+        if ($highPerf) { Add-Finding WARN (T 'scan.leistung.aktiv' $name) (T 'scan.energie.laptopHochleistungEmpf') }
+        else { Add-Finding OK (T 'scan.leistung.aktiv' $name) }
         return
     }
     switch ($guid) {
-        'a1841308-3541-4fab-bc81-f71556f20b4a' { Add-Finding WARN "Aktiv: $name" 'Für einen Desktop "Ausbalanciert" oder einen Plan mit voller Leistung wählen; "Energiesparmodus" drosselt die CPU.' }
-        '381b4222-f694-41f0-9685-ff5bb260df2e' { Add-Finding OK "Aktiv: $name (mit aktuellem Windows meist ausreichend)" }
-        default { Add-Finding OK "Aktiv: $name" }
+        'a1841308-3541-4fab-bc81-f71556f20b4a' { Add-Finding WARN (T 'scan.leistung.aktiv' $name) (T 'scan.energie.desktopSparplanEmpf') }
+        '381b4222-f694-41f0-9685-ff5bb260df2e' { Add-Finding OK (T 'scan.energie.aktivAusreichend' $name) }
+        default { Add-Finding OK (T 'scan.leistung.aktiv' $name) }
     }
 }
 
@@ -2500,12 +2534,12 @@ Invoke-Check 'Prozessor-Energieeinstellungen' {
     $max = Get-PowerSetting SUB_PROCESSOR PROCTHROTTLEMAX
     $boost = Get-PowerSetting SUB_PROCESSOR PERFBOOSTMODE -Hidden
     $park = Get-PowerSetting SUB_PROCESSOR CPMINCORES -Hidden
-    $boostNames = @{ 0 = 'deaktiviert'; 1 = 'aktiviert'; 2 = 'aggressiv'; 3 = 'effizient aktiviert'; 4 = 'effizient aggressiv'; 5 = 'aggressiv bei Garantie'; 6 = 'effizient aggressiv bei Garantie' }
-    $value = "Netzbetrieb: min. $($min.AC) %, max. $($max.AC) %" + $(if ($boost) { ", Turbo-Modus $($boostNames[[int]$boost.AC])" } else { '' }) + $(if ($park) { ", Kernparken min. $($park.AC) %" } else { '' })
-    if ($max -and $max.AC -lt 100) { Add-Finding WARN $value 'Maximalen Prozessorzustand im Energieplan auf 100 % setzen, sonst bremst Windows die CPU.' }
-    elseif ($boost -and $boost.AC -eq 0) { Add-Finding WARN $value 'Turbo ist im Energieplan abgeschaltet: Prozessor-Leistungssteigerungsmodus auf "Aktiviert" stellen.' }
-    elseif ($min -and $min.AC -ge 100 -and $script:Profile -eq 'Laptop') { Add-Finding WARN $value 'Mindestzustand 100 % hält die CPU dauerhaft auf vollem Takt: kostet Akku und Lautstärke. Einen Plan mit niedrigem Mindestzustand nutzen (z. B. "Ausbalanciert").' }
-    elseif ($min -and $min.AC -ge 100) { Add-Finding INFO $value 'CPU taktet im Leerlauf nicht herunter: bringt im Spiel kaum etwas, erhöht aber Verbrauch und Temperatur. Besser: ein Plan, der unter Last voll taktet und im Leerlauf heruntertaktet (Anleitung unter „So geht''s“).' }
+    $boostNames = @{ 0 = (T 'scan.energie.boost0'); 1 = (T 'scan.energie.boost1'); 2 = (T 'scan.energie.boost2'); 3 = (T 'scan.energie.boost3'); 4 = (T 'scan.energie.boost4'); 5 = (T 'scan.energie.boost5'); 6 = (T 'scan.energie.boost6') }
+    $value = (T 'scan.energie.cpuNetz' $min.AC $max.AC) + $(if ($boost) { T 'scan.energie.cpuTurbo' ($boostNames[[int]$boost.AC]) } else { '' }) + $(if ($park) { T 'scan.energie.cpuKernparken' $park.AC } else { '' })
+    if ($max -and $max.AC -lt 100) { Add-Finding WARN $value (T 'scan.energie.cpuMaxEmpf') }
+    elseif ($boost -and $boost.AC -eq 0) { Add-Finding WARN $value (T 'scan.energie.cpuTurboAusEmpf') }
+    elseif ($min -and $min.AC -ge 100 -and $script:Profile -eq 'Laptop') { Add-Finding WARN $value (T 'scan.energie.cpuMinLaptopEmpf') }
+    elseif ($min -and $min.AC -ge 100) { Add-Finding INFO $value (T 'scan.energie.cpuMinEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -2513,11 +2547,12 @@ Invoke-Check 'Weitere Energiesparfunktionen' {
     $usb = Get-PowerSetting '2a737441-1930-4402-8d77-b2bebba308a3' '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
     $aspm = Get-PowerSetting SUB_PCIEXPRESS ASPM
     $sleep = Get-PowerSetting SUB_SLEEP STANDBYIDLE
-    $aspmNames = @{ 0 = 'aus'; 1 = 'mittel'; 2 = 'maximal' }
-    $value = 'USB-Energiesparen ' + $(if ($usb) { @{ 0 = 'aus'; 1 = 'an' }[[int]$usb.AC] } else { 'unbekannt' }) +
-    '; PCIe-Verbindungsenergieverwaltung ' + $(if ($aspm) { $aspmNames[[int]$aspm.AC] } else { 'unbekannt' }) +
-    '; Energiesparmodus nach ' + $(if ($sleep) { if ($sleep.AC -eq 0) { 'nie' } else { "$([int]($sleep.AC / 60)) Min." } } else { 'unbekannt' })
-    if ($aspm -and $aspm.AC -eq 2) { Add-Finding INFO $value 'Maximale PCIe-Energieverwaltung kann bei manchen Grafikkarten/NVMe Mikroruckler verursachen; bei Problemen auf "aus" stellen.' }
+    $aspmNames = @{ 0 = (T 'scan.leistung.wert.aus'); 1 = (T 'scan.energie.aspmMittel'); 2 = (T 'scan.energie.aspmMaximal') }
+    $usbText = if (-not $usb) { T 'scan.leistung.wert.unbekannt' } elseif ([int]$usb.AC -eq 1) { T 'scan.leistung.wert.an' } elseif ([int]$usb.AC -eq 0) { T 'scan.leistung.wert.aus' } else { '' }
+    $aspmText = if ($aspm) { $aspmNames[[int]$aspm.AC] } else { T 'scan.leistung.wert.unbekannt' }
+    $sleepText = if (-not $sleep) { T 'scan.leistung.wert.unbekannt' } elseif ($sleep.AC -eq 0) { T 'scan.energie.sleepNie' } else { T 'scan.energie.sleepMin' ([int]($sleep.AC / 60)) }
+    $value = T 'scan.energie.weitere' $usbText $aspmText $sleepText
+    if ($aspm -and $aspm.AC -eq 2) { Add-Finding INFO $value (T 'scan.energie.aspmEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -2529,37 +2564,39 @@ Start-Section 'Performance' 'Gaming & Grafik'
 
 Invoke-Check 'Spielmodus' {
     $gm = Get-RegValue 'HKCU:\Software\Microsoft\GameBar' 'AutoGameModeEnabled'
-    if ($gm -eq 0) { Add-Finding INFO 'Aus' 'Einstellungen > Spielen > Spielmodus einschalten: priorisiert das Spiel und verhindert Update-Neustarts währenddessen.' }
-    else { Add-Finding OK 'An' }
+    if ($gm -eq 0) { Add-Finding INFO (T 'scan.gaming.aus') (T 'scan.gaming.spielmodusEmpf') }
+    else { Add-Finding OK (T 'scan.gaming.an') }
 }
 
 Invoke-Check 'Hardwarebeschleunigte GPU-Planung (HAGS)' {
     $h = Get-RegValue 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode'
     switch ($h) {
-        2 { Add-Finding OK 'An' }
-        1 { Add-Finding INFO 'Aus' 'Mit aktueller NVIDIA-/AMD-Karte meist einschalten (Voraussetzung für DLSS Frame Generation); bei Rucklern testweise wieder aus.' }
-        default { Add-Finding INFO 'Windows-Standard (nicht gesetzt)' 'Einstellungen > System > Anzeige > Grafik > Standardgrafikeinstellungen prüfen.' }
+        2 { Add-Finding OK (T 'scan.gaming.an') }
+        1 { Add-Finding INFO (T 'scan.gaming.aus') (T 'scan.gaming.hagsEmpf') }
+        default { Add-Finding INFO (T 'scan.gaming.hagsStandard') (T 'scan.gaming.hagsStandardEmpf') }
     }
 }
 
 Invoke-Check 'Hintergrundaufzeichnung (Game DVR)' {
     $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'
-    if ((Get-RegValue $k 'HistoricalCaptureEnabled') -eq 1) { Add-Finding WARN 'Läuft dauerhaft mit' 'Einstellungen > Spielen > Aufnahmen > "Aufzeichnen, was passiert ist" ausschalten, wenn nicht genutzt (kostet FPS und VRAM).' }
-    else { Add-Finding OK 'Aus' }
+    if ((Get-RegValue $k 'HistoricalCaptureEnabled') -eq 1) { Add-Finding WARN (T 'scan.gaming.dvrLaeuft') (T 'scan.gaming.dvrEmpf') }
+    else { Add-Finding OK (T 'scan.gaming.aus') }
 }
 
 Invoke-Check 'Optimierungen für Spiele im Fenstermodus' {
     $s = [string](Get-RegValue 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' 'DirectXUserGlobalSettings')
     $swap = if ($s -match 'SwapEffectUpgradeEnable=(\d)') { $Matches[1] } else { $null }
     $vrr = if ($s -match 'VRROptimizeEnable=(\d)') { $Matches[1] } else { $null }
-    $value = 'Fenstermodus-Optimierung ' + $(if ($swap -eq '0') { 'aus' } elseif ($swap -eq '1') { 'an' } else { 'Standard' }) + '; VRR-Optimierung ' + $(if ($vrr -eq '0') { 'aus' } elseif ($vrr -eq '1') { 'an' } else { 'Standard' })
-    if ($swap -eq '0') { Add-Finding INFO $value 'Einstellungen > System > Anzeige > Grafik > Erweiterte Grafikeinstellungen: "Optimierungen für Spiele im Fenstermodus" einschalten (geringere Latenz in randlosen Fenstern).' }
+    $swapText = if ($swap -eq '0') { T 'scan.leistung.wert.aus' } elseif ($swap -eq '1') { T 'scan.leistung.wert.an' } else { T 'scan.gaming.standard' }
+    $vrrText = if ($vrr -eq '0') { T 'scan.leistung.wert.aus' } elseif ($vrr -eq '1') { T 'scan.leistung.wert.an' } else { T 'scan.gaming.standard' }
+    $value = T 'scan.gaming.fenstermodus' $swapText $vrrText
+    if ($swap -eq '0') { Add-Finding INFO $value (T 'scan.gaming.fenstermodusEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Mausbeschleunigung' {
-    if ((Get-RegValue 'HKCU:\Control Panel\Mouse' 'MouseSpeed') -eq '1') { Add-Finding INFO 'Zeigerbeschleunigung an' 'Für Shooter meist aus ("Zeigerpräzision verbessern" deaktivieren), damit Mausbewegungen 1:1 umgesetzt werden.' }
-    else { Add-Finding OK 'Aus' }
+    if ((Get-RegValue 'HKCU:\Control Panel\Mouse' 'MouseSpeed') -eq '1') { Add-Finding INFO (T 'scan.gaming.mausBeschleunigung') (T 'scan.gaming.mausEmpf') }
+    else { Add-Finding OK (T 'scan.gaming.aus') }
 }
 
 Invoke-Check 'Overlays und Hintergrund-Tools' {
@@ -2580,8 +2617,8 @@ Invoke-Check 'Overlays und Hintergrund-Tools' {
     }
     $names = @(Get-Process | ForEach-Object ProcessName | Select-Object -Unique)
     $found = @($patterns.Keys | Where-Object { $pat = $patterns[$_]; $names | Where-Object { $_ -match $pat } })
-    if ($found) { Add-Finding INFO ('Aktiv: ' + ($found -join ', ')) 'Jedes Overlay und RGB-Tool kostet etwas CPU und kann Frametime-Spitzen verursachen; nur behalten, was du wirklich nutzt.' }
-    else { Add-Finding OK 'Keine bekannten Overlays/Tools aktiv' }
+    if ($found) { Add-Finding INFO (T 'scan.leistung.aktiv' ($found -join ', ')) (T 'scan.gaming.overlaysEmpf') }
+    else { Add-Finding OK (T 'scan.gaming.keineOverlays') }
 }
 
 Invoke-Check 'Virtualisierung und Spieleleistung' {
@@ -2590,8 +2627,11 @@ Invoke-Check 'Virtualisierung und Spieleleistung' {
     $hvci = $dg -and (@($dg.SecurityServicesRunning) -contains 2)
     $mbec = $dg -and (@($dg.AvailableSecurityProperties) -contains 7)
     $virt = @('Microsoft-Hyper-V-All', 'VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux', 'Containers-DisposableClientVM', 'HypervisorPlatform' | Where-Object { $_ -in $script:Features })
-    $value = "Hypervisor aktiv: $($script:CS.HypervisorPresent); VBS: $(if ($vbsOn) { 'läuft' } else { 'aus' }); Speicherintegrität: $(if ($hvci) { 'an' } else { 'aus' }); MBEC: $(if ($mbec) { 'ja' } else { 'nein' })" + $(if ($virt) { '; Features: ' + ($virt -join ', ') } else { '' })
-    Add-Finding INFO $value 'Speicherintegrität kostet auf CPUs mit MBEC (Intel ab 7. Generation, AMD ab Zen 2) typischerweise nur wenige Prozent FPS. Empfehlung: anlassen; nur für Benchmark-Vergleiche testweise aus. WSL2/Docker brauchen den Hypervisor ohnehin.'
+    $vbsText = if ($vbsOn) { T 'scan.gaming.vbsLaeuft' } else { T 'scan.leistung.wert.aus' }
+    $hvciText = if ($hvci) { T 'scan.leistung.wert.an' } else { T 'scan.leistung.wert.aus' }
+    $mbecText = if ($mbec) { T 'scan.leistung.wert.ja' } else { T 'scan.leistung.wert.nein' }
+    $value = if ($virt) { T 'scan.gaming.virtFeatures' $script:CS.HypervisorPresent $vbsText $hvciText $mbecText ($virt -join ', ') } else { T 'scan.gaming.virt' $script:CS.HypervisorPresent $vbsText $hvciText $mbecText }
+    Add-Finding INFO $value (T 'scan.gaming.virtEmpf')
 }
 
 Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
@@ -2601,8 +2641,8 @@ Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
         if (Test-Path -LiteralPath $cand -PathType Leaf) { $smi = [pscustomobject]@{ Source = $cand }; break }
     }
     if (-not $smi) {
-        if (Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA') { Add-Finding SKIP 'nvidia-smi nicht gefunden (wird mit dem NVIDIA-Treiber installiert)' }
-        else { Add-Finding SKIP 'Nur bei NVIDIA-Grafikkarten auslesbar (AMD: Adrenalin > Leistung > Tuning > Smart Access Memory)' }
+        if (Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA') { Add-Finding SKIP (T 'scan.gaming.smiFehlt') }
+        else { Add-Finding SKIP (T 'scan.gaming.nurNvidia') }
         return
     }
     $q = (Invoke-Native $smi.Source @('-q', '-i', '0')) -join "`n"
@@ -2614,14 +2654,14 @@ Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
     $devMax = & $num 'Device Max\s+:\s+(\d+)'
     $hostMax = & $num 'Host Max\s+:\s+(\d+)'
     $width = & $num 'Link Width\s+Max\s+:\s+(\d+)x'
-    if ($null -eq $bar1) { Add-Finding SKIP 'Ausgabe von nvidia-smi nicht auswertbar'; return }
+    if ($null -eq $bar1) { Add-Finding SKIP (T 'scan.gaming.smiUnlesbar'); return }
     Add-Table 'Grafikkarte: Anbindung (nvidia-smi)' @([pscustomobject][ordered]@{ GPU = $gpuName; GrafikspeicherMiB = $vram; BAR1MiB = $bar1; PCIeGenMax = $genMax; KarteKann = $devMax; MainboardKann = $hostMax; Lanes = $width })
     # Ohne Resizable BAR ist das Fenster der CPU auf den Grafikspeicher 256 MiB groß, mit ReBAR so groß wie der Grafikspeicher
     $rebar = $bar1 -gt 1024
-    $link = "PCIe $genMax.0 x$width" + $(if ($devMax -and $hostMax -and $devMax -gt $hostMax) { " (Karte kann $devMax.0, Mainboard $hostMax.0; kaum spürbar)" } else { '' })
-    $value = "${gpuName}: Resizable BAR $(if ($rebar) { 'an' } else { 'aus' }) (Fenster $bar1 MiB); $link"
-    if ($width -and $width -lt 16) { Add-Finding INFO $value "Die Karte läuft mit $width Lanes. Bei Karten, die nur x8 haben (z. B. RTX 4060/5060), ist das normal; sonst prüfen, ob sie im obersten x16-Steckplatz steckt und ob ein M.2-Laufwerk Lanes abzweigt (Handbuch)." }
-    elseif (-not $rebar) { Add-Finding INFO $value 'Resizable BAR im BIOS einschalten: "Above 4G Decoding" und "Re-Size BAR Support" (CSM muss aus sein). Bringt je nach Spiel 0–10 % mehr FPS; fehlt die Option, ein BIOS-Update prüfen.' }
+    $link = if ($devMax -and $hostMax -and $devMax -gt $hostMax) { T 'scan.gaming.linkBegrenzt' $genMax $width $devMax $hostMax } else { T 'scan.gaming.link' $genMax $width }
+    $value = T 'scan.gaming.rebar' $gpuName $(if ($rebar) { T 'scan.leistung.wert.an' } else { T 'scan.leistung.wert.aus' }) $bar1 $link
+    if ($width -and $width -lt 16) { Add-Finding INFO $value (T 'scan.gaming.lanesEmpf' $width) }
+    elseif (-not $rebar) { Add-Finding INFO $value (T 'scan.gaming.rebarEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -2643,7 +2683,7 @@ Invoke-Check 'Spielebibliotheken' {
             Bytes           = [double]$g.bytes
             ZuletztGespielt = $zuletzt
             Pfad            = [string]$g.pfad
-            Hinweis         = $(if ($g.groesseUnsicher) { 'Größe eingeschränkt lesbar' } else { '' })
+            Hinweis         = $(if ($g.groesseUnsicher) { (T 'scan.gaming.groesseEingeschraenkt') } else { '' })
         }
     }
     Add-Table 'Installierte Spiele' @($spieleRows)
@@ -2681,7 +2721,7 @@ Invoke-Check 'Spielebibliotheken' {
             & $addLib 'Xbox' $dir @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue | Where-Object Name -NE 'GameSave').Count 0
         }
     }
-    if (-not $libs.Count) { Add-Finding OK 'Keine Spielebibliotheken gefunden (Steam, Epic, GOG, Ubisoft, Xbox)'; return }
+    if (-not $libs.Count) { Add-Finding OK (T 'scan.gaming.keineBibliotheken'); return }
 
     $vols = @{}
     Get-Volume | Where-Object DriveLetter | ForEach-Object { $vols[[string]$_.DriveLetter] = $_ }
@@ -2701,25 +2741,25 @@ Invoke-Check 'Spielebibliotheken' {
     }
     $rows = @($rows | Where-Object Spiele)
     Add-Table 'Spielebibliotheken' $rows
-    if (-not $rows) { Add-Finding OK 'Spielebibliotheken gefunden, aber keine installierten Spiele'; return }
+    if (-not $rows) { Add-Finding OK (T 'scan.gaming.bibliothekenOhneSpiele'); return }
     $drives = @($rows | Group-Object Laufwerk | ForEach-Object {
             $f = $_.Group[0]
             [pscustomobject]@{ Laufwerk = $_.Name; Typ = $f.Typ; FreiProzent = $f.FreiProzent; Frei = $f.Frei; Spiele = ($_.Group | Measure-Object Spiele -Sum).Sum; Quellen = (($_.Group | Group-Object Launcher | ForEach-Object { "$($_.Name) $(($_.Group | Measure-Object Spiele -Sum).Sum)" }) -join ', ') }
         } | Sort-Object Spiele -Descending)
-    $summary = ($drives | ForEach-Object { "$($_.Laufwerk) $($_.Typ), $($_.FreiProzent) % frei: $($_.Quellen)" }) -join '; '
+    $summary = ($drives | ForEach-Object { (T 'scan.gaming.bibZeile' $_.Laufwerk $_.Typ $_.FreiProzent $_.Quellen) }) -join '; '
     $hdd = @($drives | Where-Object Typ -EQ 'HDD')
     $full = @($drives | Where-Object { $null -ne $_.FreiProzent -and $_.FreiProzent -lt 20 })
     # Ziel für umzuziehende Spiele: SSD mit dem meisten freien Platz, NVMe bevorzugt
     $target = @(Get-Volume | Where-Object { $_.DriveLetter -and [string]$_.DriveType -eq 'Fixed' -and $_.Size -gt 100GB } | ForEach-Object {
             [pscustomobject]@{ Laufwerk = "$($_.DriveLetter):"; Typ = Get-DriveKind $_.DriveLetter; Frei = $_.SizeRemaining }
         } | Where-Object { $_.Typ -like '*SSD' -and $_.Laufwerk -notin $full.Laufwerk } | Sort-Object { $_.Typ -ne 'NVMe-SSD' }, { - $_.Frei } | Select-Object -First 1)
-    $targetText = if ($target) { " Platz bietet z. B. $($target[0].Laufwerk) ($($target[0].Typ), $(Format-Size $target[0].Frei) frei)." } else { '' }
-    $move = ' Umziehen ohne Neuinstallation: Steam > Spiel > Eigenschaften > Installierte Dateien > Installationsordner verschieben; Epic/Xbox bieten "Verschieben" in der Bibliothek.'
-    if (@($full | Where-Object { $_.FreiProzent -lt 10 })) { Add-Finding WARN $summary ("Spielelaufwerk fast voll: SSDs werden beim Schreiben (Patches, Shader-Caches) deutlich langsamer, Updates können scheitern. Nicht mehr gespielte Spiele deinstallieren oder umziehen.$targetText$move") }
+    $targetText = if ($target) { T 'scan.gaming.bibZiel' $target[0].Laufwerk $target[0].Typ (Format-Size $target[0].Frei) } else { '' }
+    $move = T 'scan.gaming.bibUmziehen'
+    if (@($full | Where-Object { $_.FreiProzent -lt 10 })) { Add-Finding WARN $summary ((T 'scan.gaming.bibVoll') + $targetText + $move) }
     elseif ($hdd -or $full) {
         $why = @()
-        if ($hdd) { $why += "Spiele auf Festplatte ($(($hdd | ForEach-Object Laufwerk) -join ', ')): längere Ladezeiten und Nachlade-Ruckler; aktuelle Spiele setzen eine SSD voraus." }
-        if ($full) { $why += "Wenig Platz auf $(($full | ForEach-Object { "$($_.Laufwerk) ($($_.FreiProzent) %)" }) -join ', '): unter 15–20 % frei werden SSDs beim Schreiben langsamer." }
+        if ($hdd) { $why += (T 'scan.gaming.bibHdd' (($hdd | ForEach-Object Laufwerk) -join ', ')) }
+        if ($full) { $why += (T 'scan.gaming.bibWenigPlatz' (($full | ForEach-Object { "$($_.Laufwerk) ($($_.FreiProzent) %)" }) -join ', ')) }
         Add-Finding INFO $summary (($why -join ' ') + $targetText + $move)
     }
     else { Add-Finding OK $summary }
@@ -2727,7 +2767,7 @@ Invoke-Check 'Spielebibliotheken' {
 
 Invoke-Check 'Netzwerkkarte: Energiesparfunktionen' {
     $ad = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and [string]$_.PhysicalMediaType -match '802\.3' })
-    if (-not $ad) { Add-Finding OK 'Kein kabelgebundener Adapter aktiv'; return }
+    if (-not $ad) { Add-Finding OK (T 'scan.gaming.keinKabelAdapter'); return }
     # Energiesparfunktionen, die beim Aufwachen der Verbindung kurze Latenzspitzen verursachen können
     $saving = [ordered]@{ '*EEE' = 'Energy Efficient Ethernet'; 'EEELinkAdvertisement' = 'Energy Efficient Ethernet'; '*GreenEthernet' = 'Green Ethernet'; 'EnableGreenEthernet' = 'Green Ethernet'; 'AdvancedEEE' = 'Advanced EEE'; 'ULPMode' = 'Ultra Low Power Mode'; 'PowerSavingMode' = 'Power Saving Mode' }
     $hits = foreach ($a in $ad) {
@@ -2736,8 +2776,8 @@ Invoke-Check 'Netzwerkkarte: Energiesparfunktionen' {
         }
     }
     $hits = @($hits)
-    if (-not $hits) { Add-Finding OK ((($ad | ForEach-Object Name) -join ', ') + ': keine Energiesparfunktionen aktiv'); return }
-    Add-Finding INFO ('Aktiv: ' + (($hits | ForEach-Object { "$($_.Adapter): $($_.Name)" }) -join ', ')) 'Für Online-Spiele ausschalten: Diese Funktionen legen die Verbindung in Ruhephasen schlafen und können beim Aufwachen kurze Latenzspitzen verursachen. Kostet am Desktop nur wenige Watt.'
+    if (-not $hits) { Add-Finding OK (T 'scan.gaming.keineEnergiespar' (($ad | ForEach-Object Name) -join ', ')); return }
+    Add-Finding INFO (T 'scan.leistung.aktiv' (($hits | ForEach-Object { "$($_.Adapter): $($_.Name)" }) -join ', ')) (T 'scan.gaming.netzEnergiesparEmpf')
     $script:Findings[$script:Findings.Count - 1].Command = (($hits | ForEach-Object { "Set-NetAdapterAdvancedProperty -Name '$($_.Adapter)' -RegistryKeyword '$($_.Keyword)' -RegistryValue 0" }) -join "`n")
 }
 
@@ -2779,9 +2819,9 @@ Invoke-Check 'CPU-Last (Stichprobe 5 s)' {
     Add-Table 'Top-Prozesse nach CPU (%, Stichprobe)' $rows
     $avg = [int][Math]::Max(0, (($samples | Measure-Object -Average).Average) - $ownShare)
     $top = ($rows | Select-Object -First 3 | ForEach-Object { "$($_.Prozess) $($_.CPU) %" }) -join ', '
-    if ($avg -gt 25) { Add-Finding WARN "Durchschnitt $avg % ($top)" 'Hohe Grundlast ohne Spiel: Verursacher im Anhang prüfen (Messung läuft parallel zum Script).' }
-    elseif ($avg -gt 10) { Add-Finding INFO "Durchschnitt $avg % ($top)" 'Leicht erhöhte Grundlast; der Prüflauf selbst trägt dazu bei.' }
-    else { Add-Finding OK "Durchschnitt $avg % ($top)" }
+    if ($avg -gt 25) { Add-Finding WARN (T 'scan.auslastung.cpuDurchschnitt' $avg $top) (T 'scan.auslastung.cpuHochEmpf') }
+    elseif ($avg -gt 10) { Add-Finding INFO (T 'scan.auslastung.cpuDurchschnitt' $avg $top) (T 'scan.auslastung.cpuLeichtEmpf') }
+    else { Add-Finding OK (T 'scan.auslastung.cpuDurchschnitt' $avg $top) }
 }
 
 Invoke-Check 'RAM-Auslastung' {
@@ -2794,30 +2834,32 @@ Invoke-Check 'RAM-Auslastung' {
         } | Sort-Object PrivatMB -Descending | Select-Object -First 15)
     Add-Table 'Top-Prozesse nach Arbeitsspeicher' $rows
     $top = ($rows | Select-Object -First 3 | ForEach-Object { "$($_.Prozess) $(Format-Size ($_.PrivatMB * 1MB))" }) -join ', '
-    $value = "$usedPct % von $(Format-Size $totalBytes) belegt; Commit $commitPct % von $(Format-Size $mem.CommitLimit); größte: $top"
-    if ($usedPct -gt 85) { Add-Finding WARN $value 'Schon ohne Spiel fast voll: Hintergrundprogramme schließen oder RAM aufrüsten.' }
-    elseif ($usedPct -gt 70) { Add-Finding INFO $value 'Für Gaming plus Browser/IDE/WSL wird es eng; 32 GB wären ein sinnvolles Upgrade.' }
+    $value = T 'scan.auslastung.ram' $usedPct (Format-Size $totalBytes) $commitPct (Format-Size $mem.CommitLimit) $top
+    if ($usedPct -gt 85) { Add-Finding WARN $value (T 'scan.auslastung.ramVollEmpf') }
+    elseif ($usedPct -gt 70) { Add-Finding INFO $value (T 'scan.auslastung.ramEngEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Speicherkomprimierung' -NeedsAdmin {
     $mm = Get-MMAgent
-    Add-Finding INFO ('Speicherkomprimierung ' + $(if ($mm.MemoryCompression) { 'an' } else { 'aus' }) + '; Page Combining ' + $(if ($mm.PageCombining) { 'an' } else { 'aus' })) 'Bei 16 GB anlassen: komprimiert selten genutzten Speicher, statt auf die SSD auszulagern.'
+    $mcText = if ($mm.MemoryCompression) { T 'scan.leistung.wert.an' } else { T 'scan.leistung.wert.aus' }
+    $pcText = if ($mm.PageCombining) { T 'scan.leistung.wert.an' } else { T 'scan.leistung.wert.aus' }
+    Add-Finding INFO (T 'scan.auslastung.kompression' $mcText $pcText) (T 'scan.auslastung.kompressionEmpf')
 }
 
 Invoke-Check 'Autostart-Umfang' {
     $active = @($script:AutostartRows | Where-Object Aktiv)
     $autoSvc = @($script:ThirdPartyServices | Where-Object Start -EQ 'Auto')
-    $value = "$($active.Count) aktive Autostart-Programme, $($autoSvc.Count) Drittanbieter-Dienste mit Autostart"
-    if ($active.Count -gt 15) { Add-Finding WARN $value 'Task-Manager > Autostart-Apps: alles deaktivieren, was nicht sofort nach dem Anmelden laufen muss.' }
-    elseif ($active.Count -gt 8) { Add-Finding INFO $value 'Autostart-Liste im Anhang durchgehen.' }
+    $value = T 'scan.auslastung.autostart' $active.Count $autoSvc.Count
+    if ($active.Count -gt 15) { Add-Finding WARN $value (T 'scan.auslastung.autostartVielEmpf') }
+    elseif ($active.Count -gt 8) { Add-Finding INFO $value (T 'scan.auslastung.autostartEtwasEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Laufzeit seit Neustart' {
     $up = (Get-Date) - $script:OS.LastBootUpTime
-    $value = "$($up.Days) Tage $($up.Hours) Std."
-    if ($up.Days -gt 14) { Add-Finding INFO $value 'Gelegentlich neu starten (nicht nur herunterfahren, falls Schnellstart an ist): gibt Speicher frei und schließt Updates ab.' }
+    $value = T 'scan.auslastung.laufzeit' $up.Days $up.Hours
+    if ($up.Days -gt 14) { Add-Finding INFO $value (T 'scan.auslastung.laufzeitEmpf') }
     else { Add-Finding OK $value }
 }
 
@@ -2835,10 +2877,10 @@ Invoke-Check 'Netzwerkverbindung' {
     Add-Table 'Netzwerkadapter: Energiespar- und Leistungseinstellungen' $adv
     $wired = @($ad | Where-Object { [string]$_.PhysicalMediaType -match '802\.3' })
     $slow = @($wired | Where-Object { $_.ReceiveLinkSpeed -lt 1e9 })
-    if ($slow) { Add-Finding WARN ('LAN nur mit ' + (($slow | ForEach-Object { "$($_.Name) $($_.LinkSpeed)" }) -join ', ')) 'Kabel (mind. Cat5e) und Router-/Switch-Port prüfen; Gigabit sollte möglich sein.' }
+    if ($slow) { Add-Finding WARN (T 'scan.auslastung.lanLangsam' (($slow | ForEach-Object { "$($_.Name) $($_.LinkSpeed)" }) -join ', ')) (T 'scan.auslastung.lanLangsamEmpf') }
     elseif ($wired) { Add-Finding OK (($wired | ForEach-Object { "$($_.Name): $($_.LinkSpeed)" }) -join ', ') }
-    elseif ($ad) { Add-Finding INFO ('Nur WLAN: ' + (($ad | ForEach-Object { "$($_.Name) $($_.LinkSpeed)" }) -join ', ')) 'Für Online-Spiele ist ein LAN-Kabel stabiler (weniger Latenzschwankungen).' }
-    else { Add-Finding INFO 'Kein aktiver physischer Adapter gefunden' }
+    elseif ($ad) { Add-Finding INFO (T 'scan.auslastung.nurWlan' (($ad | ForEach-Object { "$($_.Name) $($_.LinkSpeed)" }) -join ', ')) (T 'scan.auslastung.nurWlanEmpf') }
+    else { Add-Finding INFO (T 'scan.auslastung.keinAdapter') }
 }
 
 #endregion
@@ -2854,41 +2896,43 @@ Invoke-Check 'Hardwarefehler (WHEA)' {
     $fatal = @($ev | Where-Object { $_.Id -in 1, 18, 20 })
     $corrected = @($ev | Where-Object { $_.Id -in 19, 47 })
     $pcie = @($ev | Where-Object { $_.Id -eq 17 })
-    $rec = 'Typisches Zeichen für zu knappen OC/RAM-Takt: Spannungen (Vcore, VCCSA/VCCIO) bzw. Takt anpassen und mit OCCT, y-cruncher oder TestMem5 testen.'
-    if ($fatal) { Add-Finding CRIT ("$($fatal.Count) schwere Hardwarefehler (" + ($byId -join ', ') + ')') $rec }
-    elseif ($corrected) { Add-Finding WARN ("$($corrected.Count) korrigierte CPU/RAM-Fehler (" + ($byId -join ', ') + ')') $rec }
-    elseif ($pcie) { Add-Finding INFO "$($pcie.Count) korrigierte PCIe-Fehler" 'Meist harmlos; bei vielen Meldungen Grafikkarte/NVMe-Sitz und PCIe-Einstellungen im BIOS prüfen.' }
-    else { Add-Finding OK "Keine WHEA-Fehler in $EventDays Tagen" }
+    $rec = T 'scan.stabilitaet.wheaEmpf'
+    if ($fatal) { Add-Finding CRIT (T 'scan.stabilitaet.wheaSchwer' $fatal.Count ($byId -join ', ')) $rec }
+    elseif ($corrected) { Add-Finding WARN (T 'scan.stabilitaet.wheaKorrigiert' $corrected.Count ($byId -join ', ')) $rec }
+    elseif ($pcie) { Add-Finding INFO (T 'scan.stabilitaet.wheaPcie' $pcie.Count) (T 'scan.stabilitaet.wheaPcieEmpf') }
+    else { Add-Finding OK (T 'scan.stabilitaet.wheaKeine' $EventDays) }
 }
 
 Invoke-Check 'Abstürze und unerwartete Neustarts' {
     $kp = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41 } -Max 100)
     $bc = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001 } -Max 100)
+    $artNeustart = T 'scan.stabilitaet.artNeustart'
+    $artBluescreen = T 'scan.stabilitaet.artBluescreen'
     $rows = @()
-    $rows += foreach ($e in $kp) { $d = Get-EventData $e; [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Art = 'Unerwarteter Neustart (Kernel-Power 41)'; Code = $(if ([int64]$d['BugcheckCode']) { '0x{0:X}' -f [int64]$d['BugcheckCode'] } else { '' }) } }
-    $rows += foreach ($e in $bc) { $d = Get-EventData $e; [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Art = 'Bluescreen'; Code = (([string]$d['param1']) -split ' ')[0] } }
+    $rows += foreach ($e in $kp) { $d = Get-EventData $e; [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Art = $artNeustart; Code = $(if ([int64]$d['BugcheckCode']) { '0x{0:X}' -f [int64]$d['BugcheckCode'] } else { '' }) } }
+    $rows += foreach ($e in $bc) { $d = Get-EventData $e; [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; Art = $artBluescreen; Code = (([string]$d['param1']) -split ' ')[0] } }
     $dumps = @(Get-ChildItem -LiteralPath "$env:SystemRoot\Minidump" -Filter *.dmp -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
     Add-Table 'Abstürze und unerwartete Neustarts' @($rows | Sort-Object Zeit -Descending)
     Add-Table 'Minidumps' @($dumps | Select-Object -First 20 | ForEach-Object { [pscustomobject]@{ Datei = $_.Name; Datum = Format-Date $_.LastWriteTime } })
     $codes = @($rows | Where-Object Code | ForEach-Object Code | Select-Object -Unique)
-    $value = "$($kp.Count) unerwartete Neustarts, $($bc.Count) Bluescreens in $EventDays Tagen" + $(if ($codes) { " (Codes: $($codes -join ', '))" } else { '' }) + "; $($dumps.Count) Minidumps insgesamt"
-    if ($kp -or $bc) { Add-Finding WARN $value 'Bei Codes wie 0x124, 0x101, 0x50, 0x1A oder 0x3B deutet das oft auf instabilen OC/RAM-Takt. Kernel-Power 41 ohne Code entsteht auch durch Reset-Taste oder Stromausfall.' }
+    $value = if ($codes) { T 'scan.stabilitaet.abstuerzeCodes' $kp.Count $bc.Count $EventDays ($codes -join ', ') $dumps.Count } else { T 'scan.stabilitaet.abstuerze' $kp.Count $bc.Count $EventDays $dumps.Count }
+    if ($kp -or $bc) { Add-Finding WARN $value (T 'scan.stabilitaet.abstuerzeEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Grafiktreiber-Abstürze' {
     $tdr = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101 } -Max 100)
     $nv = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'nvlddmkm'; Level = 1, 2 } -Max 100)
-    if ($tdr -or $nv.Count -gt 3) { Add-Finding WARN "$($tdr.Count) Treiber-Zurücksetzungen (TDR), $($nv.Count) NVIDIA-Treiberfehler" 'Treiber sauber neu installieren (DDU), GPU-OC/Undervolt testweise zurücknehmen, Netzteil/Stromkabel prüfen.' }
-    elseif ($nv) { Add-Finding INFO "$($nv.Count) NVIDIA-Treiberfehler, keine Zurücksetzungen" 'Vereinzelt harmlos; bei Häufung Treiber neu installieren.' }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($tdr -or $nv.Count -gt 3) { Add-Finding WARN (T 'scan.stabilitaet.tdr' $tdr.Count $nv.Count) (T 'scan.stabilitaet.tdrEmpf') }
+    elseif ($nv) { Add-Finding INFO (T 'scan.stabilitaet.nvFehler' $nv.Count) (T 'scan.stabilitaet.nvFehlerEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Leistungsdrosselung durch Firmware' {
     $ev = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Processor-Power'; Id = 37 } -Max 500)
-    if ($ev.Count -gt 10) { Add-Finding WARN "$($ev.Count) Meldungen: Firmware begrenzt den CPU-Takt" 'Temperaturen und Leistungslimits prüfen (HWiNFO: "Thermal Throttling", "Power Limit Exceeded"); BIOS-Limits PL1/PL2/IccMax und Kühlung kontrollieren.' }
-    elseif ($ev) { Add-Finding INFO "$($ev.Count) Meldungen: Firmware begrenzt den CPU-Takt" 'Vereinzelt meist harmlos; bei Leistungseinbrüchen Temperaturen prüfen.' }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($ev.Count -gt 10) { Add-Finding WARN (T 'scan.stabilitaet.drosselung' $ev.Count) (T 'scan.stabilitaet.drosselungHochEmpf') }
+    elseif ($ev) { Add-Finding INFO (T 'scan.stabilitaet.drosselung' $ev.Count) (T 'scan.stabilitaet.drosselungWenigEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Programmabstürze' {
@@ -2900,9 +2944,9 @@ Invoke-Check 'Programmabstürze' {
         })
     Add-Table 'Programmabstürze' $rows
     $top = ($rows | Select-Object -First 3 | ForEach-Object { "$($_.Programm) ($($_.Abstuerze + $_.Haenger))" }) -join ', '
-    if ($all.Count -gt 20) { Add-Finding WARN "$($crash.Count) Abstürze, $($hang.Count) Hänger: $top" 'Häufig betroffene Programme aktualisieren; viele unterschiedliche Programme gleichzeitig deuten eher auf RAM/OC-Instabilität.' }
-    elseif ($all) { Add-Finding INFO "$($crash.Count) Abstürze, $($hang.Count) Hänger: $top" }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($all.Count -gt 20) { Add-Finding WARN (T 'scan.stabilitaet.programme' $crash.Count $hang.Count $top) (T 'scan.stabilitaet.programmeEmpf') }
+    elseif ($all) { Add-Finding INFO (T 'scan.stabilitaet.programme' $crash.Count $hang.Count $top) }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Dienstfehler' {
@@ -2911,18 +2955,18 @@ Invoke-Check 'Dienstfehler' {
     $rows = @($ev | Group-Object { ([string]$_.Properties[$(if ($_.Id -in 7009, 7011) { 1 } else { 0 })].Value).Trim() } | Sort-Object Count -Descending | Select-Object -First 15 | ForEach-Object {
             $n = $_.Name
             $note = ''
-            foreach ($p in $script:KnownHarmless.ServiceErrors.Keys) { if ($n -match $p) { $note = 'bekannt harmlos: ' + $script:KnownHarmless.ServiceErrors[$p]; break } }
+            foreach ($p in $script:KnownHarmless.ServiceErrors.Keys) { if ($n -match $p) { $note = (T 'scan.stabilitaet.bekanntHarmlos' ($script:KnownHarmless.ServiceErrors[$p])); break } }
             # Gibt es den Dienst nicht mehr, stammen die Fehler aus der Zeit vor der Deinstallation
-            if (-not $note -and -not ($script:Services | Where-Object { $_.Name -eq $n -or $_.DisplayName -eq $n })) { $note = 'Dienst existiert nicht mehr (Fehler von vor der Deinstallation)' }
+            if (-not $note -and -not ($script:Services | Where-Object { $_.Name -eq $n -or $_.DisplayName -eq $n })) { $note = (T 'scan.stabilitaet.dienstEntfernt') }
             [pscustomobject][ordered]@{ Dienst = $n; Anzahl = $_.Count; Einordnung = $note }
         })
     Add-Table 'Dienstfehler' $rows
     $open = @($rows | Where-Object { -not $_.Einordnung })
     $explained = ($rows | Where-Object Einordnung | Measure-Object Anzahl -Sum).Sum
-    $explainedText = if ($explained) { "; $explained weitere bekannt harmlos bzw. von entfernten Diensten" } else { '' }
-    if ($open) { Add-Finding INFO ("$(($open | Measure-Object Anzahl -Sum).Sum) Fehler: " + (($open | Select-Object -First 3 | ForEach-Object { "$($_.Dienst) ($($_.Anzahl))" }) -join ', ') + $explainedText) 'Wiederkehrende Fehler eines Dienstes deuten auf Reste deinstallierter Software oder Treiberprobleme. Einzelne Fehler beim Start oder nach Updates sind normal.' }
-    elseif ($ev) { Add-Finding OK "$($ev.Count) Fehler, alle bekannt harmlos bzw. von inzwischen entfernten Diensten (Anhang)" }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    $explainedText = if ($explained) { T 'scan.stabilitaet.dienstErklaert' $explained } else { '' }
+    if ($open) { Add-Finding INFO (T 'scan.stabilitaet.dienstFehler' ($open | Measure-Object Anzahl -Sum).Sum (($open | Select-Object -First 3 | ForEach-Object { "$($_.Dienst) ($($_.Anzahl))" }) -join ', ') $explainedText) (T 'scan.stabilitaet.dienstFehlerEmpf') }
+    elseif ($ev) { Add-Finding OK (T 'scan.stabilitaet.dienstAlleHarmlos' $ev.Count) }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Datenträgerfehler' {
@@ -2936,14 +2980,14 @@ Invoke-Check 'Datenträgerfehler' {
     $ev = @()
     foreach ($s in $sets) { $ev += @(Get-RecentEvents (@{ LogName = 'System' } + $s) -Max 200) }
     $summary = @($ev | Group-Object { "$($_.ProviderName) $($_.Id)" } | ForEach-Object { "$($_.Name): $($_.Count)x" })
-    if ($ev) { Add-Finding WARN ($summary -join ', ') 'Hinweise auf Datenträger- oder Kabelprobleme: SMART-Werte prüfen (CrystalDiskInfo), Datensicherung aktuell halten, SATA-Kabel tauschen.' }
-    else { Add-Finding OK "Keine in $EventDays Tagen" }
+    if ($ev) { Add-Finding WARN ($summary -join ', ') (T 'scan.stabilitaet.datentraegerEmpf') }
+    else { Add-Finding OK (T 'scan.ereignisse.keineInTagen' $EventDays) }
 }
 
 Invoke-Check 'Startdauer' {
     $log = 'Microsoft-Windows-Diagnostics-Performance/Operational'
     $boots = @(Get-RecentEvents @{ LogName = $log; Id = 100 } -Max 5 -AllTime)
-    if (-not $boots) { Add-Finding SKIP 'Keine Startmessungen vorhanden'; return }
+    if (-not $boots) { Add-Finding SKIP (T 'scan.stabilitaet.keineStartmessungen'); return }
     $rows = foreach ($e in $boots) {
         $d = Get-EventData $e
         [pscustomobject][ordered]@{ Zeit = Format-Date $e.TimeCreated; GesamtSek = [Math]::Round([int]$d['BootTime'] / 1000, 1); HauptpfadSek = [Math]::Round([int]$d['MainPathBootTime'] / 1000, 1); NachAnmeldungSek = [Math]::Round([int]$d['BootPostBootTime'] / 1000, 1) }
@@ -2952,39 +2996,37 @@ Invoke-Check 'Startdauer' {
     Add-Table 'Startdauer (letzte Messungen)' $rows
     # Startbremsen nur aus dem Auswertungszeitraum, sonst tauchen längst behobene Ursachen auf
     $slow = @(Get-RecentEvents @{ LogName = $log; Id = 101, 102, 103, 106, 109 } -Max 50)
+    $bremsArt = @{ 101 = (T 'scan.stabilitaet.bremseProgramm'); 102 = (T 'scan.stabilitaet.bremseTreiber'); 103 = (T 'scan.stabilitaet.bremseDienst'); 106 = (T 'scan.stabilitaet.bremseHintergrund'); 109 = (T 'scan.stabilitaet.bremseGeraet') }
     $slowRows = @($slow | ForEach-Object {
             $d = Get-EventData $_
-            [pscustomobject][ordered]@{ Zeit = Format-Date $_.TimeCreated; Art = @{ 101 = 'Programm'; 102 = 'Treiber'; 103 = 'Dienst'; 106 = 'Hintergrund'; 109 = 'Gerät' }[$_.Id]; Name = $(if ($d['FriendlyName']) { $d['FriendlyName'] } else { $d['Name'] }); VerzoegerungMs = [int]$d['DegradationTime'] }
+            [pscustomobject][ordered]@{ Zeit = Format-Date $_.TimeCreated; Art = $bremsArt[$_.Id]; Name = $(if ($d['FriendlyName']) { $d['FriendlyName'] } else { $d['Name'] }); VerzoegerungMs = [int]$d['DegradationTime'] }
         } | Sort-Object VerzoegerungMs -Descending | Select-Object -First 15)
     Add-Table 'Startbremsen' $slowRows
     $avgMain = [Math]::Round(($rows | Measure-Object HauptpfadSek -Average).Average, 1)
     $avgPost = [Math]::Round(($rows | Measure-Object NachAnmeldungSek -Average).Average, 1)
     $topSlow = ($slowRows | Select-Object -First 3 | ForEach-Object { "$($_.Name) (+$([int]($_.VerzoegerungMs / 1000)) s)" }) -join ', '
-    $value = "Bis Desktop Ø $avgMain s, danach bis Leerlauf Ø $avgPost s" + $(if ($topSlow) { "; Bremsen: $topSlow" } else { '' })
-    if ($avgMain -gt 40) { Add-Finding WARN $value 'Startbremsen im Anhang prüfen und Autostart ausdünnen.' }
+    $value = if ($topSlow) { T 'scan.stabilitaet.startdauerBremsen' ([string]$avgMain) ([string]$avgPost) $topSlow } else { T 'scan.stabilitaet.startdauer' ([string]$avgMain) ([string]$avgPost) }
+    if ($avgMain -gt 40) { Add-Finding WARN $value (T 'scan.stabilitaet.startdauerEmpf') }
     else { Add-Finding OK $value }
 }
 
 Invoke-Check 'Zuverlässigkeitsindex' {
     $r = Get-CimInstance Win32_ReliabilityStabilityMetrics -ErrorAction Stop | Sort-Object TimeGenerated -Descending | Select-Object -First 1
-    if (-not $r) { Add-Finding SKIP 'Keine Daten (Aufgabe RacTask deaktiviert?)'; return }
+    if (-not $r) { Add-Finding SKIP (T 'scan.stabilitaet.keineDaten'); return }
     $idx = [Math]::Round($r.SystemStabilityIndex, 1)
-    if ($idx -lt 5) { Add-Finding WARN "$idx von 10" 'Zuverlässigkeitsverlauf (perfmon /rel) ansehen: zeigt, welche Abstürze den Wert drücken.' }
-    elseif ($idx -lt 8) { Add-Finding INFO "$idx von 10" 'Zuverlässigkeitsverlauf (perfmon /rel) ansehen.' }
-    else { Add-Finding OK "$idx von 10" }
+    if ($idx -lt 5) { Add-Finding WARN (T 'scan.stabilitaet.index' ([string]$idx)) (T 'scan.stabilitaet.indexWarnEmpf') }
+    elseif ($idx -lt 8) { Add-Finding INFO (T 'scan.stabilitaet.index' ([string]$idx)) (T 'scan.stabilitaet.indexInfoEmpf') }
+    else { Add-Finding OK (T 'scan.stabilitaet.index' ([string]$idx)) }
 }
 
 #endregion
 
 #region Tipps und Anleitungen
 
-# Aus pc-check.hilfe.psd1: Erklärungen für den HTML-Bericht und je Prüfung Aufwand/Nutzen/Risiko plus Anleitung.
+# Aus lang\<sprache>\hilfe.psd1: Erklärungen für den HTML-Bericht und je Prüfung Aufwand/Nutzen/Risiko plus Anleitung.
 # Ein Hinweis mit passendem Tipp-Eintrag wird zum Tipp (lohnende Optimierung); ohne Eintrag bleibt er reine Information.
 $script:Help = $null
-$helpFile = Join-Path $PSScriptRoot 'pc-check.hilfe.psd1'
-if (Test-Path -LiteralPath $helpFile) {
-    try { $script:Help = Import-PowerShellDataFile -LiteralPath $helpFile } catch { Write-Warning "Hilfetexte nicht lesbar: $($_.Exception.Message)" }
-}
+try { $script:Help = Get-MorpheusHilfe -Sprache $Sprache } catch { Write-Warning (T 'bericht.hilfeNichtLesbar' $_.Exception.Message) }
 $script:LevelValue = @{ gering = 1; mittel = 2; hoch = 3 }
 
 # Reihenfolge der Tipps: Nutzen zählt doppelt, Aufwand und Risiko ziehen ab.
@@ -2998,7 +3040,7 @@ function Get-TipScore {
 if ($script:Help -and $script:Help.Tipps) {
     foreach ($f in $script:Findings) {
         if ($f.Status -notin 'CRIT', 'WARN', 'INFO') { continue }
-        $t = @($script:Help.Tipps[$f.Check]) | Where-Object { $_ -and (-not $_.Match -or $f.Value -match $_.Match) } | Select-Object -First 1
+        $t = @($script:Help.Tipps[$f.Check]) | Where-Object { $_ -and (-not $_.Match -or $f.ValueDe -match $_.Match) } | Select-Object -First 1
         if (-not $t) { continue }
         $f.Steps = @($t.Schritte | Where-Object { $_ })
         if (-not $f.Command -and $t.Befehl) { $f.Command = [string]$t.Befehl }
@@ -3019,23 +3061,25 @@ if ($script:Help -and $script:Help.Tipps) {
 # Ändert sich der Befund (z. B. ein weiteres Programm kommt hinzu), passt das Muster nicht mehr und die Warnung kehrt zurück.
 # Die Regeln wurden früh eingelesen ($script:AkzeptanzRegeln); Regeln mit Datei gelten nur für Datei-Zeilen (Sigcheck-Prüfung).
 $acceptRules = @($script:AkzeptanzRegeln)
+$expiredSet = New-Object 'System.Collections.Generic.HashSet[object]'   # Befunde, deren Akzeptanz abgelaufen ist (für den Bericht)
 foreach ($f in $script:Findings) {
     if ($f.Status -notin 'CRIT', 'WARN', 'TIPP', 'INFO') { continue }
     foreach ($r in $acceptRules) {
         if ($r.Datei) { continue }
         if ($f.Check -notlike $r.Check) { continue }
-        if ($r.Match -and $f.Value -notmatch $r.Match) { continue }
+        if ($r.Match -and ($f.Value -notmatch $r.Match) -and ($f.ValueDe -notmatch $r.Match)) { continue }
         # Unlesbares Ablaufdatum (z. B. von Hand '31.12.2027') gilt als abgelaufen: Die Warnung kommt zurück, statt dass die Schleife abbricht
         $untilDate = $null
         if ($r.Until) { $tmpDate = [datetime]::MinValue; if ([datetime]::TryParseExact([string]$r.Until, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$tmpDate)) { $untilDate = $tmpDate } else { $untilDate = [datetime]::MinValue } }
         if ($r.Until -and ($untilDate -lt (Get-Date).Date)) {
-            if ($untilDate -eq [datetime]::MinValue) { $f.Note = "Akzeptanz ignoriert, Ablaufdatum '$($r.Until)' unlesbar (Format JJJJ-MM-TT): $($r.Reason)" }
-            else { $f.Note = "Akzeptanz abgelaufen am $($r.Until): $($r.Reason)" }
+            if ($untilDate -eq [datetime]::MinValue) { $f.Note = T 'bericht.akzeptanz.unlesbar' $r.Until $r.Reason; [void]$expiredSet.Remove($f) }
+            else { $f.Note = T 'bericht.akzeptanz.abgelaufen' $r.Until $r.Reason; [void]$expiredSet.Add($f) }
             continue
         }
         $f.OriginalStatus = $f.Status
         $f.Status = 'ACK'
-        $f.Note = $r.Reason + $(if ($r.Until) { " (gilt bis $($r.Until))" } else { '' })
+        $f.Note = $r.Reason + $(if ($r.Until) { T 'bericht.akzeptanz.giltBis' $r.Until } else { '' })
+        [void]$expiredSet.Remove($f)
         break
     }
 }
@@ -3050,9 +3094,39 @@ New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $mdPath = Join-Path $OutputDir "pc-check_$stamp.md"
 $jsonPath = Join-Path $OutputDir "pc-check_$stamp.json"
 
-$label = @{ CRIT = '🔴 Kritisch'; WARN = '🟠 Warnung'; TIPP = '💡 Tipp'; ACK = '✅ Akzeptiert'; INFO = '🔵 Hinweis'; OK = '🟢 OK'; SKIP = '⚪ Nicht geprüft' }
+$script:StatusNamen = @{ CRIT = (T 'bericht.status.CRIT'); WARN = (T 'bericht.status.WARN'); TIPP = (T 'bericht.status.TIPP'); ACK = (T 'bericht.status.ACK'); INFO = (T 'bericht.status.INFO'); OK = (T 'bericht.status.OK'); SKIP = (T 'bericht.status.SKIP') }
+$label = @{ CRIT = ('🔴 ' + $script:StatusNamen.CRIT); WARN = ('🟠 ' + $script:StatusNamen.WARN); TIPP = ('💡 ' + $script:StatusNamen.TIPP); ACK = ('✅ ' + $script:StatusNamen.ACK); INFO = ('🔵 ' + $script:StatusNamen.INFO); OK = ('🟢 ' + $script:StatusNamen.OK); SKIP = ('⚪ ' + $script:StatusNamen.SKIP) }
 $rank = @{ CRIT = 0; WARN = 1; TIPP = 2; INFO = 3; ACK = 4; SKIP = 5; OK = 6 }
 $tips = @($script:Findings | Where-Object Status -EQ 'TIPP' | Sort-Object { - (Get-TipScore $_) }, Area, Category)
+
+# Anzeige der Stufen (gering/mittel/hoch bleiben in den Daten Kennungen) und des Profils
+function Get-StufeName {
+    param([string]$Stufe)
+    switch ($Stufe) {
+        'gering' { T 'bericht.stufe.gering' }
+        'mittel' { T 'bericht.stufe.mittel' }
+        'hoch' { T 'bericht.stufe.hoch' }
+        default { $Stufe }
+    }
+}
+function Get-ProfilName {
+    param([string]$Profil)
+    switch ($Profil) {
+        'Gaming' { T 'bericht.profil.gaming' }
+        'Office' { T 'bericht.profil.office' }
+        'Laptop' { T 'bericht.profil.laptop' }
+        default { $Profil }
+    }
+}
+# Name einer Prüfung in der Sprache des Scans (CheckName setzt Add-Finding), sonst die Kennung
+function Get-PruefName {
+    param($F)
+    if ($F.CheckName) { return [string]$F.CheckName }
+    return [string]$F.Check
+}
+# Spaltenüberschriften der Vergleichs- und Update-Tabellen (die Eigenschaftsnamen bleiben Kennungen)
+$script:ChangesSpalten = @{ 'Prüfung' = (T 'bericht.spalte.pruefung'); Vorher = (T 'bericht.spalte.vorher'); Jetzt = (T 'bericht.spalte.jetzt'); Befund = (T 'bericht.spalte.befund') }
+$script:UpdateSpalten = @{ Programm = (T 'bericht.spalte.programm'); Von = (T 'bericht.spalte.von'); Auf = (T 'bericht.spalte.auf'); Ergebnis = (T 'bericht.spalte.ergebnis') }
 
 function ConvertTo-MdCell {
     param($Text)
@@ -3061,22 +3135,25 @@ function ConvertTo-MdCell {
 }
 
 function ConvertTo-MdTable {
-    param([object[]]$Rows, [int]$Max = 150)
+    param([object[]]$Rows, [int]$Max = 150, [hashtable]$Spaltennamen)
     $Rows = @($Rows | Where-Object { $null -ne $_ })
-    if (-not $Rows.Count) { return "_keine Einträge_`n" }
+    if (-not $Rows.Count) { return ((T 'bericht.md.keineEintraege') + "`n") }
     $cols = @($Rows[0].PSObject.Properties | ForEach-Object Name)
+    $kopf = @($cols | ForEach-Object { if ($Spaltennamen -and $Spaltennamen[$_]) { $Spaltennamen[$_] } else { Get-MorpheusAnzeige 'spalte' $_ } })
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('| ' + ($cols -join ' | ') + ' |')
+    [void]$sb.AppendLine('| ' + ($kopf -join ' | ') + ' |')
     [void]$sb.AppendLine('|' + (($cols | ForEach-Object { '---' }) -join '|') + '|')
     foreach ($r in ($Rows | Select-Object -First $Max)) {
         [void]$sb.AppendLine('| ' + (($cols | ForEach-Object { ConvertTo-MdCell $r.$_ }) -join ' | ') + ' |')
     }
-    if ($Rows.Count -gt $Max) { [void]$sb.AppendLine("`n_… $($Rows.Count - $Max) weitere Einträge im JSON-Bericht_") }
+    if ($Rows.Count -gt $Max) { [void]$sb.AppendLine("`n" + (T 'bericht.md.weitereEintraege' ($Rows.Count - $Max))) }
     $sb.ToString()
 }
 
 # Vergleich mit dem vorigen Bericht: geänderte Prüfergebnisse und neue/verschwundene Einträge in den Bestandslisten.
 # Läuft vor dem Schreiben des neuen Berichts, damit er nicht mit sich selbst verglichen wird.
+# Verglichen wird über die Kennungen (Kategorie, Prüfung, Tabellentitel); der ältere Bericht kann in der anderen Sprache entstanden sein.
+# Angezeigt wird der Name aus dem aktuellen Lauf, sonst die Kennung.
 $changes = $null
 $prevFile = if ($CompareWith) { Get-Item -LiteralPath $CompareWith -ErrorAction SilentlyContinue }
 else { Get-ChildItem -LiteralPath $OutputDir -Filter 'pc-check_*.json' -ErrorAction SilentlyContinue | Where-Object FullName -NE $jsonPath | Sort-Object LastWriteTime | Select-Object -Last 1 }
@@ -3093,11 +3170,11 @@ if ($prevFile) {
             $o = $old[$k]
             # Hinweis und Tipp sind derselbe Befund, nur anders eingeordnet (Berichte vor 1.5.0 kennen keinen Tipp)
             $same = $o -and (($o.Status -eq $f.Status) -or ((@($o.Status, $f.Status) | Where-Object { $_ -in 'INFO', 'TIPP' }).Count -eq 2 -and $o.Value -eq $f.Value))
-            if (-not $o) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $f.Check; Vorher = 'neue Prüfung'; Jetzt = $label[$f.Status]; Befund = $f.Value }) }
-            elseif (-not $same) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $f.Check; Vorher = $label[$o.Status]; Jetzt = $label[$f.Status]; Befund = $f.Value }) }
+            if (-not $o) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = (Get-PruefName $f); Vorher = (T 'bericht.change.neu'); Jetzt = $label[$f.Status]; Befund = $f.Value }) }
+            elseif (-not $same) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = (Get-PruefName $f); Vorher = $label[$o.Status]; Jetzt = $label[$f.Status]; Befund = $f.Value }) }
         }
         foreach ($k in $old.Keys) {
-            if (-not $seen.ContainsKey($k)) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = $old[$k].Check; Vorher = $label[$old[$k].Status]; Jetzt = 'entfällt'; Befund = $old[$k].Value }) }
+            if (-not $seen.ContainsKey($k)) { $statusRows.Add([pscustomobject][ordered]@{ 'Prüfung' = (Get-MorpheusAnzeige 'pruefung' ([string]$old[$k].Check)); Vorher = $label[$old[$k].Status]; Jetzt = (T 'bericht.change.entfaellt'); Befund = $old[$k].Value }) }
         }
         # Bestandslisten mit stabilem Schlüssel je Eintrag
         $inventories = [ordered]@{
@@ -3128,7 +3205,7 @@ if ($prevFile) {
         }
         $changes = [ordered]@{ VerglichenMit = $prevFile.Name; Erstellt = $prev.Meta.Erstellt; AdminVorher = [bool]$prev.Meta.Admin; Status = $statusRows.ToArray(); Bestand = $inventory }
     }
-    catch { Write-Warning "Vergleich mit $($prevFile.Name) nicht möglich: $($_.Exception.Message)" }
+    catch { Write-Warning (T 'bericht.vergleichNichtMoeglich' $prevFile.Name $_.Exception.Message) }
 }
 
 # Verlauf über die bisherigen Berichte: einige Kennzahlen je Lauf für kleine Diagramme im HTML-Bericht
@@ -3140,7 +3217,8 @@ function Get-HistoryPoint {
     [pscustomobject][ordered]@{
         Datum    = [datetime]$Erstellt
         StartSek = $(if ($boot) { [Math]::Round(($boot | Measure-Object -Average).Average, 1) } else { $null })
-        Index    = $(if ($rel -and $rel.Value -match '^([\d.,]+) von') { [double]($Matches[1] -replace ',', '.') } else { $null })
+        # "7 von 10" (Deutsch) bzw. "7 of 10" (Englisch): Berichte beider Sprachen zählen
+        Index    = $(if ($rel -and $rel.Value -match '^([\d.,]+) (?:von|of)\b') { [double]($Matches[1] -replace ',', '.') } else { $null })
         FreiC    = $(if ($sysVol) { [double]$sysVol.FreiProzent } else { $null })
         Probleme = @($Findings | Where-Object { $_.Status -in 'CRIT', 'WARN' }).Count
     }
@@ -3157,129 +3235,140 @@ $history.Add((Get-HistoryPoint (Get-Date) $script:Findings.ToArray() ([pscustomo
 
 $md = New-Object System.Text.StringBuilder
 function W { param([string]$Line = '') [void]$md.AppendLine($Line) }
+function Write-MdKopf {
+    param([string[]]$Namen)
+    W ('| ' + ($Namen -join ' | ') + ' |')
+    W ('|' + (($Namen | ForEach-Object { '---' }) -join '|') + '|')
+}
+$profilAnzeige = Get-ProfilName $script:Profile
 
 W "# $ProductName – $($ProductTagline): $env:COMPUTERNAME"
 W ''
-W "- Erstellt: $(Get-Date -Format 'yyyy-MM-dd HH:mm') (Dauer $([int]$duration.TotalSeconds) s)"
-W "- Script-Version $ScriptVersion, PowerShell $($PSVersionTable.PSVersion)"
-W ('- Adminrechte: ' + $(if ($script:IsAdmin) { 'ja' } else { 'nein, einige Prüfungen fehlen' }))
-W "- Ereigniszeitraum: letzte $EventDays Tage"
-W "- Profil: $($script:Profile)$(if ($script:ProfileAuto) { ' (automatisch erkannt)' })"
-W "- Akzeptanzliste: $(if (Test-Path -LiteralPath $AcceptedFile) { "$AcceptedFile ($($acceptRules.Count) Regeln)" } else { 'keine (Vorlage zum Anlegen: accepted.example.psd1)' })"
+W ('- ' + (T 'bericht.md.erstellt' (Get-Date -Format 'yyyy-MM-dd HH:mm') ([int]$duration.TotalSeconds)))
+W ('- ' + (T 'bericht.md.version' $ScriptVersion $PSVersionTable.PSVersion))
+W ('- ' + (T 'bericht.md.admin' $(if ($script:IsAdmin) { T 'bericht.ja' } else { T 'bericht.md.adminNein' })))
+W ('- ' + (T 'bericht.md.ereigniszeitraum' $EventDays))
+W ('- ' + $(if ($script:ProfileAuto) { T 'bericht.md.profilAuto' $profilAnzeige } else { T 'bericht.md.profil' $profilAnzeige }))
+W ('- ' + $(if (Test-Path -LiteralPath $AcceptedFile) { T 'bericht.md.akzeptanzlisteVorhanden' $AcceptedFile $acceptRules.Count } else { T 'bericht.md.akzeptanzlisteKeine' }))
 W ''
-W '## Zusammenfassung'
+W (T 'bericht.md.zusammenfassung')
 W ''
-W '| Bereich | 🔴 Kritisch | 🟠 Warnung | 💡 Tipp | ✅ Akzeptiert | 🔵 Hinweis | 🟢 OK | ⚪ Nicht geprüft |'
+W ('| ' + (T 'bericht.spalte.bereich') + ' | ' + ((@('CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP') | ForEach-Object { $label[$_] }) -join ' | ') + ' |')
 W '|---|---|---|---|---|---|---|---|'
 foreach ($area in 'Sicherheit', 'Performance') {
     $f = @($script:Findings | Where-Object Area -EQ $area)
     $c = foreach ($s in 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP') { @($f | Where-Object Status -EQ $s).Count }
-    W "| $area | $($c -join ' | ') |"
+    W "| $(Get-MorpheusAnzeige 'bereich' $area) | $($c -join ' | ') |"
 }
 W ''
-W '## Handlungsbedarf'
+W (T 'bericht.md.handlungsbedarf')
 W ''
 $todo = @($script:Findings | Where-Object { $_.Status -in 'CRIT', 'WARN' } | Sort-Object { $rank[$_.Status] }, Area, Category)
 if ($todo) {
-    W '| Status | Bereich | Prüfung | Befund | Empfehlung |'
-    W '|---|---|---|---|---|'
-    foreach ($f in $todo) { W "| $($label[$f.Status]) | $($f.Area) / $($f.Category) | $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) |" }
+    Write-MdKopf @((T 'bericht.spalte.status'), (T 'bericht.spalte.bereich'), (T 'bericht.spalte.pruefung'), (T 'bericht.spalte.befund'), (T 'bericht.spalte.empfehlung'))
+    foreach ($f in $todo) { W "| $($label[$f.Status]) | $($f.AreaName) / $($f.CategoryName) | $(ConvertTo-MdCell (Get-PruefName $f)) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) |" }
 }
-else { W '_Keine Warnungen oder kritischen Befunde._' }
+else { W (T 'bericht.md.keineWarnungen') }
 W ''
-W '## Tipps (lohnendste zuerst)'
+W (T 'bericht.md.tipps')
 W ''
 if ($tips) {
-    W '| Prüfung | Befund | Empfehlung | Nutzen | Aufwand | Risiko |'
-    W '|---|---|---|---|---|---|'
-    foreach ($f in $tips) { W "| $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) | $($f.Benefit) | $($f.Effort) | $($f.Risk) |" }
+    Write-MdKopf @((T 'bericht.spalte.pruefung'), (T 'bericht.spalte.befund'), (T 'bericht.spalte.empfehlung'), (T 'bericht.spalte.nutzen'), (T 'bericht.spalte.aufwand'), (T 'bericht.spalte.risiko'))
+    foreach ($f in $tips) { W "| $(ConvertTo-MdCell (Get-PruefName $f)) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Recommendation) | $(Get-StufeName $f.Benefit) | $(Get-StufeName $f.Effort) | $(Get-StufeName $f.Risk) |" }
 }
-else { W '_Keine._' }
+else { W (T 'bericht.md.keine') }
 W ''
-W '## Akzeptierte Abweichungen'
+W (T 'bericht.md.akzeptiert')
 W ''
 $accepted = @($script:Findings | Where-Object Status -EQ 'ACK')
 if ($accepted) {
-    W '| Ursprünglich | Prüfung | Befund | Begründung |'
-    W '|---|---|---|---|'
-    foreach ($f in $accepted) { W "| $($label[$f.OriginalStatus]) | $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Note) |" }
+    Write-MdKopf @((T 'bericht.spalte.urspruenglich'), (T 'bericht.spalte.pruefung'), (T 'bericht.spalte.befund'), (T 'bericht.spalte.begruendung'))
+    foreach ($f in $accepted) { W "| $($label[$f.OriginalStatus]) | $(ConvertTo-MdCell (Get-PruefName $f)) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell $f.Note) |" }
 }
-else { W '_Keine._' }
-$expired = @($script:Findings | Where-Object { $_.Note -like 'Akzeptanz abgelaufen*' })
-if ($expired) { W ''; W ('Abgelaufene Akzeptanzen (wieder als Befund gemeldet): ' + (($expired | ForEach-Object Check) -join ', ')) }
+else { W (T 'bericht.md.keine') }
+$expired = @($script:Findings | Where-Object { $expiredSet.Contains($_) })
+if ($expired) { W ''; W (T 'bericht.md.abgelaufen' (($expired | ForEach-Object { Get-PruefName $_ }) -join ', ')) }
 W ''
-W '## Änderungen seit dem letzten Lauf'
+W (T 'bericht.md.aenderungen')
 W ''
-if (-not $changes) { W '_Kein vorheriger Bericht zum Vergleich gefunden._' }
+if (-not $changes) { W (T 'bericht.md.keinVorbericht') }
 else {
-    $adminNote = if ($changes.AdminVorher -ne [bool]$script:IsAdmin) { " **Achtung:** Der vorige Lauf hatte $(if ($changes.AdminVorher) { '' } else { 'keine ' })Adminrechte, ein Teil der Unterschiede kann daher stammen." } else { '' }
-    W "Verglichen mit ``$($changes.VerglichenMit)`` (erstellt $($changes.Erstellt)).$adminNote"
+    $adminNote = if ($changes.AdminVorher -ne [bool]$script:IsAdmin) { ' **' + (T 'bericht.achtung') + '** ' + $(if ($changes.AdminVorher) { T 'bericht.achtungMitAdmin' } else { T 'bericht.achtungOhneAdmin' }) } else { '' }
+    W ((T 'bericht.md.verglichen' $changes.VerglichenMit $changes.Erstellt) + $adminNote)
     W ''
-    if ($changes.Status.Count) { W '### Geänderte Prüfergebnisse'; W ''; W (ConvertTo-MdTable $changes.Status) }
+    if ($changes.Status.Count) { W (T 'bericht.md.geaenderteErgebnisse'); W ''; W (ConvertTo-MdTable $changes.Status 150 $script:ChangesSpalten) }
     foreach ($t in $changes.Bestand.Keys) {
-        W "### $t"
+        W "### $(Get-MorpheusAnzeige 'tabelle' $t)"
         W ''
         foreach ($x in ($changes.Bestand[$t].Neu | Select-Object -First 40)) { W "- ➕ $(ConvertTo-MdCell $x)" }
         foreach ($x in ($changes.Bestand[$t].Entfernt | Select-Object -First 40)) { W "- ➖ $(ConvertTo-MdCell $x)" }
         $more = @($changes.Bestand[$t].Neu).Count + @($changes.Bestand[$t].Entfernt).Count - 80
-        if ($more -gt 0) { W "- _… weitere im JSON-Bericht_" }
+        if ($more -gt 0) { W (T 'bericht.md.weitereImJson') }
         W ''
     }
-    if (-not $changes.Status.Count -and -not $changes.Bestand.Count) { W '_Keine Änderungen._' }
+    if (-not $changes.Status.Count -and -not $changes.Bestand.Count) { W (T 'bericht.md.keineAenderungen') }
 }
 W ''
-W '## Alle Prüfungen'
+W (T 'bericht.md.allePruefungen')
 foreach ($area in 'Sicherheit', 'Performance') {
     W ''
-    W "### $area"
+    W "### $(Get-MorpheusAnzeige 'bereich' $area)"
     foreach ($cat in @($script:Findings | Where-Object Area -EQ $area | ForEach-Object Category | Select-Object -Unique)) {
         W ''
-        W "#### $cat"
+        W "#### $(Get-MorpheusAnzeige 'kategorie' $cat)"
         W ''
-        W '| Status | Prüfung | Befund | Empfehlung | Anmerkung |'
-        W '|---|---|---|---|---|'
+        Write-MdKopf @((T 'bericht.spalte.status'), (T 'bericht.spalte.pruefung'), (T 'bericht.spalte.befund'), (T 'bericht.spalte.empfehlung'), (T 'bericht.spalte.anmerkung'))
         foreach ($f in ($script:Findings | Where-Object { $_.Area -eq $area -and $_.Category -eq $cat })) {
-            $how = if (@($f.Steps).Count) { ' So geht''s: ' + ((@($f.Steps) | ForEach-Object -Begin { $n = 0 } -Process { $n++; "$n. $_" }) -join ' ') } else { '' }
-            if ($f.Command) { $how += " Befehl (Admin-PowerShell): ``$($f.Command -replace "`n", '; ')``" }
-            W "| $($label[$f.Status]) | $(ConvertTo-MdCell $f.Check) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell ($f.Recommendation + $how)) | $(ConvertTo-MdCell $f.Note) |"
+            $how = if (@($f.Steps).Count) { (T 'bericht.md.soGehts') + ((@($f.Steps) | ForEach-Object -Begin { $n = 0 } -Process { $n++; "$n. $_" }) -join ' ') } else { '' }
+            if ($f.Command) { $how += (T 'bericht.md.befehl' ($f.Command -replace "`n", '; ')) }
+            W "| $($label[$f.Status]) | $(ConvertTo-MdCell (Get-PruefName $f)) | $(ConvertTo-MdCell $f.Value) | $(ConvertTo-MdCell ($f.Recommendation + $how)) | $(ConvertTo-MdCell $f.Note) |"
         }
     }
 }
 W ''
-W '## Anhang: Rohdaten'
+W (T 'bericht.md.anhang')
 foreach ($title in $script:Tables.Keys) {
     W ''
-    W "### $title"
+    W "### $(Get-MorpheusAnzeige 'tabelle' $title)"
     W ''
     W (ConvertTo-MdTable $script:Tables[$title])
 }
 
 $md.ToString() | Out-File -LiteralPath $mdPath -Encoding utf8
+# Anzeigenamen der Tabellen und Spalten in der Sprache des Scans; die Schlüssel in Data bleiben deutsche Kennungen (2.6)
+$tabellenNamen = [ordered]@{}
+$spaltenNamen = [ordered]@{}
+foreach ($title in $script:Tables.Keys) {
+    $tabellenNamen[$title] = Get-MorpheusAnzeige 'tabelle' $title
+    foreach ($row in @($script:Tables[$title])) {
+        foreach ($pn in @($row.PSObject.Properties | ForEach-Object { $_.Name })) { if (-not $spaltenNamen.Contains($pn)) { $spaltenNamen[$pn] = Get-MorpheusAnzeige 'spalte' $pn } }
+    }
+}
 [ordered]@{
-    Meta     = [ordered]@{ Computer = $env:COMPUTERNAME; Erstellt = (Get-Date).ToString('s'); Version = $ScriptVersion; Admin = $script:IsAdmin; EventDays = $EventDays; DauerSek = [int]$duration.TotalSeconds; StoreAppContainer = $script:PackagedFrom; Profil = $script:Profile }
+    Meta     = [ordered]@{ Computer = $env:COMPUTERNAME; Erstellt = (Get-Date).ToString('s'); Version = $ScriptVersion; Admin = $script:IsAdmin; EventDays = $EventDays; DauerSek = [int]$duration.TotalSeconds; StoreAppContainer = $script:PackagedFrom; Profil = $script:Profile; Sprache = $Sprache }
     Findings = $script:Findings
     Changes  = $changes
     Data     = $script:Tables
     DataChecks = $script:TableChecks
+    DataNamen = [ordered]@{ Tabellen = $tabellenNamen; Spalten = $spaltenNamen }
     Speicher = $script:Speicher
 } | ConvertTo-Json -Depth 6 | Out-File -LiteralPath $jsonPath -Encoding utf8
 
 Write-Host ''
-Write-Host 'Ergebnis' -ForegroundColor Green
+Write-Host (T 'bericht.konsole.ergebnis') -ForegroundColor Green
 $colors = @{ CRIT = 'Red'; WARN = 'Yellow'; TIPP = 'Magenta'; ACK = 'DarkGreen'; INFO = 'Cyan'; OK = 'Green'; SKIP = 'Gray' }
-$names = @{ CRIT = 'Kritisch'; WARN = 'Warnung'; TIPP = 'Tipp'; ACK = 'Akzeptiert'; INFO = 'Hinweis'; OK = 'OK'; SKIP = 'Nicht geprüft' }
 foreach ($s in 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP') {
-    Write-Host ('  {0,-14} {1}' -f $names[$s], @($script:Findings | Where-Object Status -EQ $s).Count) -ForegroundColor $colors[$s]
+    Write-Host ('  {0,-14} {1}' -f $script:StatusNamen[$s], @($script:Findings | Where-Object Status -EQ $s).Count) -ForegroundColor $colors[$s]
 }
 if ($changes) {
     $added = 0; $removed = 0
     foreach ($t in $changes.Bestand.Keys) { $added += @($changes.Bestand[$t].Neu).Count; $removed += @($changes.Bestand[$t].Entfernt).Count }
     Write-Host ''
-    Write-Host ("Seit dem letzten Lauf ({0}): {1} geänderte Prüfergebnisse, {2} neue und {3} entfernte Einträge (Details im Bericht)" -f $changes.Erstellt, $changes.Status.Count, $added, $removed) -ForegroundColor Cyan
+    Write-Host (T 'bericht.konsole.seitLetztemLauf' $changes.Erstellt $changes.Status.Count $added $removed) -ForegroundColor Cyan
 }
 Write-Host ''
-Write-Host "Bericht: $mdPath"
-Write-Host "Daten:   $jsonPath"
+Write-Host (T 'bericht.konsole.bericht' $mdPath)
+Write-Host (T 'bericht.konsole.daten' $jsonPath)
 
 #endregion
 
@@ -3297,8 +3386,8 @@ function Protect-Text {
     param([string]$Text)
     if (-not $Text) { return '' }
     $t = $Text -replace [regex]::Escape($env:COMPUTERNAME), '<PC>'
-    if ($env:USERNAME.Length -ge 3) { $t = $t -replace [regex]::Escape($env:USERNAME), '<Benutzer>' }
-    $t = $t -replace '[\w.+-]+@[\w-]+\.[\w.-]+', '<E-Mail>'
+    if ($env:USERNAME.Length -ge 3) { $t = $t -replace [regex]::Escape($env:USERNAME), (T 'bericht.ki.benutzer') }
+    $t = $t -replace '[\w.+-]+@[\w-]+\.[\w.-]+', (T 'bericht.ki.email')
     $t = $t -replace 'S-1-5-21-[\d-]+', '<SID>'
     $t = $t -replace '(?i)\b([0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b', '<MAC>'
     $t = $t -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b', '<IP>'
@@ -3310,57 +3399,60 @@ function Write-HtmlReport {
     param([Parameter(Mandatory)][string]$Path)
 
     $help = $script:Help
-    $statusName = @{ CRIT = 'Kritisch'; WARN = 'Warnung'; TIPP = 'Tipp'; ACK = 'Akzeptiert'; INFO = 'Hinweis'; OK = 'OK'; SKIP = 'Nicht geprüft' }
+    $statusName = $script:StatusNamen
     $order = 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP'
     # ToArray statt @(): @() auf eine List[object] wirft in Windows PowerShell 5.1 "Argument types do not match"
     $findings = $script:Findings.ToArray()
     $count = @{}
     foreach ($s in $order) { $count[$s] = @($findings | Where-Object Status -EQ $s).Count }
+    $profilAnzeige = Get-ProfilName $script:Profile
 
     $sb = New-Object System.Text.StringBuilder
     function A([string]$Line) { [void]$sb.AppendLine($Line) }
+    # Jeder Text aus den Sprachdateien und jeder Wert aus dem Scan läuft durch HEnc, bevor er ins HTML kommt
     function HEnc($Text) { ConvertTo-HtmlText $Text }
 
     # Infotext (Was/Warum/Wann harmlos) zu einer Prüfung, sonst Erklärung der Kategorie
     function Get-Tip([string]$Check, [string]$Category) {
         if (-not $help) { return '' }
         $e = $help.Pruefungen[$Check]
-        if ($e) { return "<b>Was wird geprüft?</b> $(HEnc $e.Was)<br><b>Warum wichtig?</b> $(HEnc $e.Warum)<br><b>Wann ist eine Warnung harmlos?</b> $(HEnc $e.Harmlos)" }
+        if ($e) { return "<b>$(HEnc (T 'bericht.html.tipWas'))</b> $(HEnc $e.Was)<br><b>$(HEnc (T 'bericht.html.tipWarum'))</b> $(HEnc $e.Warum)<br><b>$(HEnc (T 'bericht.html.tipHarmlos'))</b> $(HEnc $e.Harmlos)" }
         if ($help.Kategorien[$Category]) { return HEnc $help.Kategorien[$Category] }
         ''
     }
     function Get-InfoButton([string]$TipHtml) {
         if (-not $TipHtml) { return '' }
-        "<button type=`"button`" class=`"info`" aria-label=`"Erklärung`" aria-expanded=`"false`">i</button><span class=`"tip`" role=`"tooltip`">$TipHtml</span>"
+        "<button type=`"button`" class=`"info`" aria-label=`"$(HEnc (T 'bericht.html.erklaerung'))`" aria-expanded=`"false`">i</button><span class=`"tip`" role=`"tooltip`">$TipHtml</span>"
     }
-    # Nutzen/Aufwand/Risiko als kleine Kennzeichen
+    # Nutzen/Aufwand/Risiko als kleine Kennzeichen (die Stufen gering/mittel/hoch bleiben in den Klassen Kennungen)
     function Get-Levels($F) {
         if (-not $F.Benefit) { return '' }
-        $p = foreach ($x in @(@('Nutzen', $F.Benefit, 'n'), @('Aufwand', $F.Effort, 'a'), @('Risiko', $F.Risk, 'r'))) { if ($x[1]) { "<span class=`"lv lv-$($x[2])-$($x[1])`">$($x[0]): $($x[1])</span>" } }
+        $p = foreach ($x in @(@((T 'bericht.spalte.nutzen'), $F.Benefit, 'n'), @((T 'bericht.spalte.aufwand'), $F.Effort, 'a'), @((T 'bericht.spalte.risiko'), $F.Risk, 'r'))) { if ($x[1]) { "<span class=`"lv lv-$($x[2])-$($x[1])`">$(HEnc $x[0]): $(HEnc (Get-StufeName $x[1]))</span>" } }
         "<div class=`"levels`">$($p -join '')</div>"
     }
     # Aufklappbare Anleitung: Klickweg und optional Befehl zum Kopieren
     function Get-HowTo($F) {
         $steps = @($F.Steps)
         if (-not $steps.Count -and -not $F.Command) { return '' }
-        $h = '<details class="how"><summary>So geht''s</summary>'
+        $h = '<details class="how"><summary>' + (HEnc (T 'bericht.html.soGehts')) + '</summary>'
         if ($steps.Count) { $h += '<ol>' + (($steps | ForEach-Object { "<li>$(HEnc $_)</li>" }) -join '') + '</ol>' }
-        if ($F.Command) { $h += "<div class=`"cmd`"><div class=`"cmd-head`">Befehl für eine Administrator-PowerShell <button type=`"button`" class=`"copy`">Kopieren</button></div><pre>$(HEnc $F.Command)</pre></div>" }
+        if ($F.Command) { $h += "<div class=`"cmd`"><div class=`"cmd-head`">$(HEnc (T 'bericht.html.befehlKopf')) <button type=`"button`" class=`"copy`">$(HEnc (T 'bericht.html.kopieren'))</button></div><pre>$(HEnc $F.Command)</pre></div>" }
         $h + '</details>'
     }
     function Get-Row($F, [string]$Id, [switch]$Summary) {
         $note = ''
-        if ($F.Status -eq 'ACK') { $note = "<div class=`"note`">Ursprünglich: $(HEnc $statusName[$F.OriginalStatus]) · $(HEnc $F.Note)</div>" }
+        $pruefName = Get-PruefName $F
+        if ($F.Status -eq 'ACK') { $note = "<div class=`"note`">$(HEnc (T 'bericht.html.urspruenglich' $statusName[$F.OriginalStatus] $F.Note))</div>" }
         elseif ($F.Note) { $note = "<div class=`"note`">$(HEnc $F.Note)</div>" }
-        $text = (HEnc ("$($F.Check) $($F.Value) $($F.Recommendation) $($F.Category)".ToLower()))
+        $text = (HEnc ("$pruefName $($F.Value) $($F.Recommendation) $($F.CategoryName)".ToLower()))
         $cls = if ($Summary) { 'row summary' } else { 'row' }
         $idAttr = if ($Summary) { '' } else { " id=`"$Id`"" }
-        $check = if ($Summary) { "<a href=`"#$Id`">$(HEnc $F.Check)</a>" } else { HEnc $F.Check }
-        $hint = if ($Summary) { '<div class="cat-hint">' + (HEnc $F.Area) + ' · ' + (HEnc $F.Category) + '</div>' } else { '' }
+        $check = if ($Summary) { "<a href=`"#$Id`">$(HEnc $pruefName)</a>" } else { HEnc $pruefName }
+        $hint = if ($Summary) { '<div class="cat-hint">' + (HEnc $F.AreaName) + ' · ' + (HEnc $F.CategoryName) + '</div>' } else { '' }
         $infoBtn = Get-InfoButton (Get-Tip $F.Check $F.Category)
-        $todo = if (-not $Summary -and $F.Status -in 'CRIT', 'WARN', 'TIPP') { '<div class="todo"><button type="button" data-mark="done" title="Als erledigt markieren; der nächste Lauf zeigt, ob es wirklich behoben ist">✔ erledigt</button><button type="button" data-mark="later" title="Für später vormerken">⏱ später</button></div>' } else { '' }
-        "<div class=`"$cls s-$($F.Status)`"$idAttr data-status=`"$($F.Status)`" data-check=`"$(HEnc $F.Check)`" data-text=`"$text`">" +
-        "<div class=`"c-status`"><span class=`"badge b-$($F.Status)`">$($statusName[$F.Status])</span>$todo</div>" +
+        $todo = if (-not $Summary -and $F.Status -in 'CRIT', 'WARN', 'TIPP') { '<div class="todo"><button type="button" data-mark="done" title="' + (HEnc (T 'bericht.html.erledigtTitel')) + '">' + (HEnc (T 'bericht.html.erledigt')) + '</button><button type="button" data-mark="later" title="' + (HEnc (T 'bericht.html.spaeterTitel')) + '">' + (HEnc (T 'bericht.html.spaeter')) + '</button></div>' } else { '' }
+        "<div class=`"$cls s-$($F.Status)`"$idAttr data-status=`"$($F.Status)`" data-check=`"$(HEnc $F.Check)`" data-name=`"$(HEnc $pruefName)`" data-text=`"$text`">" +
+        "<div class=`"c-status`"><span class=`"badge b-$($F.Status)`">$(HEnc $statusName[$F.Status])</span>$todo</div>" +
         "<div class=`"c-check`">$check$infoBtn$hint</div>" +
         "<div class=`"c-value`">$(HEnc $F.Value)$note</div>" +
         "<div class=`"c-rec`">$(HEnc $F.Recommendation)$(Get-Levels $F)$(if (-not $Summary) { Get-HowTo $F })</div></div>"
@@ -3380,21 +3472,26 @@ function Write-HtmlReport {
         }
         $inv = [Globalization.CultureInfo]::InvariantCulture
         $line = ($xy | ForEach-Object { $_.X.ToString($inv) + ',' + $_.Y.ToString($inv) }) -join ' '
-        $dots = ($xy | ForEach-Object { "<circle cx=`"$($_.X.ToString($inv))`" cy=`"$($_.Y.ToString($inv))`" r=`"3`"><title>$($_.D): $($_.V) $Unit</title></circle>" }) -join ''
+        $unitHtml = HEnc $Unit
+        $dots = ($xy | ForEach-Object { "<circle cx=`"$($_.X.ToString($inv))`" cy=`"$($_.Y.ToString($inv))`" r=`"3`"><title>$($_.D): $($_.V) $unitHtml</title></circle>" }) -join ''
         $first = $vals[0]; $last = $vals[-1]
         $trend = if ($last -eq $first) { 'gleich' } elseif (($last -lt $first) -eq ($Better -eq 'low')) { 'besser' } else { 'schlechter' }
         $trendCls = @{ gleich = 'muted'; besser = 'add'; schlechter = 'rem' }[$trend]
-        "<div class=`"chart`"><div class=`"chart-head`"><span>$(HEnc $Title)</span><span class=`"$trendCls`">$last $Unit · $trend</span></div>" +
+        $trendText = switch ($trend) { 'gleich' { T 'bericht.html.trendGleich' } 'besser' { T 'bericht.html.trendBesser' } default { T 'bericht.html.trendSchlechter' } }
+        "<div class=`"chart`"><div class=`"chart-head`"><span>$(HEnc $Title)</span><span class=`"$trendCls`">$last $unitHtml · $(HEnc $trendText)</span></div>" +
         "<svg viewBox=`"0 0 $w $h`" role=`"img`" aria-label=`"$(HEnc $Title)`"><polyline points=`"$line`"/>$dots</svg>" +
         "<div class=`"chart-foot`"><span>$($xy[0].D)</span><span>$($xy[-1].D)</span></div></div>"
     }
-    function Get-Table($Rows, [int]$Max = 300) {
+    function Get-Table($Rows, [int]$Max = 300, [hashtable]$Spaltennamen) {
         $Rows = @($Rows | Where-Object { $null -ne $_ })
-        if (-not $Rows.Count) { return '<p class="muted">Keine Einträge.</p>' }
+        if (-not $Rows.Count) { return '<p class="muted">' + (HEnc (T 'bericht.html.keineEintraege')) + '</p>' }
         $cols = @($Rows[0].PSObject.Properties | ForEach-Object Name)
         $t = New-Object System.Text.StringBuilder
         [void]$t.Append('<div class="tablewrap"><table><thead><tr>')
-        foreach ($c in $cols) { [void]$t.Append("<th>$(HEnc $c)</th>") }
+        foreach ($c in $cols) {
+            $kopf = if ($Spaltennamen -and $Spaltennamen[$c]) { $Spaltennamen[$c] } else { Get-MorpheusAnzeige 'spalte' $c }
+            [void]$t.Append("<th>$(HEnc $kopf)</th>")
+        }
         [void]$t.Append('</tr></thead><tbody>')
         foreach ($r in ($Rows | Select-Object -First $Max)) {
             [void]$t.Append('<tr>')
@@ -3402,14 +3499,14 @@ function Write-HtmlReport {
             [void]$t.Append('</tr>')
         }
         [void]$t.Append('</tbody></table></div>')
-        if ($Rows.Count -gt $Max) { [void]$t.Append("<p class=`"muted`">… $($Rows.Count - $Max) weitere Einträge im JSON-Bericht.</p>") }
+        if ($Rows.Count -gt $Max) { [void]$t.Append("<p class=`"muted`">$(HEnc (T 'bericht.html.weitereEintraege' ($Rows.Count - $Max)))</p>") }
         $t.ToString()
     }
 
     # Ampel und die nächsten Schritte (Sicherheit vor Performance, Kritisch vor Warnung)
-    if ($count.CRIT) { $amp = 'red'; $ampTitle = 'Kritische Punkte gefunden'; $ampSub = 'Bitte zuerst die rot markierten Punkte beheben.' }
-    elseif ($count.WARN) { $amp = 'yellow'; $ampTitle = 'Einige Punkte prüfen'; $ampSub = 'Nichts Akutes, aber die orangefarbenen Punkte solltest du dir ansehen.' }
-    else { $amp = 'green'; $ampTitle = 'Alles in Ordnung'; $ampSub = $(if ($count.TIPP) { "Keine Warnungen. $($count.TIPP) Tipps zeigen, was sich noch lohnt." } else { 'Keine Warnungen.' }) }
+    if ($count.CRIT) { $amp = 'red'; $ampTitle = T 'bericht.html.ampelRotTitel'; $ampSub = T 'bericht.html.ampelRotText' }
+    elseif ($count.WARN) { $amp = 'yellow'; $ampTitle = T 'bericht.html.ampelGelbTitel'; $ampSub = T 'bericht.html.ampelGelbText' }
+    else { $amp = 'green'; $ampTitle = T 'bericht.html.ampelGruenTitel'; $ampSub = $(if ($count.TIPP) { T 'bericht.html.ampelGruenMitTipps' $count.TIPP } else { T 'bericht.html.ampelGruenText' }) }
     $ids = @{}
     for ($i = 0; $i -lt $findings.Count; $i++) { $ids["$($findings[$i].Category)|$($findings[$i].Check)"] = "p$i" }
     $todo = @($findings | Where-Object { $_.Status -in 'CRIT', 'WARN' } | Sort-Object { $rank[$_.Status] }, { if ($_.Area -eq 'Sicherheit') { 0 } else { 1 } }, Category)
@@ -3419,29 +3516,28 @@ function Write-HtmlReport {
     'Spielebibliotheken', 'Spielmodus', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'Hintergrundaufzeichnung (Game DVR)', 'Optimierungen für Spiele im Fenstermodus',
     'Overlays und Hintergrund-Tools', 'Mausbeschleunigung', 'Netzwerkverbindung', 'Netzwerkkarte: Energiesparfunktionen', 'Virtualisierung und Spieleleistung'
     $gamingRows = if ($script:Profile -eq 'Gaming') { @($gamingChecks | ForEach-Object { $c = $_; $findings | Where-Object Check -EQ $c | Select-Object -First 1 } | Where-Object { $_ }) } else { @() }
-    $charts = (Get-Chart 'Probleme (Kritisch + Warnung)' 'Probleme' '' 'low') + (Get-Chart 'Startdauer bis Desktop' 'StartSek' 's' 'low') +
-    (Get-Chart 'Zuverlässigkeitsindex' 'Index' 'von 10' 'high') + (Get-Chart "Freier Platz auf $env:SystemDrive" 'FreiC' '%' 'high')
+    $charts = (Get-Chart (T 'bericht.html.chartProbleme') 'Probleme' '' 'low') + (Get-Chart (T 'bericht.html.chartStart') 'StartSek' 's' 'low') +
+    (Get-Chart (T 'bericht.html.chartIndex') 'Index' (T 'bericht.html.einheitVon10') 'high') + (Get-Chart (T 'bericht.html.chartFreiePlatz' $env:SystemDrive) 'FreiC' '%' 'high')
 
     # Anonymisierte Kopiervorlage für einen KI-Assistenten
     $ki = New-Object System.Text.StringBuilder
-    [void]$ki.AppendLine('Ich habe meinen Windows-PC mit dem Prüfscript Morpheus (pc-check) untersucht. Bitte erkläre mir die folgenden Befunde verständlich,')
-    [void]$ki.AppendLine('bewerte, wie dringend sie sind, und sag mir Schritt für Schritt, was ich tun sollte. Frag nach, wenn dir Angaben fehlen.')
+    [void]$ki.AppendLine((T 'bericht.ki.einleitung1'))
+    [void]$ki.AppendLine((T 'bericht.ki.einleitung2'))
     [void]$ki.AppendLine('')
-    [void]$ki.AppendLine("System: $($script:OS.Caption), Version $($script:CV.DisplayVersion); $ProductName $ScriptVersion; Adminrechte: $(if ($script:IsAdmin) { 'ja' } else { 'nein' })")
-    [void]$ki.AppendLine("Nutzung: $($script:Profile)")
-    [void]$ki.AppendLine("Übersicht: $($count.CRIT) kritisch, $($count.WARN) Warnungen, $($count.TIPP) Tipps, $($count.ACK) akzeptiert, $($count.INFO) Hinweise, $($count.OK) OK")
+    [void]$ki.AppendLine((T 'bericht.ki.system' $script:OS.Caption $script:CV.DisplayVersion $ProductName $ScriptVersion $(if ($script:IsAdmin) { T 'bericht.ja' } else { T 'bericht.nein' })))
+    [void]$ki.AppendLine((T 'bericht.ki.nutzung' $profilAnzeige))
+    [void]$ki.AppendLine((T 'bericht.ki.uebersicht' $count.CRIT $count.WARN $count.TIPP $count.ACK $count.INFO $count.OK))
     foreach ($s in 'CRIT', 'WARN', 'TIPP', 'ACK', 'INFO') {
         $list = @($findings | Where-Object Status -EQ $s)
         if (-not $list) { continue }
         [void]$ki.AppendLine('')
         [void]$ki.AppendLine("== $($statusName[$s]) ==")
         foreach ($f in $list) {
-            [void]$ki.AppendLine("- [$($f.Area) / $($f.Category)] $($f.Check): $(Protect-Text $f.Value)")
-            if ($f.Recommendation) { [void]$ki.AppendLine("  Empfehlung des Scripts: $(Protect-Text $f.Recommendation)") }
-            if ($s -eq 'ACK') { [void]$ki.AppendLine("  Von mir bewusst akzeptiert: $(Protect-Text $f.Note)") }
+            [void]$ki.AppendLine("- [$($f.AreaName) / $($f.CategoryName)] $(Get-PruefName $f): $(Protect-Text $f.Value)")
+            if ($f.Recommendation) { [void]$ki.AppendLine((T 'bericht.ki.empfehlung' (Protect-Text $f.Recommendation))) }
+            if ($s -eq 'ACK') { [void]$ki.AppendLine((T 'bericht.ki.akzeptiert' (Protect-Text $f.Note))) }
         }
     }
-
     $css = @'
 :root{--b03:#002b36;--b02:#073642;--b01:#586e75;--b00:#657b83;--b0:#839496;--b1:#93a1a1;--b2:#eee8d5;--b3:#fdf6e3;--yellow:#b58900;--orange:#cb4b16;--red:#dc322f;--magenta:#d33682;--violet:#6c71c4;--blue:#268bd2;--cyan:#2aa198;--green:#859900;--line:#0d4a57}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
@@ -3540,6 +3636,8 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
 
     $js = @'
 (function () {
+  // Texte in der Sprache des Scans; kommen als JSON aus den Sprachdateien (lang\<sprache>\bericht.psd1)
+  var L = __MORPHEUS_TEXTE__;
   var rows = Array.prototype.slice.call(document.querySelectorAll('details.cat .row'));
   var mode = 'all', term = '';
   function apply() {
@@ -3602,7 +3700,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
   kb.addEventListener('click', function () {
     var ta = document.getElementById('ki-text'), label = kb.textContent;
     function done(ok) {
-      kb.textContent = ok ? '✔ Kopiert – jetzt in ChatGPT oder Claude einfügen' : 'Kopieren nicht möglich';
+      kb.textContent = ok ? L.kiKopiert : L.kiNichtMoeglich;
       setTimeout(function () { kb.textContent = label; }, 4000);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -3614,7 +3712,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
   document.querySelectorAll('button.copy').forEach(function (b) {
     b.addEventListener('click', function () {
       var pre = b.closest('.cmd').querySelector('pre'), label = b.textContent;
-      function done(ok) { b.textContent = ok ? '✔ Kopiert' : 'Nicht möglich'; setTimeout(function () { b.textContent = label; }, 2500); }
+      function done(ok) { b.textContent = ok ? L.kopiert : L.nichtMoeglich; setTimeout(function () { b.textContent = label; }, 2500); }
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(pre.textContent).then(function () { done(true); }, function () { done(false); });
       else done(false);
     });
@@ -3635,6 +3733,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
     if (cls) { var s = document.createElement('span'); s.className = 'muted'; s.textContent = ' – ' + cls; e.appendChild(s); }
     list.appendChild(e);
   }
+  function hinweis(box, text) { var p = document.createElement('p'); p.className = 'muted'; p.textContent = text; box.appendChild(p); }
   function render() {
     rows.forEach(function (r) {
       var m = marks[r.getAttribute('data-check')];
@@ -3646,199 +3745,221 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
       var m = marks[c], r = byCheck[c], s = r ? r.getAttribute('data-status') : 'OK';
       var still = s === 'CRIT' || s === 'WARN' || s === 'TIPP';
       var g = m.state === 'later' ? (still ? 'later' : 'fixed') : (!still ? 'fixed' : (m.report === created ? 'pending' : 'open'));
-      groups[g].push({ c: c, id: r ? r.id : '', d: m.date });
+      groups[g].push({ c: c, id: r ? r.id : '', d: m.date, n: r ? (r.getAttribute('data-name') || c) : c });
     });
     var box = document.getElementById('checklist-body');
     if (!box) return;
     box.innerHTML = '';
-    var titles = { open: 'Als erledigt markiert, aber weiterhin gemeldet', fixed: 'Behoben (bestätigt durch diesen Bericht)', pending: 'Als erledigt markiert (der nächste Lauf bestätigt es)', later: 'Für später vorgemerkt' };
+    var titles = { open: L.titelOffen, fixed: L.titelBehoben, pending: L.titelWartend, later: L.titelSpaeter };
     var any = false;
     ['open', 'fixed', 'pending', 'later'].forEach(function (g) {
       if (!groups[g].length) return;
       any = true;
       var h = document.createElement('h3'); h.textContent = titles[g]; h.className = g === 'open' ? 'rem' : (g === 'fixed' ? 'add' : '');
       var ul = document.createElement('ul'); ul.className = 'checklist';
-      groups[g].forEach(function (x) { li(ul, x.c, 'markiert am ' + x.d, x.id); });
+      groups[g].forEach(function (x) { li(ul, x.n, L.markiertAm.replace('{0}', function () { return x.d; }), x.id); });
       box.appendChild(h); box.appendChild(ul);
     });
-    if (!any) box.innerHTML = '<p class="muted">Noch nichts markiert. Bei Warnungen und Tipps kannst du „✔ erledigt“ oder „⏱ später“ anklicken.</p>';
-    if (!store) box.innerHTML += '<p class="muted">Dein Browser erlaubt hier keine Speicherung; Markierungen gehen beim Schließen verloren.</p>';
+    if (!any) hinweis(box, L.nochNichts);
+    if (!store) hinweis(box, L.keinSpeicher);
   }
   document.querySelectorAll('.todo button').forEach(function (b) {
     b.addEventListener('click', function () {
       var c = b.closest('.row').getAttribute('data-check'), st = b.getAttribute('data-mark');
       if (marks[c] && marks[c].state === st) delete marks[c];
-      else marks[c] = { state: st, date: new Date().toLocaleDateString('de-DE'), report: created };
+      else marks[c] = { state: st, date: new Date().toLocaleDateString(L.datumsformat), report: created };
       save(); render();
     });
   });
   var reset = document.getElementById('checklist-reset');
-  if (reset) reset.addEventListener('click', function () { if (confirm('Alle Markierungen für diesen PC löschen?')) { marks = {}; save(); render(); } });
+  if (reset) reset.addEventListener('click', function () { if (confirm(L.loeschenFrage)) { marks = {}; save(); render(); } });
   render();
 })();
 '@
 
+    # Texte des eingebetteten Skripts als JSON (ConvertTo-Json maskiert Anführungszeichen; "<" zusätzlich, damit nie ein Tag-Ende entsteht)
+    $jsTexte = [ordered]@{
+        kiKopiert       = (T 'bericht.js.kiKopiert')
+        kiNichtMoeglich = (T 'bericht.js.kiNichtMoeglich')
+        kopiert         = (T 'bericht.js.kopiert')
+        nichtMoeglich   = (T 'bericht.js.nichtMoeglich')
+        titelOffen      = (T 'bericht.js.titelOffen')
+        titelBehoben    = (T 'bericht.js.titelBehoben')
+        titelWartend    = (T 'bericht.js.titelWartend')
+        titelSpaeter    = (T 'bericht.js.titelSpaeter')
+        markiertAm      = (T 'bericht.js.markiertAm')
+        nochNichts      = (T 'bericht.js.nochNichts')
+        keinSpeicher    = (T 'bericht.js.keinSpeicher')
+        loeschenFrage   = (T 'bericht.js.loeschenFrage')
+        datumsformat    = $(if ($Sprache -eq 'en') { 'en-GB' } else { 'de-DE' })
+    }
+    # < statt <: Kein Text kann das umgebende <script> beenden
+    $js = $js.Replace('__MORPHEUS_TEXTE__', (($jsTexte | ConvertTo-Json -Compress).Replace('<', '<')))
+
     $title = "$ProductName · $env:COMPUTERNAME · $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+    $htmlLang = if ($Sprache -eq 'en') { 'en' } else { 'de' }
     A '<!DOCTYPE html>'
-    A '<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+    A "<html lang=`"$htmlLang`"><head><meta charset=`"utf-8`"><meta name=`"viewport`" content=`"width=device-width, initial-scale=1`">"
     A "<title>$(HEnc $title)</title><style>$css</style></head><body data-pc=`"$(HEnc $env:COMPUTERNAME)`" data-created=`"$(Get-Date -Format 's')`">"
 
     # Kopf
     A '<header class="top"><div>'
     A "<h1>$ProductName <span>$ProductTagline</span></h1>"
-    A ("<div class=`"meta`">{0} · {1} · Version {2} · Adminrechte: {3} · Dauer {4} s · Ereignisse der letzten {5} Tage · Profil {6}</div>" -f (HEnc $env:COMPUTERNAME), (Get-Date -Format 'dd.MM.yyyy HH:mm'), $ScriptVersion, $(if ($script:IsAdmin) { 'ja' } else { 'nein (einige Prüfungen fehlen)' }), [int]$duration.TotalSeconds, $EventDays, $(if ($script:ProfileAuto) { "$($script:Profile) (automatisch)" } else { $script:Profile }))
-    A '</div><div class="actions"><button type="button" class="btn" id="btn-ki" title="Kopiert die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage">🤖 Für KI-Assistent kopieren</button> <a class="btn" href="#anleitung">📖 So liest du den Bericht</a></div></header>'
+    $adminText = if ($script:IsAdmin) { T 'bericht.ja' } else { T 'bericht.html.adminNein' }
+    $profilText = if ($script:ProfileAuto) { T 'bericht.html.profilAuto' $profilAnzeige } else { $profilAnzeige }
+    A ('<div class="meta">' + (HEnc (T 'bericht.html.meta' $env:COMPUTERNAME (Get-Date -Format 'dd.MM.yyyy HH:mm') $ScriptVersion $adminText ([int]$duration.TotalSeconds) $EventDays $profilText)) + '</div>')
+    A ('</div><div class="actions"><button type="button" class="btn" id="btn-ki" title="' + (HEnc (T 'bericht.html.kiTitel')) + '">' + (HEnc (T 'bericht.html.kiKnopf')) + '</button> <a class="btn" href="#anleitung">' + (HEnc (T 'bericht.html.anleitungLink')) + '</a></div></header>')
 
     # Ampel und Zähler
-    A "<section class=`"hero`"><div class=`"ampel amp-$amp`"><span class=`"dot`"></span><div><div class=`"amp-title`">$ampTitle</div><div class=`"amp-sub`">$ampSub</div></div></div>"
+    A "<section class=`"hero`"><div class=`"ampel amp-$amp`"><span class=`"dot`"></span><div><div class=`"amp-title`">$(HEnc $ampTitle)</div><div class=`"amp-sub`">$(HEnc $ampSub)</div></div></div>"
     A '<div class="counters">'
-    foreach ($s in $order) { A "<button type=`"button`" class=`"counter c-$s`" data-filter=`"$s`" title=`"Nur diese anzeigen`"><span class=`"n`">$($count[$s])</span><span class=`"l`">$($statusName[$s])</span></button>" }
+    $nurDiese = HEnc (T 'bericht.html.nurDiese')
+    foreach ($s in $order) { A "<button type=`"button`" class=`"counter c-$s`" data-filter=`"$s`" title=`"$nurDiese`"><span class=`"n`">$($count[$s])</span><span class=`"l`">$(HEnc $statusName[$s])</span></button>" }
     A '</div></section>'
 
     # Werkzeugleiste
     A '<div class="toolbar"><div class="filters">'
-    A '<button type="button" data-filter="all" class="active">Alle</button><button type="button" data-filter="problem">Probleme</button><button type="button" data-filter="TIPP">Tipps</button><button type="button" data-filter="INFO">Hinweise</button><button type="button" data-filter="ACK">Akzeptiert</button><button type="button" data-filter="OK">OK</button><button type="button" data-filter="SKIP">Nicht geprüft</button>'
-    A '</div><input id="search" type="search" placeholder="Prüfungen durchsuchen …" aria-label="Prüfungen durchsuchen"></div>'
+    A ('<button type="button" data-filter="all" class="active">' + (HEnc (T 'bericht.html.filterAlle')) + '</button><button type="button" data-filter="problem">' + (HEnc (T 'bericht.html.filterProbleme')) + '</button><button type="button" data-filter="TIPP">' + (HEnc (T 'bericht.html.filterTipps')) + '</button><button type="button" data-filter="INFO">' + (HEnc (T 'bericht.html.filterHinweise')) + '</button><button type="button" data-filter="ACK">' + (HEnc $statusName.ACK) + '</button><button type="button" data-filter="OK">' + (HEnc $statusName.OK) + '</button><button type="button" data-filter="SKIP">' + (HEnc $statusName.SKIP) + '</button>')
+    A ('</div><input id="search" type="search" placeholder="' + (HEnc (T 'bericht.html.suchen')) + '" aria-label="' + (HEnc (T 'bericht.html.suchenLabel')) + '"></div>')
 
     # Navigation
     $cats = @($findings | ForEach-Object { "$($_.Area)|$($_.Category)" } | Select-Object -Unique)
     A '<div class="layout"><nav class="side">'
-    A '<a href="#schritte">Nächste Schritte</a>'
-    A '<a href="#checkliste">Meine Checkliste</a>'
-    if ($gamingRows) { A '<a href="#gaming">Gaming-Check</a>' }
-    if ($charts) { A '<a href="#verlauf">Verlauf</a>' }
-    if ($changes) { A '<a href="#aenderungen">Änderungen</a>' }
-    if ($count.ACK) { A "<a href=`"#akzeptiert`">Akzeptiert <span class=`"cnt`" style=`"background:var(--violet)`">$($count.ACK)</span></a>" }
-    if ($null -ne $updateResults) { A '<a href="#updates">Updates nach dem Lauf</a>' }
+    A ('<a href="#schritte">' + (HEnc (T 'bericht.html.navSchritte')) + '</a>')
+    A ('<a href="#checkliste">' + (HEnc (T 'bericht.html.navCheckliste')) + '</a>')
+    if ($gamingRows) { A ('<a href="#gaming">' + (HEnc (T 'bericht.html.navGaming')) + '</a>') }
+    if ($charts) { A ('<a href="#verlauf">' + (HEnc (T 'bericht.html.navVerlauf')) + '</a>') }
+    if ($changes) { A ('<a href="#aenderungen">' + (HEnc (T 'bericht.html.navAenderungen')) + '</a>') }
+    if ($count.ACK) { A "<a href=`"#akzeptiert`">$(HEnc $statusName.ACK) <span class=`"cnt`" style=`"background:var(--violet)`">$($count.ACK)</span></a>" }
+    if ($null -ne $updateResults) { A ('<a href="#updates">' + (HEnc (T 'bericht.html.navUpdates')) + '</a>') }
     $lastArea = ''
     for ($i = 0; $i -lt $cats.Count; $i++) {
         $area, $cat = $cats[$i] -split '\|', 2
-        if ($area -ne $lastArea) { A "<div class=`"grp`">$(HEnc $area)</div>"; $lastArea = $area }
+        if ($area -ne $lastArea) { A "<div class=`"grp`">$(HEnc (Get-MorpheusAnzeige 'bereich' $area))</div>"; $lastArea = $area }
         $prob = @($findings | Where-Object { $_.Area -eq $area -and $_.Category -eq $cat -and $_.Status -in 'CRIT', 'WARN' }).Count
         $cnt = if ($prob) { '<span class="cnt">' + $prob + '</span>' } else { '' }
-        A "<a href=`"#cat$i`">$(HEnc $cat)$cnt</a>"
+        A "<a href=`"#cat$i`">$(HEnc (Get-MorpheusAnzeige 'kategorie' $cat))$cnt</a>"
     }
-    A '<div class="grp">Mehr</div><a href="#rohdaten">Rohdaten</a><a href="#anleitung">Anleitung</a></nav><main>'
+    A ('<div class="grp">' + (HEnc (T 'bericht.html.navMehr')) + '</div><a href="#rohdaten">' + (HEnc (T 'bericht.html.navRohdaten')) + '</a><a href="#anleitung">' + (HEnc (T 'bericht.html.navAnleitung')) + '</a></nav><main>')
 
     # Nächste Schritte
-    A '<h2 id="schritte">Die nächsten Schritte</h2>'
+    A ('<h2 id="schritte">' + (HEnc (T 'bericht.html.schritte')) + '</h2>')
     if ($todo) {
         A '<div class="card"><ol class="steps">'
         foreach ($f in ($todo | Select-Object -First 3)) {
-            A "<li><span class=`"badge b-$($f.Status)`">$($statusName[$f.Status])</span> <a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a><div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
+            A "<li><span class=`"badge b-$($f.Status)`">$(HEnc $statusName[$f.Status])</span> <a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc (Get-PruefName $f))</a><div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
         }
         A '</ol>'
-        # Typografische Anführungszeichen nur in einfach gequoteten Strings (in "…" beenden sie in PS 5.1 den String)
-        if ($todo.Count -gt 3) { A ('<p class="muted">Insgesamt {0} Punkte mit Handlungsbedarf; alle zeigt der Filter „Probleme“.</p>' -f $todo.Count) }
+        if ($todo.Count -gt 3) { A ('<p class="muted">' + (HEnc (T 'bericht.html.insgesamtPunkte' $todo.Count)) + '</p>') }
         A '</div>'
     }
-    else { A '<div class="card">Kein Handlungsbedarf. 🎉</div>' }
+    else { A ('<div class="card">' + (HEnc (T 'bericht.html.keinHandlungsbedarf')) + '</div>') }
     if ($tips) {
-        A '<div class="card"><h3 style="margin-bottom:6px">Lohnende Tipps</h3><p class="muted" style="margin:0 0 4px">Optional, sortiert nach Nutzen im Verhältnis zu Aufwand und Risiko. Die Anleitung steht jeweils unter „So geht''s“.</p><ol class="steps">'
+        A ('<div class="card"><h3 style="margin-bottom:6px">' + (HEnc (T 'bericht.html.lohnendeTipps')) + '</h3><p class="muted" style="margin:0 0 4px">' + (HEnc (T 'bericht.html.tippsHinweis')) + '</p><ol class="steps">')
         foreach ($f in ($tips | Select-Object -First 5)) {
-            A "<li><a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a>$(Get-Levels $f)<div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
+            A "<li><a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc (Get-PruefName $f))</a>$(Get-Levels $f)<div class=`"rec`">$(HEnc $f.Recommendation)</div></li>"
         }
         A '</ol>'
-        if ($tips.Count -gt 5) { A ('<p class="muted">Insgesamt {0} Tipps; alle zeigt der Filter „Tipps“.</p>' -f $tips.Count) }
+        if ($tips.Count -gt 5) { A ('<p class="muted">' + (HEnc (T 'bericht.html.insgesamtTipps' $tips.Count)) + '</p>') }
         A '</div>'
     }
 
     # Checkliste (wird im Browser aus den gespeicherten Markierungen aufgebaut)
-    A '<h2 id="checkliste">Meine Checkliste</h2><div class="card"><div id="checklist-body"><p class="muted">Lädt …</p></div>'
-    A '<p class="muted" style="margin-bottom:0">Markierungen speichert dein Browser für diesen PC. Öffnest du den nächsten Bericht im selben Browser, siehst du hier, was wirklich behoben ist. <button type="button" class="copy" id="checklist-reset">Markierungen löschen</button></p></div>'
+    A ('<h2 id="checkliste">' + (HEnc (T 'bericht.html.navCheckliste')) + '</h2><div class="card"><div id="checklist-body"><p class="muted">' + (HEnc (T 'bericht.html.laedt')) + '</p></div>')
+    A ('<p class="muted" style="margin-bottom:0">' + (HEnc (T 'bericht.html.checklisteHinweis')) + ' <button type="button" class="copy" id="checklist-reset">' + (HEnc (T 'bericht.html.markierungenLoeschen')) + '</button></p></div>')
 
     # Gaming-Check: die spielerelevanten Prüfungen auf einen Blick
     if ($gamingRows) {
-        A '<h2 id="gaming">Gaming-Check</h2><div class="card"><div class="gaming">'
+        A ('<h2 id="gaming">' + (HEnc (T 'bericht.html.navGaming')) + '</h2><div class="card"><div class="gaming">')
         foreach ($f in $gamingRows) {
             $col = @{ CRIT = 'var(--red)'; WARN = 'var(--orange)'; TIPP = 'var(--magenta)'; ACK = 'var(--violet)'; INFO = 'var(--blue)'; OK = 'var(--green)'; SKIP = 'var(--b01)' }[$f.Status]
-            A "<div class=`"g-item`" style=`"border-left-color:$col`"><span class=`"badge b-$($f.Status)`">$($statusName[$f.Status])</span> <a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc $f.Check)</a><div class=`"v`">$(HEnc $f.Value)</div></div>"
+            A "<div class=`"g-item`" style=`"border-left-color:$col`"><span class=`"badge b-$($f.Status)`">$(HEnc $statusName[$f.Status])</span> <a href=`"#$($ids["$($f.Category)|$($f.Check)"])`">$(HEnc (Get-PruefName $f))</a><div class=`"v`">$(HEnc $f.Value)</div></div>"
         }
         A '</div></div>'
     }
 
     # Verlauf über die bisherigen Läufe
     if ($charts) {
-        A "<h2 id=`"verlauf`">Verlauf</h2><div class=`"card`"><p class=`"muted`" style=`"margin-top:0`">Die letzten $($history.Count) Läufe. Punkte mit der Maus berühren für Datum und Wert.</p><div class=`"charts`">$charts</div></div>"
+        A "<h2 id=`"verlauf`">$(HEnc (T 'bericht.html.navVerlauf'))</h2><div class=`"card`"><p class=`"muted`" style=`"margin-top:0`">$(HEnc (T 'bericht.html.verlaufHinweis' $history.Count))</p><div class=`"charts`">$charts</div></div>"
     }
 
     # Änderungen seit dem letzten Lauf
     if ($changes) {
-        A '<h2 id="aenderungen">Änderungen seit dem letzten Lauf</h2><div class="card">'
-        $adminNote = if ($changes.AdminVorher -ne [bool]$script:IsAdmin) { " <b>Achtung:</b> Der vorige Lauf hatte $(if ($changes.AdminVorher) { '' } else { 'keine ' })Adminrechte, ein Teil der Unterschiede kann daher stammen." } else { '' }
+        A ('<h2 id="aenderungen">' + (HEnc (T 'bericht.html.aenderungenTitel')) + '</h2><div class="card">')
+        $adminNote = if ($changes.AdminVorher -ne [bool]$script:IsAdmin) { ' <b>' + (HEnc (T 'bericht.achtung')) + '</b> ' + (HEnc $(if ($changes.AdminVorher) { T 'bericht.achtungMitAdmin' } else { T 'bericht.achtungOhneAdmin' })) } else { '' }
         $prevDate = try { ([datetime]::Parse($changes.Erstellt, [Globalization.CultureInfo]::InvariantCulture)).ToString('dd.MM.yyyy HH:mm') } catch { $changes.Erstellt }
-        A "<p class=`"muted`">Verglichen mit dem Bericht vom $(HEnc $prevDate).$adminNote</p>"
+        A "<p class=`"muted`">$(HEnc (T 'bericht.html.verglichenMit' $prevDate))$adminNote</p>"
         if ($changes.Status.Count) {
-            A '<h3>Geänderte Prüfergebnisse</h3>'
-            A (Get-Table $changes.Status)
+            A ('<h3>' + (HEnc (T 'bericht.html.geaenderteErgebnisse')) + '</h3>')
+            A (Get-Table $changes.Status 300 $script:ChangesSpalten)
         }
         foreach ($t in $changes.Bestand.Keys) {
-            A "<h3>$(HEnc $t)</h3><ul class=`"chg`">"
+            A "<h3>$(HEnc (Get-MorpheusAnzeige 'tabelle' $t))</h3><ul class=`"chg`">"
             foreach ($x in @($changes.Bestand[$t].Neu)) { A "<li class=`"add`">➕ $(HEnc $x)</li>" }
             foreach ($x in @($changes.Bestand[$t].Entfernt)) { A "<li class=`"rem`">➖ $(HEnc $x)</li>" }
             A '</ul>'
         }
-        if (-not $changes.Status.Count -and -not $changes.Bestand.Count) { A '<p>Keine Änderungen.</p>' }
+        if (-not $changes.Status.Count -and -not $changes.Bestand.Count) { A ('<p>' + (HEnc (T 'bericht.html.keineAenderungen')) + '</p>') }
         A '</div>'
     }
 
     # Akzeptierte Abweichungen
     $acc = @($findings | Where-Object Status -EQ 'ACK')
     if ($acc) {
-        A '<h2 id="akzeptiert">Akzeptierte Abweichungen</h2>'
+        A ('<h2 id="akzeptiert">' + (HEnc (T 'bericht.html.akzeptierteTitel')) + '</h2>')
         foreach ($f in $acc) { A (Get-Row $f $ids["$($f.Category)|$($f.Check)"] -Summary) }
     }
 
     # Update-Dialog
     if ($null -ne $updateResults) {
-        A '<h2 id="updates">Updates nach dem Lauf</h2>'
-        if (@($updateResults).Count) { A (Get-Table $updateResults) } else { A '<div class="card">Keine Updates ausgewählt.</div>' }
+        A ('<h2 id="updates">' + (HEnc (T 'bericht.html.navUpdates')) + '</h2>')
+        if (@($updateResults).Count) { A (Get-Table $updateResults 300 $script:UpdateSpalten) } else { A ('<div class="card">' + (HEnc (T 'bericht.html.keineUpdates')) + '</div>') }
     }
 
     # Alle Prüfungen nach Bereich und Kategorie
-    A '<h2 id="pruefungen">Alle Prüfungen</h2><p id="empty" class="card hide">Keine Prüfung passt zu Filter und Suche.</p>'
+    A ('<h2 id="pruefungen">' + (HEnc (T 'bericht.html.allePruefungen')) + '</h2><p id="empty" class="card hide">' + (HEnc (T 'bericht.html.keinTreffer')) + '</p>')
     $lastArea = ''
     for ($i = 0; $i -lt $cats.Count; $i++) {
         $area, $cat = $cats[$i] -split '\|', 2
-        if ($area -ne $lastArea) { A "<h3 style=`"margin:18px 0 8px`">$(HEnc $area)</h3>"; $lastArea = $area }
+        if ($area -ne $lastArea) { A "<h3 style=`"margin:18px 0 8px`">$(HEnc (Get-MorpheusAnzeige 'bereich' $area))</h3>"; $lastArea = $area }
         $list = @($findings | Where-Object { $_.Area -eq $area -and $_.Category -eq $cat })
-        $mini = foreach ($s in $order) { $n = @($list | Where-Object Status -EQ $s).Count; if ($n -and $s -ne 'OK') { "<span class=`"badge b-$s`">$n $($statusName[$s])</span>" } }
+        $mini = foreach ($s in $order) { $n = @($list | Where-Object Status -EQ $s).Count; if ($n -and $s -ne 'OK') { "<span class=`"badge b-$s`">$n $(HEnc $statusName[$s])</span>" } }
         $okN = @($list | Where-Object Status -EQ 'OK').Count
-        if ($okN) { $mini = @($mini) + "<span class=`"badge b-OK`">$okN OK</span>" }
+        if ($okN) { $mini = @($mini) + "<span class=`"badge b-OK`">$okN $(HEnc $statusName.OK)</span>" }
         $catTip = if ($help -and $help.Kategorien[$cat]) { Get-InfoButton (HEnc $help.Kategorien[$cat]) } else { '' }
         $open = if (@($list | Where-Object { $_.Status -in 'CRIT', 'WARN', 'TIPP' }).Count) { ' open' } else { '' }
-        A "<details class=`"cat`" id=`"cat$i`"$open><summary>$(HEnc $cat)$catTip<span class=`"mini`">$($mini -join '')</span></summary>"
+        A "<details class=`"cat`" id=`"cat$i`"$open><summary>$(HEnc (Get-MorpheusAnzeige 'kategorie' $cat))$catTip<span class=`"mini`">$($mini -join '')</span></summary>"
         foreach ($f in $list) { A (Get-Row $f $ids["$($f.Category)|$($f.Check)"]) }
         A '</details>'
     }
 
     # Rohdaten
-    A '<h2 id="rohdaten">Rohdaten</h2><p class="muted">Die Detailtabellen hinter den Prüfungen. Zum Aufklappen anklicken.</p>'
+    A ('<h2 id="rohdaten">' + (HEnc (T 'bericht.html.navRohdaten')) + '</h2><p class="muted">' + (HEnc (T 'bericht.html.rohdatenHinweis')) + '</p>')
     foreach ($title in $script:Tables.Keys) {
         $rowsT = @($script:Tables[$title])
-        A "<details class=`"raw`"><summary>$(HEnc $title) <span class=`"muted`">($($rowsT.Count))</span></summary>$(Get-Table $rowsT)</details>"
+        A "<details class=`"raw`"><summary>$(HEnc (Get-MorpheusAnzeige 'tabelle' $title)) <span class=`"muted`">($($rowsT.Count))</span></summary>$(Get-Table $rowsT)</details>"
     }
 
-    # Anleitung
-    A '<h2 id="anleitung">So liest du den Bericht</h2><div class="card guide">'
-    A '<p>pc-check prüft Sicherheit und Leistung deines PCs und bewertet jeden Punkt mit einem Status. Die Prüfung ändert nichts am System.</p><ul>'
+    # Anleitung (die Absätze mit Auszeichnung stehen als fertiges HTML in der Sprachdatei, feste Programmtexte ohne Werte aus dem Scan)
+    A ('<h2 id="anleitung">' + (HEnc (T 'bericht.html.anleitungTitel')) + '</h2><div class="card guide">')
+    A ('<p>' + (HEnc (T 'bericht.html.guideEinleitung')) + '</p><ul>')
     foreach ($s in $order) {
         $txt = if ($help -and $help.Status[$s]) { $help.Status[$s] } else { $statusName[$s] }
-        A "<li><span class=`"badge b-$s`">$($statusName[$s])</span>$(HEnc $txt)</li>"
+        A "<li><span class=`"badge b-$s`">$(HEnc $statusName[$s])</span>$(HEnc $txt)</li>"
     }
-    A '</ul><h3>So gehst du vor</h3><ol>'
-    A '<li>Oben zeigt die <b>Ampel</b> den Gesamtzustand, darunter stehen <b>die nächsten Schritte</b>, also die wichtigsten Punkte zuerst, und die <b>lohnendsten Tipps</b>.</li>'
-    A '<li>Jeder Tipp trägt drei Kennzeichen: <b>Nutzen</b> (was es bringt), <b>Aufwand</b> (wie lange es dauert) und <b>Risiko</b> (was schiefgehen kann). Unter <b>„So geht''s“</b> steht der Weg durch die Einstellungen, oft mit einem Befehl zum Kopieren.</li>'
-    A '<li>Mit <b>„✔ erledigt“</b> und <b>„⏱ später“</b> baust du dir eine <b>Checkliste</b>. Öffnest du den nächsten Bericht im selben Browser, zeigt sie, was wirklich behoben ist.</li>'
-    A "<li>Die Empfehlungen richten sich nach dem <b>Profil</b> (hier: $(HEnc $script:Profile)). Passt es nicht, das Script mit <code>-Profil Gaming</code>, <code>Office</code> oder <code>Laptop</code> starten.</li>"
-    A '<li>Klicke auf das <b>i-Symbol</b> neben einer Prüfung: Die Sprechblase erklärt, was geprüft wird, warum es wichtig ist und <b>wann eine Warnung harmlos ist</b>.</li>'
-    A '<li>Ist eine Warnung bei dir bewusst so gewollt (z. B. ein Fernwartungsprogramm, das du nutzt), trag sie in <code>accepted.psd1</code> ein (Vorlage: <code>accepted.example.psd1</code>). Dann erscheint sie künftig als „Akzeptiert“.</li>'
-    A '<li>Mit <b>Filter</b> und <b>Suche</b> oben blendest du alles aus, was gerade nicht interessiert. Ein Klick auf eine Zahl bei der Ampel filtert nach diesem Status.</li>'
-    A '<li>Unsicher? Mit <b>„Für KI-Assistent kopieren“</b> kommen die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage, zum Einfügen in ChatGPT oder Claude. Lies den Text vor dem Einfügen kurz durch.</li>'
-    A '<li>Vor Änderungen an BIOS, Treibern, BitLocker oder Sicherheitsfunktionen im Zweifel lieber jemanden fragen, der sich auskennt.</li>'
-    A '</ol><p class="muted">Der Bericht enthält viele Details deines PCs. Gib ihn nicht unbedacht weiter.</p></div>'
+    A ('</ul><h3>' + (HEnc (T 'bericht.html.guideVorgehen')) + '</h3><ol>')
+    A ('<li>' + (T 'bericht.html.guide1Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide2Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide3Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide4Html' (HEnc $profilAnzeige)) + '</li>')
+    A ('<li>' + (T 'bericht.html.guide5Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide6Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide7Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide8Html') + '</li>')
+    A ('<li>' + (T 'bericht.html.guide9Html') + '</li>')
+    A ('</ol><p class="muted">' + (HEnc (T 'bericht.html.guideSchluss')) + '</p></div>')
 
-    A "</main></div><footer>$ProductName – $ProductTagline $ScriptVersion · erstellt $(Get-Date -Format 'dd.MM.yyyy HH:mm') · Markdown- und JSON-Fassung liegen im selben Ordner.</footer>"
+    A ('</main></div><footer>' + (HEnc (T 'bericht.html.fuss' $ProductName $ProductTagline $ScriptVersion (Get-Date -Format 'dd.MM.yyyy HH:mm'))) + '</footer>')
     A "<textarea id=`"ki-text`" readonly aria-hidden=`"true`">$(HEnc $ki.ToString())</textarea>"
     A "<script>$js</script></body></html>"
 
@@ -3848,11 +3969,11 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
 $htmlPath = [IO.Path]::ChangeExtension($mdPath, '.html')
 try {
     Write-HtmlReport -Path $htmlPath
-    Write-Host "HTML:    $htmlPath" -ForegroundColor Green
+    Write-Host (T 'bericht.konsole.html' $htmlPath) -ForegroundColor Green
     # Über den Explorer öffnen: so startet der Browser ohne Adminrechte, auch wenn pc-check als Admin läuft
     if (-not $NoOpen -and $interactive) { Start-Process -FilePath (Join-Path ([Environment]::GetFolderPath('Windows')) 'explorer.exe') -ArgumentList "`"$htmlPath`"" }
 }
-catch { Write-Warning "HTML-Bericht konnte nicht erstellt werden: $($_.Exception.Message)" }
+catch { Write-Warning (T 'bericht.htmlNichtErstellt' $_.Exception.Message) }
 
 #endregion
 
@@ -3861,14 +3982,14 @@ catch { Write-Warning "HTML-Bericht konnte nicht erstellt werden: $($_.Exception
 $candidates = @($script:WingetUpdates | Where-Object Kategorie -EQ 'Programm')
 if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
     Write-Host ''
-    Write-Host 'Für diese Programme gibt es Updates:' -ForegroundColor Yellow
+    Write-Host (T 'bericht.update.vorhanden') -ForegroundColor Yellow
     for ($i = 0; $i -lt $candidates.Count; $i++) {
         Write-Host ('  [{0}] {1}  {2} -> {3}' -f ($i + 1), $candidates[$i].Name, $candidates[$i].Installiert, $candidates[$i].Verfuegbar)
     }
     $skipped = @($script:WingetUpdates | Where-Object Kategorie -NE 'Programm')
-    if ($skipped) { Write-Host ("  Nicht angeboten: " + (($skipped | ForEach-Object { "$($_.Name) ($($_.Kategorie))" }) -join ', ')) -ForegroundColor DarkGray }
-    Write-Host '  winget lädt aus den Herstellerquellen und akzeptiert dabei die Lizenzbedingungen der Pakete.' -ForegroundColor DarkGray
-    $answer = Read-Host 'Welche aktualisieren? Nummern (z. B. 1,3), a = alle, Enter = keine'
+    if ($skipped) { Write-Host (T 'bericht.update.nichtAngeboten' (($skipped | ForEach-Object { "$($_.Name) ($($_.Kategorie))" }) -join ', ')) -ForegroundColor DarkGray }
+    Write-Host (T 'bericht.update.lizenz') -ForegroundColor DarkGray
+    $answer = Read-Host (T 'bericht.update.frage')
 
     $selected = @()
     if ($answer -match '^\s*a\s*$') { $selected = $candidates }
@@ -3877,7 +3998,7 @@ if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
         $picked = @()
         foreach ($tok in ($answer -split '[,;\s]+' | Where-Object { $_ })) {
             if ($tok -match '^\d+$' -and [int]$tok -ge 1 -and [int]$tok -le $candidates.Count) { if ([int]$tok -notin $picked) { $picked += [int]$tok } }
-            else { Write-Host "  Ignoriert: '$tok'" -ForegroundColor DarkGray }
+            else { Write-Host (T 'bericht.update.ignoriert' $tok) -ForegroundColor DarkGray }
         }
         $selected = @($picked | ForEach-Object { $candidates[$_ - 1] })
     }
@@ -3888,56 +4009,58 @@ if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
         $wg = $null
         if ($script:PfadLib) { $wg = (Get-MorpheusWinget).Pfad }
         if (-not $wg) {
-            Write-Host '  winget wurde nicht im signierten App-Installationsprogramm gefunden; es wird nichts aktualisiert.' -ForegroundColor Yellow
-            foreach ($u in $selected) { $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = 'nicht aktualisiert (winget nicht gefunden)' } }
+            Write-Host (T 'bericht.update.wingetFehlt') -ForegroundColor Yellow
+            foreach ($u in $selected) { $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = (T 'bericht.update.ergebnisWingetFehlt') } }
             $selected = @()
         }
         # Von winget gekürzte oder ungültige Ids nicht übergeben (2.4)
         elseif ($script:WingetLib) { $selected = @($selected | Where-Object { Test-MorpheusWingetId -Id $_.Id }) }
         # winget läuft ohne Adminrechte (2.5, #67, G3); ohne WingetBenutzer.ps1 wird nichts aktualisiert (kein Rückfall)
         if ($selected -and -not (Get-Command -Name Invoke-MorpheusWingetBenutzer -CommandType Function -ErrorAction SilentlyContinue)) {
-            Write-Host '  gui\lib\WingetBenutzer.ps1 fehlt; winget wird nicht mit Adminrechten gestartet, es wird nichts aktualisiert.' -ForegroundColor Yellow
-            foreach ($u in $selected) { $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = 'nicht aktualisiert (WingetBenutzer.ps1 fehlt)' } }
+            Write-Host (T 'bericht.update.benutzerFehlt') -ForegroundColor Yellow
+            foreach ($u in $selected) { $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = (T 'bericht.update.ergebnisBenutzerFehlt') } }
             $selected = @()
         }
         $wgGelaufen = [bool]$selected
         if ($selected) {
-            Write-Host '  winget läuft ohne Adminrechte. Braucht ein Programm Adminrechte, fragt Windows selbst nach: dort den Herausgeber prüfen.' -ForegroundColor DarkGray
+            Write-Host (T 'bericht.update.ohneAdmin') -ForegroundColor DarkGray
         }
         foreach ($u in $selected) {
+            $erfolg = $false
             while ($true) {
-                Write-Host "`n=== Aktualisiere $($u.Name) ($($u.Installiert) -> $($u.Verfuegbar))" -ForegroundColor Cyan
+                Write-Host ("`n" + (T 'bericht.update.aktualisiere' $u.Name $u.Installiert $u.Verfuegbar)) -ForegroundColor Cyan
                 $wr = Invoke-MorpheusWingetBenutzer -WingetPfad $wg -Argumente (Get-MorpheusWingetUpgradeArgumente -Id $u.Id) -Zeile { param($z) Write-Host ('  ' + $z) }
-                if ($wr.zeitueberschritten) { $result = 'fehlgeschlagen (Zeitlimit überschritten)'; break }
-                if ($null -eq $wr.exitCode) { $result = 'fehlgeschlagen ({0})' -f $wr.fehler; break }
+                if ($wr.zeitueberschritten) { $result = T 'bericht.update.zeitlimit'; break }
+                if ($null -eq $wr.exitCode) { $result = T 'bericht.update.fehlgeschlagenMit' $wr.fehler; break }
                 $code = $wr.exitCode
-                if ($code -eq 0) { $result = 'aktualisiert'; break }
+                if ($code -eq 0) { $result = T 'bericht.update.aktualisiert'; $erfolg = $true; break }
                 # 0x8A150006: Installer abgebrochen, meist weil das Programm noch läuft
                 if ((Get-MorpheusWingetErgebnis -ExitCode $code).status -eq 'laeuft-noch') {
-                    Write-Host '  Der Installer hat abgebrochen, meist weil das Programm noch läuft (bei Git: Git-Bash-Fenster schließen).' -ForegroundColor Yellow
-                    if ((Read-Host '  Programm schließen und erneut versuchen? (j/n)') -match '^\s*j') { continue }
-                    $result = 'abgebrochen (Programm lief noch)'
+                    Write-Host (T 'bericht.update.abbruchLaeuft') -ForegroundColor Yellow
+                    # j (Deutsch) bzw. y (Englisch) bestätigt
+                    if ((Read-Host (T 'bericht.update.erneutFrage')) -match '^\s*[jy]') { continue }
+                    $result = T 'bericht.update.abgebrochen'
                 }
-                else { $result = 'fehlgeschlagen (Code {0})' -f $code }
+                else { $result = T 'bericht.update.fehlgeschlagenCode' $code }
                 break
             }
-            Write-Host "  -> $result" -ForegroundColor $(if ($result -eq 'aktualisiert') { 'Green' } else { 'Red' })
+            Write-Host "  -> $result" -ForegroundColor $(if ($erfolg) { 'Green' } else { 'Red' })
             $results += [pscustomobject][ordered]@{ Programm = $u.Name; Von = $u.Installiert; Auf = $u.Verfuegbar; Ergebnis = $result }
         }
     }
-    else { Write-Host '  Keine Updates ausgewählt.' }
+    else { Write-Host (T 'bericht.update.keine') }
     $updateResults = @($results)
 
     # Ergebnis an den Bericht anhängen
-    $lines = @('', "## Updates nach dem Lauf ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))", '')
+    $lines = @('', (T 'bericht.md.updatesTitel' (Get-Date -Format 'yyyy-MM-dd HH:mm')), '')
     if ($results) {
-        $lines += (ConvertTo-MdTable $results)
-        if ($wgGelaufen) { $lines += ''; $lines += 'winget lief ohne Adminrechte (Benutzerkontext).' }
+        $lines += (ConvertTo-MdTable $results 150 $script:UpdateSpalten)
+        if ($wgGelaufen) { $lines += ''; $lines += (T 'bericht.md.wingetOhneAdmin') }
     }
-    else { $lines += '_Keine Updates ausgewählt._' }
+    else { $lines += (T 'bericht.md.keineUpdates') }
     [IO.File]::AppendAllText($mdPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
-    try { Write-HtmlReport -Path $htmlPath } catch { Write-Warning "HTML-Bericht konnte nicht aktualisiert werden: $($_.Exception.Message)" }
-    Write-Host "`nUpdate-Ergebnis an den Bericht angehängt (im Browser mit F5 neu laden)." -ForegroundColor Green
+    try { Write-HtmlReport -Path $htmlPath } catch { Write-Warning (T 'bericht.htmlNichtAktualisiert' $_.Exception.Message) }
+    Write-Host ("`n" + (T 'bericht.update.angehaengt')) -ForegroundColor Green
 }
 
 #endregion

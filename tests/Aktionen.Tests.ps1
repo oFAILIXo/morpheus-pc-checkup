@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für pc-check.aktionen.ps1 (Aktionskatalog, T3).
 # Rein lesend: Es werden nur Lesen und Voraussetzung am echten System ausgeführt, niemals Ausfuehren oder Rueckgaengig.
 # Ausführen: Invoke-Pester tests\Aktionen.Tests.ps1
@@ -56,6 +58,7 @@ Describe 'Aktionskatalog: Aufbau' {
         It "$id hat genau die erlaubten Schlüssel" {
             $erlaubt = @($script:Pflicht)
             if ($id -eq 'system.wiederherstellung') { $erlaubt += 'OhneWiederherstellungspunkt' }
+            if ($a.Varianten) { $erlaubt += 'VariantenNamen' }
             foreach ($k in $script:Pflicht) { $a.ContainsKey($k) | Should Be $true }
             foreach ($k in $a.Keys) { ($erlaubt -contains $k) | Should Be $true }
         }

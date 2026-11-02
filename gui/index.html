@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Morpheus – PC Check-up</title>
+<title data-t="titel">Morpheus – PC Check-up</title>
 <link rel="icon" href="/favicon.ico">
 <link rel="stylesheet" href="app.css">
 </head>
@@ -26,25 +26,26 @@
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></symbol>
   <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></symbol>
   <symbol id="i-tool"viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/></symbol>
 </svg>
 <div class="app" id="app">
   <aside class="side" id="side">
-    <div class="logo"><img src="/assets/morpheus-logo.png" alt="Morpheus – PC Check-up"></div>
-    <nav id="nav" aria-label="Hauptnavigation"></nav>
+    <div class="logo"><img src="/assets/morpheus-logo.png" alt="Morpheus – PC Check-up" data-t-alt="kopf.logoAlt"></div>
+    <nav id="nav" aria-label="Hauptnavigation" data-t-aria-label="menu.aria.nav"></nav>
     <div class="side-foot" id="side-foot"></div>
   </aside>
   <div class="col">
     <header class="top" id="top">
-      <div class="crumb" id="crumb">Kein Bericht geladen</div>
-      <label class="search"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="gsearch" type="search" placeholder="Prüfungen durchsuchen …" aria-label="Prüfungen durchsuchen" autocomplete="off"><span class="kbd" aria-hidden="true">/</span></label>
-      <button type="button" class="btn" id="ki-btn" title="Kopiert die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span>Für KI kopieren</span></button>
-      <button type="button" class="btn ghost" id="st-toggle" aria-pressed="true" title="Statusleiste ein- oder ausblenden"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg><span>Statusleiste</span></button>
-      <a class="btn brand" href="#/scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span>Neuer Scan</span></a>
+      <div class="crumb" id="crumb" data-t="kopf.keinBericht">Kein Bericht geladen</div>
+      <label class="search"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="gsearch" type="search" placeholder="Prüfungen durchsuchen …" data-t-placeholder="kopf.suchePlatzhalter" aria-label="Prüfungen durchsuchen" data-t-aria-label="kopf.sucheAria" autocomplete="off"><span class="kbd" aria-hidden="true">/</span></label>
+      <button type="button" class="btn" id="ki-btn" title="Kopiert die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage" data-t-title="kopf.kiTitel"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-t="kopf.kiText">Für KI kopieren</span></button>
+      <button type="button" class="btn ghost" id="st-toggle" aria-pressed="true" title="Statusleiste ein- oder ausblenden" data-t-title="kopf.statusTitel"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg><span data-t="kopf.statusText">Statusleiste</span></button>
+      <a class="btn brand" href="#/scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span data-t="kopf.scanText">Neuer Scan</span></a>
     </header>
-    <main id="view" tabindex="-1"><div class="loading">Lädt …</div></main>
+    <main id="view" tabindex="-1"><div class="loading" data-t="laedt">Lädt …</div></main>
   </div>
-  <aside class="status" id="status" aria-label="Statusleiste">
+  <aside class="status" id="status" aria-label="Statusleiste" data-t-aria-label="kopf.statusAria">
     <div id="st-live"></div>
     <div id="st-report"></div>
   </aside>

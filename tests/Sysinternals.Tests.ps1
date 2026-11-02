@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Sysinternals.ps1.
 # Lädt nichts herunter, nimmt keine EULA an und führt keine Sysinternals-Datei aus:
 # Download, Signatur, Wurzel, SicherPfad und Admin sind Attrappen; der Prozessstart wird nur mit cmd.exe getestet.

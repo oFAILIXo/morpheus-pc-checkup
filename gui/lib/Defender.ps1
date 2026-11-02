@@ -16,6 +16,8 @@
     - Beim Dot-Sourcen wird nichts ausgeführt außer der Initialisierung der Impl-Hashtable.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 # Standard-Implementierungen (Tests ersetzen die Einträge)
 if (-not $script:MorpheusDefenderImpl) {
     $script:MorpheusDefenderImpl = @{
@@ -27,10 +29,10 @@ if (-not $script:MorpheusDefenderImpl) {
             param($Seit)
             $namen = @{}
             foreach ($t in @(Get-MpThreat -ErrorAction SilentlyContinue)) { $namen[[string]$t.ThreatID] = $t.ThreatName }
-            $aktionen = @{ 1 = 'Bereinigt'; 2 = 'In Quarantäne'; 3 = 'Entfernt'; 4 = 'Blockiert'; 6 = 'Zugelassen'; 8 = 'Benutzerentscheidung'; 9 = 'Keine Aktion'; 10 = 'Blockiert' }
+            $aktionen = @{ 1 = (T 'server.defender.aktionBereinigt'); 2 = (T 'server.defender.aktionQuarantaene'); 3 = (T 'server.defender.aktionEntfernt'); 4 = (T 'server.defender.aktionBlockiert'); 6 = (T 'server.defender.aktionZugelassen'); 8 = (T 'server.defender.aktionBenutzer'); 9 = (T 'server.defender.aktionKeine'); 10 = (T 'server.defender.aktionBlockiert') }
             foreach ($d in @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $Seit })) {
                 $aid = [int]$d.CleaningActionID
-                $akt = if ($aktionen.ContainsKey($aid)) { $aktionen[$aid] } else { 'Unbekannt' }
+                $akt = if ($aktionen.ContainsKey($aid)) { $aktionen[$aid] } else { (T 'server.defender.aktionUnbekannt') }
                 [pscustomobject]@{
                     zeit    = $d.InitialDetectionTime
                     name    = $namen[[string]$d.ThreatID]
@@ -75,7 +77,7 @@ function Get-MorpheusDefenderStand {
     param()
     try {
         $s = @(& $script:MorpheusDefenderImpl.Status) | Select-Object -First 1
-        if ($null -eq $s) { throw 'Defender lieferte keinen Status.' }
+        if ($null -eq $s) { throw (T 'server.defender.keinStatus') }
         [ordered]@{
             modus                = MorpheusDefenderText $s.AMRunningMode
             signaturen           = MorpheusDefenderIso $s.AntivirusSignatureLastUpdated
@@ -100,44 +102,44 @@ function Invoke-MorpheusDefenderAktion {
         [string]$Pfad
     )
     if (($Art -cne 'signaturen') -and ($Art -cne 'schnellscan') -and ($Art -cne 'datei')) {
-        throw "Unbekannte Defender-Aufgabe '$Art'. Erlaubt sind 'signaturen', 'schnellscan' und 'datei'."
+        throw (T 'server.defender.unbekannteAufgabe' $Art)
     }
     if ($Art -ceq 'datei') {
-        if ([string]::IsNullOrWhiteSpace($Pfad)) { throw 'Für die Dateiprüfung fehlt der Pfad.' }
-        if (-not (Test-Path -LiteralPath $Pfad -PathType Leaf)) { throw ('Die Datei wurde nicht gefunden: ' + $Pfad) }
+        if ([string]::IsNullOrWhiteSpace($Pfad)) { throw (T 'server.defender.pfadFehlt') }
+        if (-not (Test-Path -LiteralPath $Pfad -PathType Leaf)) { throw (T 'server.defender.dateiNichtGefunden' $Pfad) }
     } elseif ($PSBoundParameters.ContainsKey('Pfad') -and (-not [string]::IsNullOrEmpty($Pfad))) {
-        throw "Ein Pfad ist nur bei der Aufgabe 'datei' erlaubt."
+        throw (T 'server.defender.pfadNurDatei')
     }
 
     $start = Get-Date
     $vorher = Get-MorpheusDefenderStand
     if ($vorher.Contains('fehler')) {
-        MorpheusDefenderLog ('Stand vorher nicht lesbar: ' + $vorher['fehler'])
+        MorpheusDefenderLog (T 'server.defender.standVorherNicht' $vorher['fehler'])
     } else {
-        MorpheusDefenderLog ('Stand vorher: Signaturen {0} (Version {1}), letzter Schnellscan {2}.' -f $vorher['signaturen'], $vorher['signaturVersion'], $vorher['schnellscan'])
+        MorpheusDefenderLog (T 'server.defender.standVorher' $vorher['signaturen'] $vorher['signaturVersion'] $vorher['schnellscan'])
     }
 
     try {
         if ($Art -ceq 'signaturen') {
-            MorpheusDefenderLog 'Signaturen werden aktualisiert …'
+            MorpheusDefenderLog (T 'server.defender.signaturenWerden')
             $null = & $script:MorpheusDefenderImpl.Signaturen
         } elseif ($Art -ceq 'datei') {
-            MorpheusDefenderLog ('Defender prüft die Datei ' + $Pfad + ' …')
+            MorpheusDefenderLog (T 'server.defender.pruefeDatei' $Pfad)
             $null = & $script:MorpheusDefenderImpl.Datei $Pfad
         } else {
-            MorpheusDefenderLog 'Schnellscan läuft, das dauert meist einige Minuten …'
+            MorpheusDefenderLog (T 'server.defender.schnellscanLaeuft')
             $null = & $script:MorpheusDefenderImpl.Schnellscan
         }
     } catch {
-        $was = if ($Art -ceq 'signaturen') { 'Die Signaturen konnten nicht aktualisiert werden' } elseif ($Art -ceq 'datei') { 'Die Dateiprüfung konnte nicht abgeschlossen werden' } else { 'Der Schnellscan konnte nicht abgeschlossen werden' }
+        $was = if ($Art -ceq 'signaturen') { (T 'server.defender.signaturenFehler') } elseif ($Art -ceq 'datei') { (T 'server.defender.dateiFehler') } else { (T 'server.defender.schnellscanFehler') }
         throw ('{0}: {1}' -f $was, $_.Exception.Message)
     }
 
     $nachher = Get-MorpheusDefenderStand
     if ($nachher.Contains('fehler')) {
-        MorpheusDefenderLog ('Stand nachher nicht lesbar: ' + $nachher['fehler'])
+        MorpheusDefenderLog (T 'server.defender.standNachherNicht' $nachher['fehler'])
     } else {
-        MorpheusDefenderLog ('Stand nachher: Signaturen {0} (Version {1}), letzter Schnellscan {2}.' -f $nachher['signaturen'], $nachher['signaturVersion'], $nachher['schnellscan'])
+        MorpheusDefenderLog (T 'server.defender.standNachher' $nachher['signaturen'] $nachher['signaturVersion'] $nachher['schnellscan'])
     }
 
     $funde = @()
@@ -167,23 +169,23 @@ function Invoke-MorpheusDefenderAktion {
             }
         }
     } catch {
-        MorpheusDefenderLog ('Funde konnten nicht gelesen werden: ' + $_.Exception.Message)
+        MorpheusDefenderLog (T 'server.defender.fundeNichtLesbar' $_.Exception.Message)
     }
-    MorpheusDefenderLog ('Funde: {0}.' -f @($funde).Count)
+    MorpheusDefenderLog (T 'server.defender.funde' (@($funde).Count))
 
     $dauer = [int][math]::Round(((Get-Date) - $start).TotalSeconds)
     if (@($funde).Count -gt 0) {
-        $meldung = 'Morpheus zeigt Funde nur an. Quarantäne und Entfernen: Windows-Sicherheit > Viren- & Bedrohungsschutz > Schutzverlauf.'
+        $meldung = (T 'server.defender.meldungFunde')
     } elseif ($Art -ceq 'datei') {
-        $meldung = 'Defender hat ' + (Split-Path -Leaf $Pfad) + ' geprüft und nichts gefunden. Steht die Datei unter einer Defender-Ausnahme, wird sie nicht geprüft.'
+        $meldung = (T 'server.defender.meldungDatei' (Split-Path -Leaf $Pfad))
     } elseif ($Art -ceq 'signaturen') {
         $vv = if ($vorher.Contains('signaturVersion')) { $vorher['signaturVersion'] } else { $null }
         $nv = if ($nachher.Contains('signaturVersion')) { $nachher['signaturVersion'] } else { $null }
-        if (($null -ne $vv) -and ($vv -eq $nv)) { $meldung = 'Die Signaturen waren schon aktuell.' }
-        elseif ($null -ne $nv) { $meldung = 'Die Signaturen wurden aktualisiert (Version ' + $nv + ').' }
-        else { $meldung = 'Die Aktualisierung ist abgeschlossen.' }
+        if (($null -ne $vv) -and ($vv -eq $nv)) { $meldung = (T 'server.defender.signaturenAktuell') }
+        elseif ($null -ne $nv) { $meldung = (T 'server.defender.signaturenAktualisiert' $nv) }
+        else { $meldung = (T 'server.defender.aktualisierungFertig') }
     } else {
-        $meldung = 'Der Schnellscan ist abgeschlossen, es wurden keine Funde gemeldet.'
+        $meldung = (T 'server.defender.schnellscanFertig')
     }
 
     $pfadAus = $null; if ($Art -ceq 'datei') { $pfadAus = $Pfad }
@@ -201,6 +203,6 @@ function Invoke-MorpheusDefenderAktion {
 function Start-MorpheusDefenderOffline {
     [CmdletBinding()]
     param()
-    MorpheusDefenderLog 'Microsoft Defender Offline-Scan wird gestartet, der PC startet neu …'
+    MorpheusDefenderLog (T 'server.defender.offlineStart')
     $null = & $script:MorpheusDefenderImpl.Offline
 }

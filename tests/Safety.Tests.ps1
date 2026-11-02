@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests für gui\lib\Safety.ps1. Ändert nichts am System: Katalog und
 # Wiederherstellungspunkte sind Fakes, alle Dateien liegen in $TestDrive.
 # Ausführen: Invoke-Pester tests\Safety.Tests.ps1

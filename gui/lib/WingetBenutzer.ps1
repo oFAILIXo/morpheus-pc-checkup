@@ -25,6 +25,8 @@
     Tests ersetzen Starten durch einen direkten Start ohne Aufgabenplanung.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 $script:WbAufgabePraefix = 'Morpheus-winget-'
 $script:WbExitMarke = 'MORPHEUS-EXIT:'
 
@@ -43,7 +45,7 @@ function MorpheusWingetBenutzerAufgabeStarten {
         } catch { }
     }
     $def = $svc.NewTask(0)
-    $def.RegistrationInfo.Description = 'Morpheus: winget-Update ohne Adminrechte. Wird nach dem Lauf automatisch gelöscht.'
+    $def.RegistrationInfo.Description = (T 'server.wb.aufgabenBeschreibung')
     $def.Principal.UserId = [string]$Benutzer.Name
     $def.Principal.LogonType = 3
     $def.Principal.RunLevel = 0
@@ -129,14 +131,14 @@ if (-not $script:MorpheusWingetBenutzerImpl) {
 function Test-MorpheusWingetBenutzerAufruf {
     [CmdletBinding()]
     param([AllowNull()][AllowEmptyString()][string]$Programm, [AllowNull()][AllowEmptyString()][string]$Argumente)
-    if ([string]::IsNullOrEmpty($Programm)) { return 'Es wurde kein Programm angegeben.' }
-    if ($Programm -notmatch '^[A-Za-z]:\\[^"%!^&|<>()\r\n]+\.exe\z') { return 'Der Programmpfad ist ungültig.' }
-    if ($Programm -match '\\\.\.?(\\|\z)') { return 'Der Programmpfad ist ungültig.' }
+    if ([string]::IsNullOrEmpty($Programm)) { return (T 'server.wb.keinProgramm') }
+    if ($Programm -notmatch '^[A-Za-z]:\\[^"%!^&|<>()\r\n]+\.exe\z') { return (T 'server.wb.pfadUngueltig') }
+    if ($Programm -match '\\\.\.?(\\|\z)') { return (T 'server.wb.pfadUngueltig') }
     # Der Dateiname steht ohne Anführungszeichen in der Befehlszeile (.\winget.exe)
-    if ([IO.Path]::GetFileName($Programm) -cnotmatch '^[A-Za-z0-9._\-]+\z') { return 'Der Programmname ist ungültig.' }
-    if (-not [IO.File]::Exists($Programm)) { return "Das Programm $Programm wurde nicht gefunden." }
+    if ([IO.Path]::GetFileName($Programm) -cnotmatch '^[A-Za-z0-9._\-]+\z') { return (T 'server.wb.nameUngueltig') }
+    if (-not [IO.File]::Exists($Programm)) { return (T 'server.wb.programmFehlt' $Programm) }
     if ($null -eq $Argumente) { $Argumente = '' }
-    if ($Argumente -cnotmatch '^[A-Za-z0-9 ._+\-]*\z') { return 'Die Argumente enthalten unzulässige Zeichen.' }
+    if ($Argumente -cnotmatch '^[A-Za-z0-9 ._+\-]*\z') { return (T 'server.wb.argumente') }
     $null
 }
 
@@ -147,7 +149,7 @@ function Get-MorpheusWingetBenutzerBefehl {
     param([Parameter(Mandatory)][string]$WingetPfad, [AllowEmptyString()][string]$Argumente = '', [Parameter(Mandatory)][string]$Pipe)
     $grund = Test-MorpheusWingetBenutzerAufruf -Programm $WingetPfad -Argumente $Argumente
     if ($grund) { throw $grund }
-    if ($Pipe -cnotmatch '^Morpheus-winget-[0-9a-f]{32}\z') { throw 'Ungültiger Pipe-Name.' }
+    if ($Pipe -cnotmatch '^Morpheus-winget-[0-9a-f]{32}\z') { throw (T 'server.wb.pipeUngueltig') }
     $sys = [Environment]::SystemDirectory
     $aufruf = '.\' + [IO.Path]::GetFileName($WingetPfad)
     if ($Argumente) { $aufruf += ' ' + $Argumente }
@@ -163,7 +165,7 @@ function Get-MorpheusWingetBenutzerBefehl {
 function New-MorpheusWingetBenutzerPipe {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Sid)
-    if ($Sid -cnotmatch '^S-1-[0-9]+(-[0-9]+)+\z') { throw 'Ungültige SID.' }
+    if ($Sid -cnotmatch '^S-1-[0-9]+(-[0-9]+)+\z') { throw (T 'server.wb.sidUngueltig') }
     $ps = New-Object IO.Pipes.PipeSecurity
     $erlaubt = [Security.AccessControl.AccessControlType]::Allow
     foreach ($s in 'S-1-5-32-544', 'S-1-5-18') {
@@ -218,7 +220,7 @@ function Invoke-MorpheusWingetBenutzer {
         $befehl = Get-MorpheusWingetBenutzerBefehl -WingetPfad $WingetPfad -Argumente $Argumente -Pipe $pipe
         try { $handle = & $script:MorpheusWingetBenutzerImpl.Starten $befehl.Programm $befehl.Argumente $benutzer $ZeitlimitSek $befehl.Ordner }
         catch {
-            $res.fehler = 'winget ließ sich nicht ohne Adminrechte starten (Aufgabenplanung): ' + $_.Exception.Message
+            $res.fehler = (T 'server.wb.startFehler' $_.Exception.Message)
         }
 
         # Auf die Verbindung warten. Endet die Aufgabe vorher, ist cmd gescheitert (z. B. Pipe belegt).
@@ -226,9 +228,9 @@ function Invoke-MorpheusWingetBenutzer {
         if ($null -ne $handle) { $ar = $server.BeginWaitForConnection($null, $null) }
         while ($null -ne $handle) {
             if ($ar.AsyncWaitHandle.WaitOne(250)) { $server.EndWaitForConnection($ar); $verbunden = $true; break }
-            if ($sw.Elapsed.TotalSeconds -ge $VerbindungSek) { $res.fehler = 'winget hat sich im Benutzerkontext nicht gemeldet.'; break }
+            if ($sw.Elapsed.TotalSeconds -ge $VerbindungSek) { $res.fehler = (T 'server.wb.nichtGemeldet'); break }
             if (($sw.Elapsed.TotalSeconds -gt 5) -and (-not (& $script:MorpheusWingetBenutzerImpl.Laeuft $handle))) {
-                $res.fehler = 'Die Aufgabe ohne Adminrechte endete, bevor winget Ausgaben geschickt hat.'
+                $res.fehler = (T 'server.wb.aufgabeEndete')
                 break
             }
         }
@@ -273,11 +275,11 @@ function Invoke-MorpheusWingetBenutzer {
             # Werte über 32 Bit (z. B. 0x8A150006 als vorzeichenlose Zahl) bleiben erhalten; Get-MorpheusWingetErgebnis maskiert
             $res.exitCode = $marke
         } elseif ((-not $res.fehler) -and (-not $res.zeitueberschritten)) {
-            $res.fehler = 'winget hat kein Ergebnis gemeldet.'
+            $res.fehler = (T 'server.wb.keinErgebnis')
         }
     }
     catch {
-        if (-not $res.fehler) { $res.fehler = 'winget ohne Adminrechte: ' + $_.Exception.Message }
+        if (-not $res.fehler) { $res.fehler = (T 'server.wb.ohneAdmin' $_.Exception.Message) }
     }
     finally {
         if ($null -ne $handle) {

@@ -41,6 +41,9 @@ foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if 
 
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
+# Texte (2.6): Sprache aus der gespeicherten Wahl bzw. der Windows-Sprache (Lesen kann ohne Rechte scheitern)
+. (Join-Path $Root 'gui\lib\Sprache.ps1')
+$env:MORPHEUS_SPRACHE = Get-MorpheusSprache -DataRoot (Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Morpheus')
 # Programme nur mit vollem Pfad (Systemordner über die Windows-API, nicht über Umgebungsvariablen)
 $psExe = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\powershell.exe'
 
@@ -57,7 +60,7 @@ if ((-not $isAdmin) -and (-not $NoElevate)) {
         $inst = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Morpheus'
         if ((-not (Test-MorpheusCodeSecure -Root $Root).Sicher) -and (Test-MorpheusCodeSecure -Root $inst).Sicher -and (Test-MorpheusInstallCurrent -Source $Root -Target $inst)) {
             $target = Join-Path $inst 'pc-check-gui.ps1'
-            Write-Host "Starte die installierte Fassung aus $inst." -ForegroundColor Green
+            Write-Host (T 'server.gui.installierteFassung' $inst) -ForegroundColor Green
         }
     }
     catch { $target = $PSCommandPath }
@@ -68,7 +71,7 @@ if ((-not $isAdmin) -and (-not $NoElevate)) {
     if ($ReadOnly) { $argLine += ' -ReadOnly' }
     if ($NoInstallPrompt) { $argLine += ' -NoInstallPrompt' }
     try { Start-Process -FilePath $psExe -Verb RunAs -ArgumentList $argLine }
-    catch { Write-Host 'Der Start wurde abgebrochen, z. B. weil die Adminabfrage abgelehnt wurde.' -ForegroundColor Yellow; Read-Host 'Enter zum Schließen' | Out-Null }
+    catch { Write-Host (T 'server.start.abgebrochen') -ForegroundColor Yellow; Read-Host (T 'server.start.enterSchliessen') | Out-Null }
     return
 }
 
@@ -79,8 +82,8 @@ $hasMutex = $false
 try { $hasMutex = $mutex.WaitOne(0) }
 catch [System.Threading.AbandonedMutexException] { $hasMutex = $true }
 if (-not $hasMutex) {
-    Write-Host 'pc-check GUI läuft bereits. Bitte das vorhandene Fenster benutzen (oder die laufende Instanz beenden).' -ForegroundColor Yellow
-    if (-not $NoBrowser) { Read-Host 'Enter zum Schließen' | Out-Null }
+    Write-Host (T 'server.gui.laeuftBereits') -ForegroundColor Yellow
+    if (-not $NoBrowser) { Read-Host (T 'server.start.enterSchliessen') | Out-Null }
     return
 }
 
@@ -93,24 +96,24 @@ try {
     $safetyPath = Join-Path $Root 'gui\lib\Safety.ps1'
     if ($SafetyLib) { $safetyPath = (Resolve-Path -LiteralPath $SafetyLib).Path }
     if (Test-Path -LiteralPath $safetyPath -PathType Leaf) { . $safetyPath }
-    else { Write-Host 'Hinweis: gui\lib\Safety.ps1 fehlt, Änderungen sind noch nicht verfügbar.' -ForegroundColor Yellow }
+    else { Write-Host (T 'server.gui.safetyFehlt') -ForegroundColor Yellow }
     $defenderPath = Join-Path $Root 'gui\lib\Defender.ps1'
     if (Test-Path -LiteralPath $defenderPath -PathType Leaf) { . $defenderPath }
-    else { Write-Host 'Hinweis: gui\lib\Defender.ps1 fehlt, die Defender-Werkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
+    else { Write-Host (T 'server.gui.defenderFehlt') -ForegroundColor Yellow }
     $sysPath = Join-Path $Root 'gui\lib\Sysinternals.ps1'
     if (Test-Path -LiteralPath $sysPath -PathType Leaf) { . $sysPath }
-    else { Write-Host 'Hinweis: gui\lib\Sysinternals.ps1 fehlt, die Sysinternals-Werkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
+    else { Write-Host (T 'server.gui.sysinternalsFehlt') -ForegroundColor Yellow }
 
     $wingetPath = Join-Path $Root 'gui\lib\Winget.ps1'
     if (Test-Path -LiteralPath $wingetPath -PathType Leaf) { . $wingetPath }
-    else { Write-Host 'Hinweis: gui\lib\Winget.ps1 fehlt, der Update-Dialog ist noch nicht verfügbar.' -ForegroundColor Yellow }
+    else { Write-Host (T 'server.gui.wingetFehlt') -ForegroundColor Yellow }
     $wartungPath = Join-Path $Root 'gui\lib\Wartung.ps1'
     if (Test-Path -LiteralPath $wartungPath -PathType Leaf) { . $wartungPath }
-    else { Write-Host 'Hinweis: gui\lib\Wartung.ps1 fehlt, die Wartungswerkzeuge sind noch nicht verfügbar.' -ForegroundColor Yellow }
+    else { Write-Host (T 'server.gui.wartungFehlt') -ForegroundColor Yellow }
 
     $akzPath = Join-Path $Root 'gui\lib\Akzeptanz.ps1'
     if (Test-Path -LiteralPath $akzPath -PathType Leaf) { . $akzPath }
-    else { Write-Host 'Hinweis: gui\lib\Akzeptanz.ps1 fehlt, die Akzeptanzliste ist noch nicht verfügbar.' -ForegroundColor Yellow }
+    else { Write-Host (T 'server.gui.akzeptanzFehlt') -ForegroundColor Yellow }
     # Sichere Pfade für Programme und Temp (2.3.3)
     $pfadPath = Join-Path $Root 'gui\lib\Systempfade.ps1'
     if (Test-Path -LiteralPath $pfadPath -PathType Leaf) { . $pfadPath }
@@ -127,7 +130,7 @@ try {
     $installTarget = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'Morpheus'
     if (-not $isAdmin) {
         $roMode = $true
-        $roReason = 'Morpheus läuft ohne Administratorrechte.'
+        $roReason = T 'server.gui.ohneAdmin'
     }
     else {
         $codeCheck = Test-MorpheusCodeSecure -Root $Root
@@ -137,8 +140,8 @@ try {
                 $dataRoot = Initialize-MorpheusDataDir
                 # TEMP in den gesicherten Datenordner: Add-Type kompiliert dort und lädt die DLL danach (2.3.3)
                 # Ohne gesicherten Temp-Ordner Nur-Lesen-Modus: Sonst kompilierte der Bestätigungsdialog im Temp des Benutzers
-                if (-not (Get-Command -Name Set-MorpheusTempPfad -CommandType Function -ErrorAction SilentlyContinue)) { throw 'gui\lib\Systempfade.ps1 fehlt, der Temp-Ordner lässt sich nicht sichern.' }
-                if (-not (Set-MorpheusTempPfad -DataRoot $dataRoot)) { throw 'Der Temp-Ordner im Datenordner ließ sich nicht sichern.' }
+                if (-not (Get-Command -Name Set-MorpheusTempPfad -CommandType Function -ErrorAction SilentlyContinue)) { throw (T 'server.gui.systempfadeFehlt') }
+                if (-not (Set-MorpheusTempPfad -DataRoot $dataRoot)) { throw (T 'server.gui.tempNichtGesichert') }
             }
             catch {
                 $roMode = $true
@@ -149,21 +152,21 @@ try {
                     # Dafür ein frischer, gesicherter Temp-Ordner (nicht der Temp-Ordner des Benutzers). Scheitert das: keine Reparatur anbieten.
                     $tempFehler = $null
                     try {
-                        if (-not (Get-Command -Name New-MorpheusSecureDirectory -CommandType Function -ErrorAction SilentlyContinue)) { throw 'New-MorpheusSecureDirectory fehlt.' }
-                        if (-not (Get-Command -Name Set-MorpheusTempPfad -CommandType Function -ErrorAction SilentlyContinue)) { throw 'gui\lib\Systempfade.ps1 fehlt.' }
+                        if (-not (Get-Command -Name New-MorpheusSecureDirectory -CommandType Function -ErrorAction SilentlyContinue)) { throw (T 'server.gui.secureDirFehlt') }
+                        if (-not (Get-Command -Name Set-MorpheusTempPfad -CommandType Function -ErrorAction SilentlyContinue)) { throw (T 'server.gui.systempfadeFehlt2') }
                         $zufall = New-Object byte[] 8
                         $rngT = [System.Security.Cryptography.RandomNumberGenerator]::Create()
                         try { $rngT.GetBytes($zufall) } finally { $rngT.Dispose() }
                         $repTempNeu = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) ('Morpheus-Temp-' + (($zufall | ForEach-Object { $_.ToString('x2') }) -join ''))
                         New-MorpheusSecureDirectory -Path $repTempNeu
                         $repTemp = $repTempNeu   # ab hier wird er beim Beenden entfernt
-                        if (-not (Set-MorpheusTempPfad -DataRoot $repTemp)) { throw 'Der Temp-Ordner ließ sich nicht sichern.' }
+                        if (-not (Set-MorpheusTempPfad -DataRoot $repTemp)) { throw (T 'server.gui.tempNichtGesichert2') }
                         $tempSicher = $true
                     }
                     catch { $tempFehler = $_.Exception.Message }
                     if ($tempFehler) {
                         $dz = $null
-                        $roReason = 'Die Rechte des Datenordners unter ProgramData wurden geändert. Eine Reparatur in Morpheus ist nicht möglich, weil kein gesicherter Temp-Ordner angelegt werden konnte (' + $tempFehler + '). Bitte als Administrator reparieren oder neu installieren.'
+                        $roReason = T 'server.gui.rechtenGeaendertKeinTemp' $tempFehler
                     }
                 }
                 if ($dz) {
@@ -173,36 +176,36 @@ try {
                     else { $datenordnerPfad = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'Morpheus' }
                     $kn = @()
                     foreach ($k in @($dz.konten)) { if ($k -and $k.name) { $kn += ([string]$k.name -replace '[\u0000-\u001F\u007F\u0085\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]', ' ') } }
-                    $roReason = 'Die Rechte des Datenordners unter ProgramData wurden geändert, auch Programme ohne Administratorrechte könnten dort schreiben'
-                    if ($kn.Count -gt 0) { $roReason += ' (Konten: ' + ($kn -join ', ') + ')' }
-                    $roReason += '. Du kannst sie in Morpheus reparieren.'
+                    $roReason = T 'server.gui.rechtenGeaendert'
+                    if ($kn.Count -gt 0) { $roReason = T 'server.gui.konten' $roReason ($kn -join ', ') }
+                    $roReason = T 'server.gui.reparierenKoennen' $roReason
                 }
-                elseif (-not $tempFehler) { $roReason = 'Der Datenordner unter ProgramData lässt sich nicht sichern: ' + $_.Exception.Message }
+                elseif (-not $tempFehler) { $roReason = T 'server.gui.datenordnerNichtSicher' $_.Exception.Message }
                 Write-Host $roReason -ForegroundColor Yellow
             }
         }
         else {
             $grund = [string]$codeCheck.Gruende[0]
-            $roReason = "Morpheus läuft aus einem Ordner, den auch Programme ohne Administratorrechte ändern können (Grund: $grund)."
+            $roReason = T 'server.gui.ungesichertGrund' $grund
             $roMode = $true
             if ($ReadOnly -or $NoInstallPrompt) {
                 # kein Nachfragen: Nur-Lesen
             }
             else {
                 Write-Host ''
-                Write-Host "Morpheus läuft aus einem Ordner, den auch Programme ohne Administratorrechte ändern können (Grund: $grund)." -ForegroundColor Yellow
-                foreach ($more in @($codeCheck.Gruende | Select-Object -Skip 1 -First 3)) { Write-Host "  weiterer Grund: $more" -ForegroundColor Yellow }
-                Write-Host "Damit Änderungen sicher sind, wird Morpheus nach $installTarget installiert bzw. aktualisiert und von dort gestartet."
-                $answer = Read-Host 'Installieren? [J/n]'
+                Write-Host (T 'server.gui.ungesichertGrund' $grund) -ForegroundColor Yellow
+                foreach ($more in @($codeCheck.Gruende | Select-Object -Skip 1 -First 3)) { Write-Host (T 'server.gui.weitererGrund' $more) -ForegroundColor Yellow }
+                Write-Host (T 'server.gui.installAnkuendigung' $installTarget)
+                $answer = Read-Host (T 'server.gui.installFrage')
                 if (($answer -eq '') -or ($answer -match '^\s*(j|ja|y|yes)\s*$')) {
                     try {
                         if (Test-MorpheusInstallCurrent -Source $Root -Target $installTarget) {
-                            Write-Host "Die installierte Version in $installTarget ist aktuell, sie wird gestartet." -ForegroundColor Green
+                            Write-Host (T 'server.gui.installAktuell' $installTarget) -ForegroundColor Green
                         }
                         else {
-                            Write-Host "Installiere nach $installTarget ..."
+                            Write-Host (T 'server.gui.installiere' $installTarget)
                             [void](Install-Morpheus -Source $Root -Target $installTarget)
-                            Write-Host 'Installation abgeschlossen (Startmenü: "Morpheus - PC Check-up").' -ForegroundColor Green
+                            Write-Host (T 'server.gui.installFertig') -ForegroundColor Green
                         }
                         # Eigenen Mutex freigeben, sonst weist sich die installierte Instanz selbst ab
                         if ($hasMutex) { try { $mutex.ReleaseMutex() } catch { }; $hasMutex = $false }
@@ -213,19 +216,19 @@ try {
                         return
                     }
                     catch {
-                        Write-Host ('Die Installation ist fehlgeschlagen: ' + $_.Exception.Message) -ForegroundColor Red
-                        $roReason += ' Die Installation ist fehlgeschlagen: ' + $_.Exception.Message
+                        Write-Host (T 'server.gui.installFehlgeschlagen' $_.Exception.Message) -ForegroundColor Red
+                        $roReason = T 'server.gui.installFehlgeschlagenAnhang' $roReason $_.Exception.Message
                     }
                 }
-                else { $roReason += ' Die Installation wurde abgelehnt.' }
+                else { $roReason = T 'server.gui.installAbgelehnt' $roReason }
             }
         }
     }
     if ($ReadOnly -and (-not $roMode)) {
         $roMode = $true
-        $roReason = 'Der Nur-Lesen-Modus wurde mit -ReadOnly erzwungen.'
+        $roReason = T 'server.gui.readOnlyErzwungen'
     }
-    if ($roMode) { Write-Host "Nur-Lesen-Modus: $roReason" -ForegroundColor Yellow }
+    if ($roMode) { Write-Host (T 'server.gui.readOnlyMeldung' $roReason) -ForegroundColor Yellow }
 
     # 4. Port und Token
     if ($Port -eq 0) {
@@ -243,8 +246,8 @@ try {
 
     # 6. Fenster: Edge als App-Fenster mit eigenem Profil, sonst Standardbrowser
     if ($NoBrowser) {
-        Write-Host "GUI läuft auf: $url" -ForegroundColor Green
-        Write-Host '(Beenden: POST /api/shutdown oder Strg+C)'
+        Write-Host (T 'server.gui.guiLaeuftAuf' $url) -ForegroundColor Green
+        Write-Host (T 'server.gui.beendenHinweis')
     }
     else {
         $edgeExe = $null
@@ -260,26 +263,26 @@ try {
             # Die drei --disable-*-Schalter verhindern, dass Edge das Fenster im Hintergrund drosselt (Heartbeat bliebe sonst aus)
             Start-Process -FilePath $edgeExe -ArgumentList @("--app=$url", "--user-data-dir=`"$profile`"", '--start-maximized', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows')
             $edge = $profile
-            Write-Host 'GUI läuft ... (Fenster schließen beendet)' -ForegroundColor Green
+            Write-Host (T 'server.gui.laeuft') -ForegroundColor Green
         }
         else {
             # Kein Standardbrowser aus dem Admin-Prozess: Sein Startbefehl steht in HKCU\Software\Classes und ist damit von
             # Benutzerprogrammen änderbar (2.3.3). Die Adresse enthält nur den Einmal-Code, nicht das Token.
-            Write-Host 'Microsoft Edge wurde nicht gefunden. Bitte diese Adresse im Browser öffnen:' -ForegroundColor Yellow
+            Write-Host (T 'server.gui.edgeFehlt') -ForegroundColor Yellow
             Write-Host $url -ForegroundColor Green
-            Write-Host 'GUI läuft ... (Ende erkennt nur der Heartbeat der geöffneten Seite)' -ForegroundColor Green
+            Write-Host (T 'server.gui.laeuftHeartbeat') -ForegroundColor Green
         }
     }
 
     # 7. Hauptschleife
     $reason = Start-GuiServerLoop -EdgeProfile $edge
-    Write-Host "GUI beendet ($reason)."
+    Write-Host (T 'server.gui.beendet' $reason)
 }
 catch {
     $msg = $_.Exception.Message
-    Write-Host "Fehler beim Start der GUI: $msg" -ForegroundColor Red
-    if ($msg -match 'Zugriff|denied|5\b') { Write-Host 'Tipp: Als Administrator starten (pc-check-gui.cmd).' -ForegroundColor Yellow }
-    if (-not $NoBrowser) { Read-Host 'Enter zum Schließen' | Out-Null }
+    Write-Host (T 'server.gui.startFehler' $msg) -ForegroundColor Red
+    if ($msg -match 'Zugriff|denied|5\b') { Write-Host (T 'server.gui.tippAdmin') -ForegroundColor Yellow }
+    if (-not $NoBrowser) { Read-Host (T 'server.start.enterSchliessen') | Out-Null }
 }
 finally {
     if ($repTemp) {

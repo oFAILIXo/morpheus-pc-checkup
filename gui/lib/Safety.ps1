@@ -14,6 +14,9 @@
 #>
 
 $script:PcCheckSafetyDir = $PSScriptRoot
+# Texte (2.6, #66): T und die Katalogtexte aus lang\<sprache>\aktionen.psd1; auch die Katalog-Scriptblöcke nutzen T,
+# weil sie nur dort laufen, wo diese Datei geladen ist (Server und Jobs)
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
 
 # Standard-Implementierungen (Tests ersetzen sie)
 $script:PcCheckRestorePointImpl = {
@@ -77,7 +80,7 @@ function PcCheckSafetyStateKey {
 function PcCheckSafetyReadState {
     param($Action)
     $raw = @(& $Action.Lesen) | Select-Object -Last 1
-    if ($null -eq $raw) { throw 'Lesen lieferte kein Ergebnis.' }
+    if ($null -eq $raw) { throw (T 'server.safety.keinErgebnis') }
     [pscustomobject]@{
         aktiv   = ($raw.Aktiv -eq $true)
         wert    = $raw.Wert
@@ -108,11 +111,11 @@ function PcCheckSafetyShapeDiff {
     $kc = PcCheckSafetyJsonKind $Cur
     $ks = PcCheckSafetyJsonKind $Saved
     if (($kc -eq 'null') -or ($ks -eq 'null')) { return $null }   # fehlender Wert ist erlaubt (Wert existierte nicht)
-    if ($kc -ne $ks) { return "$Path`: erwartet $kc, gespeichert $ks" }
+    if ($kc -ne $ks) { return (T 'server.safety.formErwartet' $Path $kc $ks) }
     if ($kc -ne 'object') { return $null }
     $nc = @($Cur.Keys | ForEach-Object { [string]$_ } | Sort-Object)
     $ns = @($Saved.Keys | ForEach-Object { [string]$_ } | Sort-Object)
-    if ((($nc -join "`n")) -cne (($ns -join "`n"))) { return "$Path`: Eigenschaften '$($ns -join ',')' statt '$($nc -join ',')'" }
+    if ((($nc -join "`n")) -cne (($ns -join "`n"))) { return (T 'server.safety.formEigenschaften' $Path ($ns -join ',') ($nc -join ',')) }
     foreach ($k in $nc) {
         $d = PcCheckSafetyShapeDiff $Cur[$k] $Saved[$k] "$Path.$k"
         if ($d) { return $d }
@@ -132,7 +135,7 @@ function PcCheckSafetyAssertStateShape {
     $c = $ser.DeserializeObject((ConvertTo-Json -InputObject $Current -Depth 10 -Compress))
     $s = $ser.DeserializeObject((ConvertTo-Json -InputObject $Saved -Depth 10 -Compress))
     $diff = PcCheckSafetyShapeDiff $c $s 'Zustand'
-    if ($diff) { throw "Journal-Eintrag passt nicht zur Aktion ($diff). Es wird nichts geändert." }
+    if ($diff) { throw (T 'server.safety.journalPasstNicht' $diff) }
 }
 
 function PcCheckSafetyToDate {
@@ -192,7 +195,7 @@ function PcCheckSafetyReadJournal {
     try {
         $obj = ConvertFrom-Json -InputObject $text
     } catch {
-        throw "Das Änderungsjournal ($path) ist beschädigt und wird nicht überschrieben. Bitte die Datei prüfen. Ursache: $($_.Exception.Message)"
+        throw (T 'server.safety.journalKaputt' $path $_.Exception.Message)
     }
     @($obj)
 }
@@ -240,7 +243,7 @@ function PcCheckSafetyUpdateEntry {
             $found = $true
         }
     }
-    if (-not $found) { throw "Journal-Eintrag '$Id' nicht gefunden." }
+    if (-not $found) { throw (T 'server.safety.eintragFehlt' $Id) }
     PcCheckSafetyWriteJournal $Root $all
 }
 
@@ -283,31 +286,31 @@ function PcCheckSafetyDiagnose {
     $causes = New-Object System.Collections.ArrayList
     $cmds = New-Object System.Collections.ArrayList
     if (-not (PcCheckSafetyIsAdmin)) {
-        [void]$causes.Add('Die Anwendung läuft ohne Administratorrechte.')
-        [void]$cmds.Add('Die Anwendung über pc-check-gui.cmd neu starten und die Rechteabfrage bestätigen.')
+        [void]$causes.Add((T 'server.safety.diagOhneAdmin'))
+        [void]$cmds.Add((T 'server.safety.diagOhneAdminBefehl'))
     }
     $disable = PcCheckSafetyRegValue $script:PcCheckSafetyRegPolicy 'DisableSR'
     $interval = PcCheckSafetyRegValue $script:PcCheckSafetyRegRestore 'RPSessionInterval'
     if ($disable -eq 1) {
-        [void]$causes.Add('Der Computerschutz ist per Richtlinie abgeschaltet (DisableSR = 1).')
-        [void]$cmds.Add('Die Gruppenrichtlinie "Systemwiederherstellung deaktivieren" auf "Nicht konfiguriert" setzen.')
+        [void]$causes.Add((T 'server.safety.ursachePolicy'))
+        [void]$cmds.Add((T 'server.safety.behebungPolicy'))
     } elseif ($interval -ne 1) {
-        [void]$causes.Add('Der Computerschutz ist für das Systemlaufwerk ausgeschaltet.')
+        [void]$causes.Add((T 'server.safety.diagSchutzAus'))
         [void]$cmds.Add((PcCheckSafetyCommandEnable))
     }
     $freq = PcCheckSafetyRegValue $script:PcCheckSafetyRegRestore 'SystemRestorePointCreationFrequency'
     if (($null -eq $freq) -or ([int64]$freq -gt 0)) {
-        [void]$causes.Add('Windows legt standardmäßig höchstens alle 24 Stunden einen Wiederherstellungspunkt an (24-h-Sperre); vermutlich gab es schon einen.')
+        [void]$causes.Add((T 'server.safety.diagSperre24h'))
         [void]$cmds.Add((PcCheckSafetyCommandFrequency))
     }
-    if ($causes.Count -eq 0) { [void]$causes.Add('Die Ursache ließ sich nicht eindeutig bestimmen (Dienst "Volumeschattenkopie" oder Speicherplatz prüfen).') }
+    if ($causes.Count -eq 0) { [void]$causes.Add((T 'server.safety.diagUnklar')) }
     @{ ursache = ($causes -join ' '); befehl = ($cmds -join "`n") }
 }
 
 # Legt einen Punkt an und prüft ihn; wirft, wenn er fehlt. Rückgabe @{ seq; zeit }
 function PcCheckSafetyEnsureRestorePoint {
     param([string]$Description, [datetime]$JobStart)
-    PcCheckSafetyLog "Lege Wiederherstellungspunkt an: $Description"
+    PcCheckSafetyLog (T 'server.safety.logLegePunkt' $Description)
     $problems = New-Object System.Collections.ArrayList
     # Höchste Sequenznummer vor dem Anlegen: Nur ein danach entstandener Punkt zählt, nicht einer,
     # den z. B. Windows Update kurz vorher angelegt hat. Ist die Liste nicht lesbar, gilt die Zeitgrenze.
@@ -331,7 +334,7 @@ function PcCheckSafetyEnsureRestorePoint {
                 ($null -ne $_.zeit) -and ($_.zeit -ge $limit) -and (($null -eq $beforeSeq) -or ($_.seq -gt $beforeSeq))
             } | Select-Object -First 1
         } catch {
-            [void]$problems.Add("Liste der Wiederherstellungspunkte nicht lesbar: $($_.Exception.Message)")
+            [void]$problems.Add((T 'server.safety.listeNichtLesbar' $_.Exception.Message))
             $hit = $null
         }
         if ($null -ne $hit) { break }
@@ -342,12 +345,12 @@ function PcCheckSafetyEnsureRestorePoint {
 
     if ($null -eq $hit) {
         $diag = PcCheckSafetyDiagnose
-        $msg = 'Es konnte kein Wiederherstellungspunkt angelegt werden, deshalb wurde nichts geändert. Ursache: ' + $diag.ursache
-        if ($problems.Count -gt 0) { $msg += ' Meldung von Windows: ' + (($problems | Select-Object -Unique) -join ' | ') }
-        $msg += " Zur Behebung (Administrator-PowerShell): $($diag.befehl)"
+        $msg = (T 'server.safety.punktFehlt' $diag.ursache)
+        if ($problems.Count -gt 0) { $msg += ' ' + (T 'server.safety.meldungWindows' (($problems | Select-Object -Unique) -join ' | ')) }
+        $msg += ' ' + (T 'server.safety.behebung' $diag.befehl)
         throw $msg
     }
-    PcCheckSafetyLog ("Wiederherstellungspunkt #{0} geprüft ({1})." -f $hit.seq, $hit.zeit.ToString('HH:mm:ss'))
+    PcCheckSafetyLog (T 'server.safety.punktGeprueft' $hit.seq $hit.zeit.ToString('HH:mm:ss'))
     @{ seq = [int]$hit.seq; zeit = (PcCheckSafetyIso $hit.zeit) }
 }
 #endregion
@@ -390,9 +393,20 @@ function Get-PcCheckCatalog {
         if ($null -eq $i -or -not ($i -is [System.Collections.IDictionary])) { continue }
         $id = [string]$i.Id
         if ($id -notmatch '^[a-z0-9.-]+$') { throw "Aktionskatalog: ungültige Id '$id'." }
-        if ($seen.ContainsKey($id)) { throw "Aktionskatalog: Id '$id' ist doppelt." }
+        if ($seen.ContainsKey($id)) { throw (T 'server.safety.katalogIdDoppelt' $id) }
         $seen[$id] = $true
         [void]$result.Add($i)
+    }
+    # Anzeigetexte in der eingestellten Sprache (Deutsch als Rückfall). Varianten bleiben Kennungen, die Namen kommen dazu.
+    $sp = Get-MorpheusAktiveSprache
+    $texte = @(Import-MorpheusSprachDatei -Sprache 'de' -Teil 'aktionen' -Root $Root)
+    if ($sp -ne 'de') { $texte += Import-MorpheusSprachDatei -Sprache $sp -Teil 'aktionen' -Root $Root }
+    foreach ($i in $result) {
+        foreach ($tx in $texte) {
+            $e = $tx[[string]$i.Id]
+            if (-not ($e -is [hashtable])) { continue }
+            foreach ($feld in 'Titel', 'Erklaerung', 'Befehle', 'VariantenNamen') { if ($e.ContainsKey($feld)) { $i[$feld] = $e[$feld] } }
+        }
     }
     $result.ToArray()
 }
@@ -422,6 +436,7 @@ function ConvertTo-PublicAction {
         neustart  = ($Action.Neustart -eq $true)
         bereich   = $Action.Bereich
         varianten = $var
+        variantenNamen = $(if ($var -and $Action.VariantenNamen) { @($Action.VariantenNamen) } else { $var })
         ohneWiederherstellungspunkt = ($Action.OhneWiederherstellungspunkt -eq $true)
         befehle   = [pscustomobject]@{ ausfuehren = $cmdRun; rueckgaengig = $cmdUndo; erklaerung = $cmdHelp }
         zustand   = $zustand
@@ -438,7 +453,7 @@ function Get-PcCheckActionStates {
             $s = PcCheckSafetyReadState $a
             $result[[string]$a.Id] = @{ aktiv = $s.aktiv; wert = $s.wert; stand = $s.stand }
         } catch {
-            $result[[string]$a.Id] = @{ aktiv = $false; wert = ('Fehler: ' + $_.Exception.Message); stand = (Get-Date).ToString('s') }
+            $result[[string]$a.Id] = @{ aktiv = $false; wert = (T 'server.safety.fehlerWert' $_.Exception.Message); stand = (Get-Date).ToString('s') }
         }
     }
     $result
@@ -542,28 +557,28 @@ function Invoke-PcCheckChange {
     # --- Prüfen der Anfrage (ändert nichts) ---
     $idList = New-Object System.Collections.ArrayList
     foreach ($i in $Ids) { if (($i -ne '') -and (-not ($idList -ccontains $i))) { [void]$idList.Add($i) } }
-    if ($idList.Count -eq 0) { throw 'Keine Aktion angegeben.' }
+    if ($idList.Count -eq 0) { throw (T 'server.safety.keineAktion') }
     $actions = New-Object System.Collections.ArrayList
     foreach ($id in $idList) {
-        if ($id -notmatch '^[a-z0-9.-]+$') { throw "Unbekannte Aktion '$id'." }
+        if ($id -notmatch '^[a-z0-9.-]+$') { throw (T 'server.safety.aktionUnbekannt' $id) }
         $a = PcCheckSafetyFindAction $catalog $id
-        if ($null -eq $a) { throw "Unbekannte Aktion '$id'." }
+        if ($null -eq $a) { throw (T 'server.safety.aktionUnbekannt' $id) }
         [void]$actions.Add($a)
     }
     foreach ($a in $actions) {
         $flag = ($a.OhneWiederherstellungspunkt -eq $true)
         if ($flag -and ([string]$a.Id -cne 'system.wiederherstellung')) {
-            throw "Aktionskatalog fehlerhaft: Nur 'system.wiederherstellung' darf ohne Wiederherstellungspunkt laufen ('$($a.Id)')."
+            throw (T 'server.safety.katalogOhnePunkt' $a.Id)
         }
         if ($flag -and ($actions.Count -gt 1)) {
-            throw "'$($a.Titel)' legt keinen Wiederherstellungspunkt an und muss einzeln ausgeführt werden, nicht zusammen mit anderen Aktionen."
+            throw (T 'server.safety.einzeln' $a.Titel)
         }
         if ($a.Varianten) {
             if (-not (@($a.Varianten) -ccontains $Variante)) {
-                throw "Ungültige Variante '$Variante' für '$($a.Id)'. Erlaubt: $(@($a.Varianten) -join ', ')."
+                throw (T 'server.safety.varianteUngueltig' $Variante $a.Id (@($a.Varianten) -join ', '))
             }
         } elseif ((-not [string]::IsNullOrEmpty($Variante)) -and ($actions.Count -eq 1)) {
-            throw "Die Aktion '$($a.Id)' hat keine Varianten, '$Variante' ist ungültig."
+            throw (T 'server.safety.keineVarianten' $a.Id $Variante)
         }
     }
 
@@ -571,33 +586,33 @@ function Invoke-PcCheckChange {
     $results = New-Object System.Collections.ArrayList
     $plan = New-Object System.Collections.ArrayList
     foreach ($a in $actions) {
-        PcCheckSafetyLog "Prüfe: $($a.Titel)"
+        PcCheckSafetyLog (T 'server.safety.pruefe' $a.Titel)
         try {
             $before = PcCheckSafetyReadState $a
         } catch {
-            $m = "Zustand nicht lesbar: $($_.Exception.Message)"
-            PcCheckSafetyLog "$($a.Titel): $m (übersprungen)"
+            $m = (T 'server.safety.zustandNichtLesbar' $_.Exception.Message)
+            PcCheckSafetyLog (T 'server.safety.uebersprungen' $a.Titel $m)
             [void]$results.Add((PcCheckSafetyNewResult $a 'fehlgeschlagen' $null $null $m $null))
             continue
         }
         if ($before.aktiv) {
-            PcCheckSafetyLog "$($a.Titel): Ziel bereits erreicht (übersprungen)"
-            [void]$results.Add((PcCheckSafetyNewResult $a 'uebersprungen-erreicht' (PcCheckSafetyJournalState $before) (PcCheckSafetyJournalState $before) 'Ziel war bereits erreicht, nichts geändert.' $null))
+            PcCheckSafetyLog (T 'server.safety.zielErreichtLog' $a.Titel)
+            [void]$results.Add((PcCheckSafetyNewResult $a 'uebersprungen-erreicht' (PcCheckSafetyJournalState $before) (PcCheckSafetyJournalState $before) (T 'server.safety.zielErreicht') $null))
             continue
         }
         $reason = $null
         if ($a.Voraussetzung) {
-            try { $reason = (@(& $a.Voraussetzung) | Out-String).Trim() } catch { $reason = "Voraussetzung nicht prüfbar: $($_.Exception.Message)" }
+            try { $reason = (@(& $a.Voraussetzung) | Out-String).Trim() } catch { $reason = (T 'server.safety.vorNichtPruefbar' $_.Exception.Message) }
         }
         if (-not [string]::IsNullOrEmpty($reason)) {
-            PcCheckSafetyLog "$($a.Titel): Voraussetzung nicht erfüllt: $reason (übersprungen)"
-            [void]$results.Add((PcCheckSafetyNewResult $a 'uebersprungen-voraussetzung' (PcCheckSafetyJournalState $before) $null "Voraussetzung nicht erfüllt: $reason" $null))
+            PcCheckSafetyLog (T 'server.safety.vorNichtErfuelltLog' $a.Titel $reason)
+            [void]$results.Add((PcCheckSafetyNewResult $a 'uebersprungen-voraussetzung' (PcCheckSafetyJournalState $before) $null (T 'server.safety.vorNichtErfuellt' $reason) $null))
             continue
         }
         [void]$plan.Add(@{ action = $a; before = $before })
     }
     if ($plan.Count -eq 0) {
-        PcCheckSafetyLog 'Nichts zu ändern, kein Wiederherstellungspunkt nötig.'
+        PcCheckSafetyLog (T 'server.safety.nichtsZuAendern')
         return $results.ToArray()
     }
 
@@ -605,9 +620,9 @@ function Invoke-PcCheckChange {
     $point = $null
     $noPoint = ($plan[0].action.OhneWiederherstellungspunkt -eq $true)
     if ($noPoint) {
-        PcCheckSafetyLog "Hinweis: '$($plan[0].action.Titel)' läuft bewusst ohne Wiederherstellungspunkt."
+        PcCheckSafetyLog (T 'server.safety.ohnePunkt' $plan[0].action.Titel)
     } else {
-        if ($plan.Count -eq 1) { $desc = 'pc-check: ' + $plan[0].action.Titel } else { $desc = "pc-check: $($plan.Count) Änderungen" }
+        if ($plan.Count -eq 1) { $desc = (T 'server.safety.punktBeschreibung' $plan[0].action.Titel) } else { $desc = (T 'server.safety.punktBeschreibungMehrere' $plan.Count) }
         $point = PcCheckSafetyEnsureRestorePoint -Description $desc -JobStart $jobStart
     }
 
@@ -620,23 +635,23 @@ function Invoke-PcCheckChange {
         $vorherJ = PcCheckSafetyJournalState $before
         $entryId = PcCheckSafetyNewEntryId $DataRoot
         PcCheckSafetyAddEntry $DataRoot (PcCheckSafetyNewEntry $entryId 'ausfuehren' $a $var $vorherJ $point $null)
-        PcCheckSafetyLog "Führe aus: $($a.Titel)"
+        PcCheckSafetyLog (T 'server.safety.fuehreAus' $a.Titel)
 
         $err = ''
         $after = $null
         try { & $a.Ausfuehren $var | Out-Null } catch { $err = $_.Exception.Message }
         if ($err -eq '') {
-            try { $after = PcCheckSafetyReadState $a } catch { $err = "Kontrolle fehlgeschlagen: $($_.Exception.Message)" }
+            try { $after = PcCheckSafetyReadState $a } catch { $err = (T 'server.safety.kontrolleFehler' $_.Exception.Message) }
         }
         if (($err -eq '') -and $after.aktiv) {
             $nach = PcCheckSafetyJournalState $after
             PcCheckSafetyUpdateEntry $DataRoot $entryId @{ status = 'erledigt'; nachher = $nach; meldung = '' }
-            PcCheckSafetyLog "$($a.Titel): erledigt"
+            PcCheckSafetyLog (T 'server.safety.logErledigt' $a.Titel)
             [void]$results.Add((PcCheckSafetyNewResult $a 'erledigt' $vorherJ $nach '' $entryId))
             continue
         }
-        if ($err -eq '') { $err = 'Das Ziel wurde nach dem Ausführen nicht erreicht.' }
-        PcCheckSafetyLog "$($a.Titel): Fehler: $err Setze zurück ..."
+        if ($err -eq '') { $err = (T 'server.safety.zielNichtErreicht') }
+        PcCheckSafetyLog (T 'server.safety.fehlerSetzeZurueck' $a.Titel $err)
 
         # Sofort zurücksetzen mit dem Vorher-Zustand
         $status = 'fehlgeschlagen'
@@ -648,12 +663,12 @@ function Invoke-PcCheckChange {
             $nach = PcCheckSafetyJournalState $check
             if ((PcCheckSafetyStateKey $check.zustand) -ceq (PcCheckSafetyStateKey $before.zustand)) {
                 $status = 'fehlgeschlagen-zurueckgesetzt'
-                $msg = "$err Der vorherige Zustand wurde wiederhergestellt."
+                $msg = (T 'server.safety.zurueckgesetzt' $err)
             } else {
-                $msg = "$err Zurücksetzen nicht bestätigt: Der Zustand weicht vom vorherigen ab. Bitte den Wiederherstellungspunkt verwenden."
+                $msg = (T 'server.safety.zuruecksetzenNichtBestaetigt' $err)
             }
         } catch {
-            $msg = "$err Zurücksetzen fehlgeschlagen: $($_.Exception.Message). Bitte den Wiederherstellungspunkt verwenden."
+            $msg = (T 'server.safety.zuruecksetzenFehlgeschlagen' $err $_.Exception.Message)
         }
         PcCheckSafetyUpdateEntry $DataRoot $entryId @{ status = $status; nachher = $nach; meldung = $msg }
         PcCheckSafetyLog "$($a.Titel): $status"
@@ -704,20 +719,20 @@ function Undo-PcCheckChange {
     $catalog = @(Get-PcCheckCatalog -Root $Root)
     $entry = $null
     foreach ($e in @(PcCheckSafetyReadJournal $DataRoot)) { if ([string]$e.id -ceq $EntryId) { $entry = $e } }
-    if ($null -eq $entry) { throw "Journal-Eintrag '$EntryId' nicht gefunden." }
-    if ([string]$entry.art -cne 'ausfuehren') { throw 'Für diesen Eintrag gibt es kein Rückgängig.' }
+    if ($null -eq $entry) { throw (T 'server.safety.eintragFehlt' $EntryId) }
+    if ([string]$entry.art -cne 'ausfuehren') { throw (T 'server.safety.keinRueckgaengig') }
     if ([string]$entry.status -cne 'erledigt') {
-        throw "Der Eintrag hat den Status '$($entry.status)' und lässt sich nicht zurücknehmen (nur 'erledigt')."
+        throw (T 'server.safety.statusNichtZuruecknehmbar' $entry.status)
     }
     # Datenordner-Reparatur (18.10): Einträge aus der Zeit davor können von einem Programm mit Schreibrechten stammen.
     # Ohne ausdrückliche Bestätigung keine Rücknahme. Ist die Datei unlesbar oder die Zeit nicht lesbar, gilt der Eintrag als älter.
     if ((-not $VorReparaturBestaetigt) -and (Test-PcCheckVorReparatur -DataRoot $DataRoot -Eintrag $entry)) {
-        throw 'Dieser Eintrag stammt aus der Zeit vor der Reparatur des Datenordners. Bitte ausdrücklich bestätigen.'
+        throw (T 'server.safety.vorReparatur')
     }
     $a = PcCheckSafetyFindAction $catalog ([string]$entry.aktion)
-    if ($null -eq $a) { throw "Die Aktion '$($entry.aktion)' ist nicht mehr im Katalog; Rücknahme nicht möglich." }
+    if ($null -eq $a) { throw (T 'server.safety.nichtImKatalog' $entry.aktion) }
 
-    PcCheckSafetyLog "Prüfe aktuellen Zustand: $($a.Titel)"
+    PcCheckSafetyLog (T 'server.safety.pruefeZustand' $a.Titel)
     $current = PcCheckSafetyReadState $a
     # Verteidigung in der Tiefe: Ein gefälschter Journal-Eintrag darf der Aktion keinen Zustand unterschieben,
     # den ihr Lesen nie liefern würde. Das gilt auch mit -Force.
@@ -727,14 +742,14 @@ function Undo-PcCheckChange {
     $saved = $null
     if ($entry.nachher) { $saved = $entry.nachher.zustand }
     if (((PcCheckSafetyStateKey $current.zustand) -cne (PcCheckSafetyStateKey $saved)) -and (-not $Force)) {
-        throw "Der Zustand von '$($a.Titel)' hat sich seit der Änderung geändert (aktuell: '$($current.wert)'). Die Rücknahme würde auch diese spätere Änderung überschreiben. Zum Fortfahren mit Force bestätigen."
+        throw (T 'server.safety.zustandGeaendert' $a.Titel $current.wert)
     }
 
     $point = $null
     if ($a.OhneWiederherstellungspunkt -eq $true) {
-        PcCheckSafetyLog "Hinweis: '$($a.Titel)' wird bewusst ohne Wiederherstellungspunkt zurückgenommen."
+        PcCheckSafetyLog (T 'server.safety.ohnePunktRuecknahme' $a.Titel)
     } else {
-        $point = PcCheckSafetyEnsureRestorePoint -Description ('pc-check: Rücknahme ' + $a.Titel) -JobStart $jobStart
+        $point = PcCheckSafetyEnsureRestorePoint -Description (T 'server.safety.punktRuecknahme' $a.Titel) -JobStart $jobStart
     }
 
     $vorherJ = PcCheckSafetyJournalState $current
@@ -742,7 +757,7 @@ function Undo-PcCheckChange {
     $var = $null
     if ($entry.variante) { $var = [string]$entry.variante }
     PcCheckSafetyAddEntry $DataRoot (PcCheckSafetyNewEntry $undoId 'rueckgaengig' $a $var $vorherJ $point $EntryId)
-    PcCheckSafetyLog "Nehme zurück: $($a.Titel)"
+    PcCheckSafetyLog (T 'server.safety.nehmeZurueck' $a.Titel)
 
     $target = $null
     if ($entry.vorher) { $target = $entry.vorher.zustand }
@@ -750,21 +765,21 @@ function Undo-PcCheckChange {
     $after = $null
     try { & $a.Rueckgaengig $target | Out-Null } catch { $err = $_.Exception.Message }
     if ($err -eq '') {
-        try { $after = PcCheckSafetyReadState $a } catch { $err = "Kontrolle fehlgeschlagen: $($_.Exception.Message)" }
+        try { $after = PcCheckSafetyReadState $a } catch { $err = (T 'server.safety.kontrolleFehler' $_.Exception.Message) }
     }
     if (($err -eq '') -and ((PcCheckSafetyStateKey $after.zustand) -cne (PcCheckSafetyStateKey $target))) {
-        $err = 'Der Zustand entspricht nach der Rücknahme nicht dem gespeicherten Vorher-Zustand.'
+        $err = (T 'server.safety.nachRuecknahmeAbweichend')
     }
     if ($err -eq '') {
         $nach = PcCheckSafetyJournalState $after
         PcCheckSafetyUpdateEntry $DataRoot $undoId @{ status = 'erledigt'; nachher = $nach; meldung = '' }
         PcCheckSafetyUpdateEntry $DataRoot $EntryId @{ status = 'zurueckgenommen' }
-        PcCheckSafetyLog "$($a.Titel): zurückgenommen"
+        PcCheckSafetyLog (T 'server.safety.zurueckgenommen' $a.Titel)
         return (PcCheckSafetyNewResult $a 'erledigt' $vorherJ $nach '' $undoId)
     }
-    $msg = "$err Der ursprüngliche Eintrag bleibt 'erledigt'; bei Bedarf den Wiederherstellungspunkt verwenden."
+    $msg = (T 'server.safety.ruecknahmeFehlgeschlagen' $err)
     PcCheckSafetyUpdateEntry $DataRoot $undoId @{ status = 'fehlgeschlagen'; meldung = $msg }
-    PcCheckSafetyLog "$($a.Titel): Rücknahme fehlgeschlagen: $err"
+    PcCheckSafetyLog (T 'server.safety.ruecknahmeFehlgeschlagenLog' $a.Titel $err)
     PcCheckSafetyNewResult $a 'fehlgeschlagen' $vorherJ (PcCheckSafetyJournalState $after) $msg $undoId
 }
 #endregion

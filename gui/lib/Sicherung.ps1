@@ -9,6 +9,8 @@
     Beim Dot-Sourcen wird nichts ausgeführt. Keine Compiler-Aufrufe (siehe Vertrag 14.1).
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 #region Hilfsfunktionen (privat)
 
 function PcCheckSicherungIso {
@@ -144,7 +146,7 @@ function Get-MorpheusDateiversionsverlauf {
             $dateien = @(Get-ChildItem -LiteralPath $ConfigOrdner -Filter 'Config*.xml' -File -ErrorAction SilentlyContinue)
         }
         if ($dateien.Count -eq 0) {
-            return [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis 'Nicht eingerichtet.')
+            return [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis (T 'server.sicherung.nichtEingerichtet'))
         }
 
         $kandidaten = @()
@@ -156,7 +158,7 @@ function Get-MorpheusDateiversionsverlauf {
             $kandidaten += [pscustomobject]@{ Datei = $f; Ziel = $ziel; An = $an }
         }
         if ($kandidaten.Count -eq 0) {
-            return [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis 'Nicht lesbar: Konfiguration enthält kein gültiges XML.')
+            return [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis (T 'server.sicherung.nichtLesbarXml'))
         }
         $mitZiel = @($kandidaten | Where-Object { $_.Ziel -ne '' })
         $wahl = $null
@@ -172,7 +174,7 @@ function Get-MorpheusDateiversionsverlauf {
 
         $letzte = PcCheckSicherungFileTime -RegistryPfad $RegistryPfad
         $quelle = 'Registry'
-        if ($null -eq $letzte) { $letzte = $wahl.Datei.LastWriteTime; $quelle = 'Konfigurationsdatei' }
+        if ($null -eq $letzte) { $letzte = $wahl.Datei.LastWriteTime; $quelle = (T 'server.sicherung.quelleKonfig') }
 
         $hinweis = ''
         $aktiv = $false
@@ -180,19 +182,19 @@ function Get-MorpheusDateiversionsverlauf {
             $aktiv = $true
         } elseif ($wahl.An -match '^(false|0)$') {
             $aktiv = $false
-            $hinweis = 'Dateiversionsverlauf ist ausgeschaltet.'
+            $hinweis = (T 'server.sicherung.verlaufAus')
         } else {
             # An/aus nicht sicher erkennbar: aktiv, wenn ein Ziel konfiguriert ist
             $aktiv = ($null -ne $ziel)
             if ($aktiv) {
-                $hinweis = 'Ob der Dateiversionsverlauf eingeschaltet ist, war der Konfiguration nicht sicher zu entnehmen; gewertet wird: Ziel konfiguriert = aktiv. Letzte Sicherung aus: ' + $quelle + '.'
+                $hinweis = (T 'server.sicherung.verlaufUnsicher' $quelle)
             } else {
-                $hinweis = 'Kein Sicherungsziel konfiguriert.'
+                $hinweis = (T 'server.sicherung.keinZiel')
             }
         }
         [pscustomobject](PcCheckSicherungNeu -Art $art -Gefunden $true -Aktiv $aktiv -Ziel $ziel -Letzte $letzte -Hinweis $hinweis)
     } catch {
-        [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis ('Nicht lesbar: ' + $_.Exception.Message))
+        [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis (T 'server.sicherung.nichtLesbar' $_.Exception.Message))
     }
 }
 
@@ -220,9 +222,9 @@ function Get-MorpheusOneDriveSicherung {
                 if ($v) { $shell[$n] = [Environment]::ExpandEnvironmentVariables([string]$v) }
             }
         }
-        $hinweisApp = 'Die App „Windows-Sicherung“ sichert Ordner ebenfalls über OneDrive; sie ist hier mit abgedeckt.'
+        $hinweisApp = (T 'server.sicherung.hinweisApp')
         if ($konten.Count -eq 0) {
-            $o = PcCheckSicherungNeu -Art $art -Hinweis ('Kein OneDrive-Konto angemeldet. ' + $hinweisApp)
+            $o = PcCheckSicherungNeu -Art $art -Hinweis (T 'server.sicherung.keinOneDrive' $hinweisApp)
             $o['ordner'] = @()
             return [pscustomobject]$o
         }
@@ -230,13 +232,13 @@ function Get-MorpheusOneDriveSicherung {
         $aktiv = (@($auswahl.ordner).Count -gt 0)
         $ziel = $null
         if ($aktiv) { $ziel = 'OneDrive (' + (@($auswahl.konten) -join ', ') + ')' }
-        $hinweis = $hinweisApp + ' Der Zeitpunkt der letzten Sicherung ist nicht auslesbar.'
-        if (-not $aktiv) { $hinweis = 'Desktop, Dokumente und Bilder liegen nicht in OneDrive. ' + $hinweis }
+        $hinweis = (T 'server.sicherung.letzteNichtLesbar' $hinweisApp)
+        if (-not $aktiv) { $hinweis = (T 'server.sicherung.nichtInOneDrive' $hinweis) }
         $o = PcCheckSicherungNeu -Art $art -Gefunden $true -Aktiv $aktiv -Ziel $ziel -Hinweis $hinweis
         $o['ordner'] = @($auswahl.ordner)
         [pscustomobject]$o
     } catch {
-        $o = PcCheckSicherungNeu -Art $art -Hinweis ('Nicht lesbar: ' + $_.Exception.Message)
+        $o = PcCheckSicherungNeu -Art $art -Hinweis (T 'server.sicherung.nichtLesbar' $_.Exception.Message)
         $o['ordner'] = @()
         [pscustomobject]$o
     }
@@ -275,17 +277,17 @@ function Get-MorpheusSystemabbild {
             }
         }
         if ($null -eq $letzte) {
-            $h = 'Kein Systemabbild gefunden.'
-            if (-not $IsAdmin) { $h += ' Ohne Administratorrechte wurde nur nach Ordnern WindowsImageBackup gesucht.' }
+            $h = (T 'server.sicherung.keinAbbild')
+            if (-not $IsAdmin) { $h += ' ' + (T 'server.sicherung.ohneAdminSuche') }
             return [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis $h)
         }
         $alter = ((Get-Date) - $letzte).TotalDays
         if ($alter -gt 180) {
-            return [pscustomobject](PcCheckSicherungNeu -Art $art -Gefunden $true -Aktiv $false -Ziel $ziel -Letzte $letzte -Hinweis 'Systemabbild ist veraltet (älter als 180 Tage).')
+            return [pscustomobject](PcCheckSicherungNeu -Art $art -Gefunden $true -Aktiv $false -Ziel $ziel -Letzte $letzte -Hinweis (T 'server.sicherung.abbildVeraltet'))
         }
         [pscustomobject](PcCheckSicherungNeu -Art $art -Gefunden $true -Aktiv $true -Ziel $ziel -Letzte $letzte -Hinweis '')
     } catch {
-        [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis ('Nicht lesbar: ' + $_.Exception.Message))
+        [pscustomobject](PcCheckSicherungNeu -Art $art -Hinweis (T 'server.sicherung.nichtLesbar' $_.Exception.Message))
     }
 }
 
@@ -305,7 +307,7 @@ function Get-MorpheusSicherung {
         try {
             $erg += (& $def.Block)
         } catch {
-            $o = PcCheckSicherungNeu -Art $def.Art -Hinweis ('Nicht lesbar: ' + $_.Exception.Message)
+            $o = PcCheckSicherungNeu -Art $def.Art -Hinweis (T 'server.sicherung.nichtLesbar' $_.Exception.Message)
             if ($def.Art -eq 'OneDrive-Ordnersicherung') { $o['ordner'] = @() }
             $erg += [pscustomobject]$o
         }
@@ -343,38 +345,38 @@ function Get-MorpheusSicherungBewertung {
     $teile = @()
     if ($null -ne $dv -and $dv.gefunden -and $dv.aktiv) {
         if ($okDv) {
-            $t = 'Dateiversionsverlauf aktiv'
+            $t = (T 'server.sicherung.wertVerlaufAktiv')
         } else {
-            $t = 'Dateiversionsverlauf veraltet'
+            $t = (T 'server.sicherung.wertVerlaufVeraltet')
         }
-        if ($dv.letzteSicherung) { $t += ' (letzte Sicherung ' + (& $datum $dv) + ')' }
+        if ($dv.letzteSicherung) { $t += ' ' + (T 'server.sicherung.letzteSicherung' (& $datum $dv)) }
         $teile += $t
     } else {
-        $teile += 'Dateiversionsverlauf aus'
+        $teile += (T 'server.sicherung.wertVerlaufAus')
     }
     if ($null -ne $od -and $od.gefunden -and $od.aktiv -and @($od.ordner).Count -gt 0) {
-        $teile += ('OneDrive: ' + (@($od.ordner) -join ', '))
+        $teile += (T 'server.sicherung.wertOneDrive' (@($od.ordner) -join ', '))
     } else {
-        $teile += 'OneDrive: keine Ordner gesichert'
+        $teile += (T 'server.sicherung.wertOneDriveKeine')
     }
     if ($null -ne $sa -and $sa.gefunden) {
         if ($okSa) {
-            $teile += ('Systemabbild vom ' + (& $datum $sa))
+            $teile += (T 'server.sicherung.wertAbbildVom' (& $datum $sa))
         } else {
-            $teile += ('Systemabbild veraltet (' + (& $datum $sa) + ')')
+            $teile += (T 'server.sicherung.wertAbbildVeraltet' (& $datum $sa))
         }
     } else {
-        $teile += 'kein Systemabbild'
+        $teile += (T 'server.sicherung.wertKeinAbbild')
     }
     $wert = $teile -join '; '
 
     if ($okDv -or $okOd -or $okSa) {
         $empf = ''
         if (-not $okDv -and -not $okSa -and $okOd) {
-            $empf = 'Nur OneDrive sichert deine Ordner. Cloud-Synchronisation schützt nicht vor allem: Eine Ransomware-Verschlüsselung wird mitsynchronisiert (dann helfen Versionsverlauf und Papierkorb von OneDrive). Eine zusätzliche Sicherung auf ein externes Laufwerk (Dateiversionsverlauf) ist sinnvoll.'
+            $empf = (T 'server.sicherung.empfNurOneDrive')
         }
         return [pscustomobject]@{ status = 'OK'; wert = $wert; empfehlung = $empf }
     }
-    $empf = 'Keine aktuelle Datensicherung erkannt. Schalte den Dateiversionsverlauf ein (Einstellungen > System > Speicher > Erweiterte Speichereinstellungen > Sicherungsoptionen bzw. Systemsteuerung > Dateiversionsverlauf, mit einem externen Laufwerk) oder die OneDrive-Ordnersicherung (OneDrive > Einstellungen > Synchronisieren und sichern > Sicherung verwalten). Sicherst du mit einem anderen Programm oder auf ein NAS, trag den Befund in die Akzeptanzliste (accepted.psd1) ein.'
+    $empf = (T 'server.sicherung.empfKeine')
     [pscustomobject]@{ status = 'WARN'; wert = $wert; empfehlung = $empf }
 }

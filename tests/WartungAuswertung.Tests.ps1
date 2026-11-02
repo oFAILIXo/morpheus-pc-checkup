@@ -1,4 +1,6 @@
 ﻿#Requires -Version 5.1
+# Texte auf Deutsch (2.6): Einige Tests vergleichen Meldungen; die Sprache sonst nach Windows waere Zufall
+$env:MORPHEUS_SPRACHE = 'de'
 # Pester-3.4-Tests fuer gui\lib\WartungAuswertung.ps1. Reine Funktionen, keine Prozesse; Beispielausgaben in tests\fixtures\wartung.
 # Ausfuehren: Invoke-Pester tests\WartungAuswertung.Tests.ps1
 

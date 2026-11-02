@@ -13,6 +13,8 @@
     - Die Datei führt beim Laden nichts aus.
 #>
 
+. (Join-Path $PSScriptRoot 'Sprache.ps1')
+
 $script:MorpheusSpeicherVersion = 1
 # Dateien im Stammordner, die als Windows-Systemdateien gekennzeichnet werden
 $script:MorpheusSystemDateien = @('pagefile.sys', 'hiberfil.sys', 'swapfile.sys')
@@ -242,11 +244,11 @@ function Measure-MorpheusLaufwerk {
         fehler        = $null
     }
     if (-not (Test-Path -LiteralPath $wurzel -PathType Container)) {
-        $obj.fehler = "$wurzel ist nicht lesbar"
+        $obj.fehler = (T 'server.speicher.nichtLesbar' $wurzel)
         $obj.dauerSek = [int][math]::Round($sw.Elapsed.TotalSeconds)
         return [pscustomobject]$obj
     }
-    if ($Fortschritt) { try { & $Fortschritt "$Laufwerk wird gezählt …" } catch { } }
+    if ($Fortschritt) { try { & $Fortschritt (T 'server.speicher.gezaehlt' $Laufwerk) } catch { } }
     try {
         $r = Invoke-MorpheusZaehlen -Wurzel $wurzel -Tiefe $Tiefe -TopDateien $Top -Fortschritt $Fortschritt
         $stammNorm = (MorpheusSpeicherPfadNorm $wurzel).ToLowerInvariant()
@@ -561,11 +563,11 @@ function Get-MorpheusSpiele {
         @{ Text = 'Xbox'; Block = { if ($Laufwerke) { Get-MorpheusXboxSpiele -Laufwerke $Laufwerke } else { Get-MorpheusXboxSpiele } } }
     )
     foreach ($q in $quellen) {
-        if ($Fortschritt) { try { & $Fortschritt ('Spiele werden gesucht: ' + $q.Text + ' …') } catch { } }
+        if ($Fortschritt) { try { & $Fortschritt (T 'server.speicher.spieleSuchenQuelle' $q.Text) } catch { } }
         try { $alle += @(& $q.Block) } catch { }
     }
     if (@($Manuell).Count -gt 0) {
-        if ($Fortschritt) { try { & $Fortschritt 'Eigene Spiele-Ordner werden gemessen …' } catch { } }
+        if ($Fortschritt) { try { & $Fortschritt (T 'server.speicher.eigeneOrdner') } catch { } }
         try { $alle += @(Get-MorpheusManuelleSpiele -Eintraege $Manuell) } catch { }
     }
     $gesehen = @{}
@@ -591,7 +593,7 @@ function Get-MorpheusSpeicher {
     }
     $spiele = @()
     if (-not $OhneSpiele) {
-        if ($Fortschritt) { try { & $Fortschritt 'Spiele werden gesucht …' } catch { } }
+        if ($Fortschritt) { try { & $Fortschritt (T 'server.speicher.spieleSuchen') } catch { } }
         $spiele = @(Get-MorpheusSpiele -Laufwerke $Laufwerke -Fortschritt $Fortschritt -Manuell $Manuell)
     }
     [pscustomobject][ordered]@{
