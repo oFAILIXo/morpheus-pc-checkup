@@ -427,4 +427,8 @@ Without installation or without admin rights the GUI runs in read-only mode. The
 
 ## Lizenz / License
 
-[MIT](LICENSE) © 2026 oFAILIXo
+[PolyForm Noncommercial License 1.0.0](LICENSE) © 2026 oFAILIXo
+
+**Deutsch:** Du darfst Morpheus privat und für andere nicht-kommerzielle Zwecke frei nutzen, ansehen und anpassen. Die kommerzielle Verwertung (verkaufen, in bezahlte Produkte oder Dienste einbauen, gewerblich einsetzen) ist nur dem Urheber erlaubt. Die Releases bis einschließlich 2.6.0 wurden unter der MIT-Lizenz veröffentlicht und bleiben dort MIT; die neue Lizenz gilt ab der nächsten Version.
+
+**English:** You may use, study and modify Morpheus for private and other non-commercial purposes. Commercial exploitation (selling it, building it into paid products or services, business use) is reserved to the author. Releases up to and including 2.6.0 were published under the MIT License and stay MIT; the new license applies from the next version on.
