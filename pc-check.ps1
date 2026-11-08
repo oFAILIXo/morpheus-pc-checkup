@@ -90,7 +90,7 @@ $script:BenutzerTemp = $env:TEMP
 $env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
 foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 
-$ScriptVersion = '2.6.0'
+$ScriptVersion = '2.7.0'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
@@ -389,6 +389,12 @@ $script:SpeicherLib = $false
 $script:SicherungLib = $false
 $speicherLibPfad = Join-Path $PSScriptRoot 'gui\lib\Speicher.ps1'
 if (Test-Path -LiteralPath $speicherLibPfad) { . $speicherLibPfad; $script:SpeicherLib = $true }
+$script:NvidiaLib = $false
+$nvidiaLibPfad = Join-Path $PSScriptRoot 'gui\lib\NvidiaDrs.ps1'
+if (Test-Path -LiteralPath $nvidiaLibPfad) { try { . $nvidiaLibPfad; $script:NvidiaLib = $true } catch { } }
+$script:AudioLib = $false
+$audioLibPfad = Join-Path $PSScriptRoot 'gui\lib\Audio.ps1'
+if (Test-Path -LiteralPath $audioLibPfad) { try { . $audioLibPfad; $script:AudioLib = $true } catch { } }
 $script:WingetLib = $false
 $wingetLibPfad = Join-Path $PSScriptRoot 'gui\lib\Winget.ps1'
 if (Test-Path -LiteralPath $wingetLibPfad) { . $wingetLibPfad; $script:WingetLib = $true }
@@ -1573,8 +1579,9 @@ Invoke-Check 'Wiederherstellung' -NeedsAdmin {
             else {
                 $pct = [Math]::Round(100 * [double]$ss.MaxSpace / [double]$vol.Capacity, 1)
                 $maxText = '{0} ({1} %)' -f (Format-Size ([double]$ss.MaxSpace)), $pct
-                # Ein Punkt belegt oft 1–4 GB: unter 5 % bzw. 8 GB verdrängen neue Punkte die alten schnell
-                $klein = ($pct -lt 5) -or ([double]$ss.MaxSpace -lt 8GB)
+                # Ein Punkt belegt oft 1–4 GB: unter 5 % bzw. 8 GB verdrängen neue Punkte die alten schnell.
+                # Point-in-time restore erlaubt höchstens 50 GB (51200 MB): ab 49 GB gilt der Speicher auch unter 5 % als ausreichend.
+                $klein = (($pct -lt 5) -and ([double]$ss.MaxSpace -lt 49GB)) -or ([double]$ss.MaxSpace -lt 8GB)
             }
         }
     }
@@ -2665,6 +2672,20 @@ Invoke-Check 'Resizable BAR und PCIe-Anbindung' {
     else { Add-Finding OK $value }
 }
 
+Invoke-Check 'NVIDIA-Treibereinstellungen' {
+    # Nur lesen (Idee 5.6, Stufe 1): globales DRS-Profil über nvapi64.dll aus System32; Fehler beenden nur diese Prüfung
+    if (-not (Get-CimInstance Win32_VideoController | Where-Object Name -Match 'NVIDIA')) { Add-Finding SKIP (T 'scan.gaming.nurNvidia'); return }
+    if (-not $script:NvidiaLib) { Add-Finding SKIP (T 'scan.gaming.nvidiaUnlesbar'); return }
+    $roh = Get-MorpheusNvidiaDrsRoh
+    if ($null -eq $roh) { Add-Finding SKIP (T 'scan.gaming.nvidiaKeinTreiber'); return }
+    $b = Get-MorpheusNvidiaBefund -Roh @($roh.Zeilen)
+    if ($b.Gelesen -eq 0) { Add-Finding SKIP (T 'scan.gaming.nvidiaUnlesbar'); return }
+    Add-Table 'NVIDIA-Treibereinstellungen (globales Profil)' @($b.Zeilen)
+    $value = T 'scan.nvidia.wert' $roh.Treiber $b.Zusammenfassung
+    if ($b.Status -eq 'OK') { Add-Finding OK $value }
+    else { Add-Finding $b.Status $value (@($b.Hinweise) -join ' ') }
+}
+
 Invoke-Check 'Spielebibliotheken' {
     # Tabelle der installierten Spiele zuerst, damit die frühen return der bisherigen Auswertung sie nicht verhindern
     $spiele = @()
@@ -2779,6 +2800,44 @@ Invoke-Check 'Netzwerkkarte: Energiesparfunktionen' {
     if (-not $hits) { Add-Finding OK (T 'scan.gaming.keineEnergiespar' (($ad | ForEach-Object Name) -join ', ')); return }
     Add-Finding INFO (T 'scan.leistung.aktiv' (($hits | ForEach-Object { "$($_.Adapter): $($_.Name)" }) -join ', ')) (T 'scan.gaming.netzEnergiesparEmpf')
     $script:Findings[$script:Findings.Count - 1].Command = (($hits | ForEach-Object { "Set-NetAdapterAdvancedProperty -Name '$($_.Adapter)' -RegistryKeyword '$($_.Keyword)' -RegistryValue 0" }) -join "`n")
+}
+
+#endregion
+
+#region Performance: Audio
+
+# Idee 5.7, Stufe 2: nur lesen, nur belegte Fehlerursachen (kein Klangtuning). Logik in gui\lib\Audio.ps1.
+Start-Section 'Performance' 'Audio'
+
+Invoke-Check 'Audio: Treiberfehler' {
+    if (-not $script:AudioLib) { Add-Finding SKIP (T 'scan.hilfe.fehler' 'Audio.ps1'); return }
+    $b = Get-MorpheusAudioTreiberBefund -Geraete @(Get-MorpheusAudioGeraete)
+    Add-Finding $b.Status $b.Value $b.Recommendation
+}
+
+Invoke-Check 'Audio: Dienste' {
+    if (-not $script:AudioLib) { Add-Finding SKIP (T 'scan.hilfe.fehler' 'Audio.ps1'); return }
+    $b = Get-MorpheusAudioDienstBefund -Dienste @(Get-MorpheusAudioDienste)
+    Add-Finding $b.Status $b.Value $b.Recommendation
+}
+
+Invoke-Check 'Audio: Standardgeräte' {
+    if (-not $script:AudioLib) { Add-Finding SKIP (T 'scan.hilfe.fehler' 'Audio.ps1'); return }
+    $b = Get-MorpheusAudioStandardBefund -Roh (Get-MorpheusAudioStandard)
+    if (@($b.Zeilen).Count) { Add-Table 'Audio: Standardgeräte' @($b.Zeilen) }
+    Add-Finding $b.Status $b.Value $b.Recommendation
+}
+
+Invoke-Check 'Audio: USB-Energiesparen' {
+    if (-not $script:AudioLib) { Add-Finding SKIP (T 'scan.hilfe.fehler' 'Audio.ps1'); return }
+    $b = Get-MorpheusAudioUsbBefund -Endpunkte @(Get-MorpheusAudioEndpunkte) -EnergieHolen { Get-PowerSetting '2a737441-1930-4402-8d77-b2bebba308a3' '48e6b7a6-50f5-4782-a5d4-53bb8f07e226' }
+    Add-Finding $b.Status $b.Value $b.Recommendation
+}
+
+Invoke-Check 'Audio: Ducking' {
+    if (-not $script:AudioLib) { Add-Finding SKIP (T 'scan.hilfe.fehler' 'Audio.ps1'); return }
+    $b = Get-MorpheusAudioDuckingBefund -Wert (Get-MorpheusAudioDucking)
+    Add-Finding $b.Status $b.Value $b.Recommendation
 }
 
 #endregion
@@ -3455,7 +3514,7 @@ function Write-HtmlReport {
         "<div class=`"c-status`"><span class=`"badge b-$($F.Status)`">$(HEnc $statusName[$F.Status])</span>$todo</div>" +
         "<div class=`"c-check`">$check$infoBtn$hint</div>" +
         "<div class=`"c-value`">$(HEnc $F.Value)$note</div>" +
-        "<div class=`"c-rec`">$(HEnc $F.Recommendation)$(Get-Levels $F)$(if (-not $Summary) { Get-HowTo $F })</div></div>"
+        "<div class=`"c-rec`">$((HEnc $F.Recommendation) -replace 'ms-settings:[a-z-]+', '<a href="$0">$0</a>')$(Get-Levels $F)$(if (-not $Summary) { Get-HowTo $F })</div></div>"
     }
     # Kleines Liniendiagramm (SVG) für den Verlauf
     function Get-Chart([string]$Title, [string]$Prop, [string]$Unit, [string]$Better) {
@@ -3512,7 +3571,7 @@ function Write-HtmlReport {
     $todo = @($findings | Where-Object { $_.Status -in 'CRIT', 'WARN' } | Sort-Object { $rank[$_.Status] }, { if ($_.Area -eq 'Sicherheit') { 0 } else { 1 } }, Category)
 
     # Gaming-Check nur im Profil Gaming
-    $gamingChecks = 'Bildschirme und Bildwiederholrate', 'Grafikkarte und Treiber', 'Resizable BAR und PCIe-Anbindung', 'Arbeitsspeicher', 'Prozessor-Energieeinstellungen', 'Energieplan',
+    $gamingChecks = 'Bildschirme und Bildwiederholrate', 'Grafikkarte und Treiber', 'Resizable BAR und PCIe-Anbindung', 'NVIDIA-Treibereinstellungen', 'Arbeitsspeicher', 'Prozessor-Energieeinstellungen', 'Energieplan',
     'Spielebibliotheken', 'Spielmodus', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'Hintergrundaufzeichnung (Game DVR)', 'Optimierungen für Spiele im Fenstermodus',
     'Overlays und Hintergrund-Tools', 'Mausbeschleunigung', 'Netzwerkverbindung', 'Netzwerkkarte: Energiesparfunktionen', 'Virtualisierung und Spieleleistung'
     $gamingRows = if ($script:Profile -eq 'Gaming') { @($gamingChecks | ForEach-Object { $c = $_; $findings | Where-Object Check -EQ $c | Select-Object -First 1 } | Where-Object { $_ }) } else { @() }

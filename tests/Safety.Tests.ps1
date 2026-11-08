@@ -363,6 +363,34 @@ Describe 'Undo-PcCheckChange' {
         (Get-TestJournal $script:root).Count | Should Be 1
     }
 
+    It 'nutzt bei 24-h-Sperre den noch vorhandenen Punkt der Ausführung (#95)' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        $script:fakeWorks = $false   # Punkte bleiben, neue entstehen nicht
+        $u = Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue
+        $u.status | Should Be 'erledigt'
+        Test-Path -LiteralPath (Get-FakeFile $script:root 'a') | Should Be $false
+        $script:fakeCreateCalls.Count | Should Be 2
+        $j = Get-TestJournal $script:root
+        $j.Count | Should Be 2
+        $undo = $j[1]
+        $undo.art | Should Be 'rueckgaengig'
+        $undo.wiederherstellungspunkt.seq | Should Be $entry.wiederherstellungspunkt.seq
+        $undo.wiederherstellungspunkt.zeit | Should Be $entry.wiederherstellungspunkt.zeit
+        $undo.wiederherstellungspunkt.wiederverwendet | Should Be $true
+    }
+
+    It 'nimmt bei 24-h-Sperre nichts zurück, wenn der Punkt der Ausführung nicht mehr passt' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        $script:fakeWorks = $false
+        # Gleiche Sequenznummer, andere Zeit (z. B. gelöscht und neu nummeriert): zählt nicht
+        $script:fakePoints[0].CreationTime = [Management.ManagementDateTimeConverter]::ToDmtfDateTime((Get-Date).AddDays(-3))
+        { Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue | Out-Null } | Should Throw
+        Read-FakeFile $script:root 'a' | Should Be 'an'
+        (Get-TestJournal $script:root).Count | Should Be 1
+    }
+
     It 'lässt Zurückgenommenes, Rücknahmen und unbekannte Einträge nicht zu' {
         Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
         $entry = (Get-TestJournal $script:root)[0]
@@ -557,5 +585,40 @@ Describe 'Undo-PcCheckChange: Abgleich des Journal-Eintrags mit der Aktion' {
         try { Undo-PcCheckChange -Root $root -EntryId $entry.id -Force -InformationAction SilentlyContinue | Out-Null } catch { $msg = $_.Exception.Message }
         $msg | Should Match 'passt nicht zur Aktion'
         Read-FakeFile $root 'a' | Should Be 'an'
+    }
+}
+
+Describe 'Get-PcCheckSafetyStatus: seitStart (Neustart ausstehend, #95)' {
+    BeforeEach {
+        $script:root = New-FakeRoot $TestDrive
+        Set-FakeRestorePoints $true
+        $script:bootAlt = $script:PcCheckBootTimeImpl
+    }
+    AfterEach { $script:PcCheckBootTimeImpl = $script:bootAlt }
+
+    It 'listet Aktionen, die seit dem letzten Start ausgeführt wurden' {
+        $script:PcCheckBootTimeImpl = { (Get-Date).AddMinutes(-5) }
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.restart' -InformationAction SilentlyContinue | Out-Null
+        $s = Get-PcCheckSafetyStatus -Root $script:root
+        @($s.seitStart) -contains 'fake.restart' | Should Be $true
+    }
+
+    It 'lässt Aktionen vor dem letzten Start und Zurückgenommenes weg' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.restart' -InformationAction SilentlyContinue | Out-Null
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $script:PcCheckBootTimeImpl = { (Get-Date).AddMinutes(5) }
+        @((Get-PcCheckSafetyStatus -Root $script:root).seitStart).Count | Should Be 0
+        $script:PcCheckBootTimeImpl = { (Get-Date).AddMinutes(-5) }
+        $e = (Get-TestJournal $script:root) | Where-Object { $_.aktion -eq 'fake.a' }
+        Undo-PcCheckChange -Root $script:root -EntryId $e.id -InformationAction SilentlyContinue | Out-Null
+        $s = @((Get-PcCheckSafetyStatus -Root $script:root).seitStart)
+        $s -contains 'fake.a' | Should Be $false
+        $s -contains 'fake.restart' | Should Be $true
+    }
+
+    It 'bleibt leer, wenn die Startzeit nicht lesbar ist' {
+        $script:PcCheckBootTimeImpl = { $null }
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.restart' -InformationAction SilentlyContinue | Out-Null
+        @((Get-PcCheckSafetyStatus -Root $script:root).seitStart).Count | Should Be 0
     }
 }

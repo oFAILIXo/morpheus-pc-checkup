@@ -4,7 +4,7 @@
     Status     = @{
         CRIT = 'Kritisch: echtes Sicherheits- oder Stabilitätsrisiko. Zuerst beheben.'
         WARN = 'Warnung: sollte behoben werden, ist aber selten akut. Prüfen, ob es bewusst so gewollt ist.'
-        ACK  = 'Akzeptiert: eine Warnung, die du in accepted.psd1 bewusst als gewollt eingetragen hast. Meldet sich nach Ablaufdatum oder wenn sich der Befund ändert wieder.'
+        ACK  = 'Akzeptiert: eine Warnung, die du bewusst als gewollt akzeptiert hast (in der Oberfläche über „Akzeptieren“, ohne Oberfläche in der Datei accepted.psd1). Meldet sich nach Ablaufdatum oder wenn sich der Befund ändert wieder.'
         TIPP = 'Tipp: kein Problem, aber eine lohnende Verbesserung. Nutzen, Aufwand und Risiko stehen dabei, die Anleitung unter „So geht''s“.'
         INFO = 'Hinweis: reine Information zur Einordnung, nichts zu tun.'
         OK   = 'OK: alles in Ordnung.'
@@ -28,6 +28,7 @@
         'Gaming & Grafik'            = 'Windows-Einstellungen, die Spiele flüssiger oder ruckeliger machen.'
         'Auslastung'                 = 'Momentaufnahme der Grundlast: Was im Hintergrund Rechenzeit und Speicher kostet.'
         'Stabilität'                 = 'Abstürze, Hardwarefehler und Probleme beim Start. Häufen sie sich, steckt oft Hardware, Übertaktung oder ein Treiber dahinter.'
+        'Audio'                      = 'Ton-Einstellungen, die nachweislich Fehler verursachen: Treiberfehler, gestoppte Audiodienste, falsches Standardgerät. Nur lesend, kein Klangtuning.'
     }
 
     Pruefungen = @{
@@ -134,6 +135,12 @@
         'Overlays und Hintergrund-Tools'             = @{ Was = 'Laufende Overlays und RGB-/Tuning-Tools.'; Warum = 'Jedes kostet etwas Leistung und kann Ruckler verursachen; manche bringen anfällige Treiber mit.'; Harmlos = 'Tools, die du aktiv nutzt.' }
         'Virtualisierung und Spieleleistung'         = @{ Was = 'Ob Virtualisierung und Speicherintegrität aktiv sind.'; Warum = 'Kostet wenige Prozent Leistung, schützt aber stark.'; Harmlos = 'Empfehlung: anlassen.' }
         'Resizable BAR und PCIe-Anbindung'           = @{ Was = 'Ob die CPU den ganzen Grafikspeicher auf einmal ansprechen kann (Resizable BAR) und wie die Grafikkarte angebunden ist.'; Warum = 'Resizable BAR bringt in vielen aktuellen Spielen einige Prozent mehr FPS; eine Karte mit zu wenigen Lanes verschenkt Leistung.'; Harmlos = 'Ältere Mainboards ohne die BIOS-Option; x8 bei Karten, die nur x8 haben; PCIe 3.0 statt 4.0 kostet kaum etwas.' }
+        'NVIDIA-Treibereinstellungen'                = @{ Was = 'Liest das globale NVIDIA-Treiberprofil (wie im NVIDIA-Systemsteuerungsprogramm unter 3D-Einstellungen): Shader-Cache, Energieverwaltung, V-Sync, maximale Bildrate und G-SYNC.'; Warum = 'Eine versehentlich globale Einstellung wie ausgeschalteter Shader-Cache, erzwungenes V-Sync oder ein Bildratenlimit kostet in allen Spielen Leistung oder verursacht Ruckler.'; Harmlos = 'Bewusst gesetzte Werte, zum Beispiel ein Bildratenlimit oder V-Sync an einem Monitor ohne G-SYNC. Der Check liest nur und ändert nichts.' }
+        'Audio: Treiberfehler' = @{ Was = 'Ob ein vorhandenes Audiogerät im Geräte-Manager einen Fehlercode meldet.'; Warum = 'Ein Gerät mit Treiberfehler liefert keinen Ton oder verschwindet aus der Auswahl.'; Harmlos = 'Nie: ein gemeldeter Fehlercode ist ein echter Befund. Nicht vorhandene (ausgesteckte) Geräte werden nicht geprüft.' }
+        'Audio: Dienste' = @{ Was = 'Ob die Dienste Windows-Audio und Audio-Endpunkterstellung laufen und automatisch starten.'; Warum = 'Ohne diese Dienste gibt es keinen Ton.'; Harmlos = 'Nie: beide laufen normalerweise immer.' }
+        'Audio: Standardgeräte' = @{ Was = 'Welche Geräte Windows für Wiedergabe und Aufnahme (jeweils normal und Kommunikation) verwendet.'; Warum = 'Kommt kein Ton aus Lautsprechern oder Headset, ist oft ein Monitor (HDMI/DisplayPort) als Standard gewählt.'; Harmlos = 'Gewollt, wenn der Ton über den Monitor oder Fernseher laufen soll. Reine Information.' }
+        'Audio: USB-Energiesparen' = @{ Was = 'Ob Windows USB-Anschlüsse im Leerlauf abschalten darf, wenn ein USB-Audiogerät aktiv ist.'; Warum = 'Kann bei USB-Headsets oder -Mikrofonen Aussetzer oder Knacksen verursachen.'; Harmlos = 'Standardeinstellung von Windows; nur relevant, wenn es tatsächlich Aussetzer gibt.' }
+        'Audio: Ducking' = @{ Was = 'Ob Windows bei Anrufen andere Töne leiser stellt (Einstellung Kommunikation).'; Warum = 'Erklärt, warum Musik oder Spiele bei Discord, Teams oder Telefonaten leiser werden.'; Harmlos = 'Eine Vorliebe, kein Fehler.' }
         'Spielebibliotheken'                         = @{ Was = 'Auf welchen Laufwerken die Spiele von Steam, Epic, GOG, Ubisoft und Xbox liegen und wie voll diese sind.'; Warum = 'Spiele auf einer Festplatte laden langsam und ruckeln beim Nachladen; fast volle SSDs werden beim Schreiben langsamer.'; Harmlos = 'Alte oder selten gespielte Spiele auf einer Festplatte.' }
         'Netzwerkkarte: Energiesparfunktionen'       = @{ Was = 'Energiesparfunktionen der LAN-Karte (Energy Efficient Ethernet, Green Ethernet, Ultra Low Power).'; Warum = 'Sie legen die Verbindung in Ruhephasen schlafen; beim Aufwachen kann es kurze Latenzspitzen geben.'; Harmlos = 'Bei Laptops und reinen Büro-PCs, wo jedes Watt zählt.' }
         'CPU-Last (Stichprobe 5 s)'                  = @{ Was = 'CPU-Auslastung im Leerlauf über 5 Sekunden.'; Warum = 'Hohe Grundlast ohne laufendes Programm deutet auf Hintergrundprozesse oder Schadsoftware.'; Harmlos = 'Kurz nach dem Start (Updates, Indexierung) oder während pc-check selbst.' }

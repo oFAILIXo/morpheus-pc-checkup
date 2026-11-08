@@ -42,7 +42,7 @@
     'katalog.wiederherstellung.an' = 'an für {0}'
     'katalog.wiederherstellung.ausRichtlinie' = 'aus (per Richtlinie)'
     'katalog.wiederherstellung.aus' = 'aus für {0}'
-    'katalog.speicher.pitr' = 'Windows verwaltet die Grenze über „Point-in-time restore“ und setzt sie bei jedem Start zurück. Bitte selbst einstellen: Einstellungen > System > Wiederherstellung > Point-in-time restore > Anzeigen oder bearbeiten, Regler auf etwa 10 %. Ist Point-in-time restore dort aus: sysdm.cpl > Computerschutz > Konfigurieren > Max. Belegung.'
+    'katalog.speicher.pitr' = 'Windows verwaltet die Grenze über „Point-in-time restore“ und setzt einen Wert, der nur unter sysdm.cpl oder per vssadmin gesetzt ist, beim nächsten Start zurück. Bitte an beiden Stellen selbst einstellen, maßgeblich sind die Einstellungen: 1. ms-settings:recovery > Point-in-time restore > Anzeigen oder bearbeiten, Regler auf etwa 10 % (Windows erlaubt höchstens 50 GB). 2. Denselben Wert unter sysdm.cpl > Computerschutz > Konfigurieren > Max. Belegung. Nach einem Neustart Morpheus erneut prüfen lassen: Der Befund „Wiederherstellung“ zeigt, ob der Wert gehalten hat.'
     'katalog.speicher.schutzAus' = 'Der Computerschutz ist aus; zuerst „Computerschutz einschalten“ ausführen.'
     'katalog.speicher.nurAdmin' = 'nur mit Administratorrechten lesbar'
     'katalog.speicher.keinSpeicher' = 'für {0} noch kein Speicher eingerichtet'

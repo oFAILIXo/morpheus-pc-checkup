@@ -8,11 +8,18 @@
     const nav = new URLSearchParams(location.search).get('nav');
     if (nav != null) { const o = {}; nav.split(',').filter(Boolean).forEach(k => { o[k] = true; }); localStorage.setItem('morpheusNavAuf', JSON.stringify(o)); }
   } catch { /* egal */ }
+  // Für Screenshots: mock.html?palette=gruvbox&theme=light setzt die Darstellung (2.7, #100)
+  try {
+    const q = new URLSearchParams(location.search);
+    if ((q.get('palette') || q.get('theme')) && window.MorpheusPalette) window.MorpheusPalette.set(q.get('palette'), q.get('theme'));
+    // Für Screenshots: mock.html?modus=experte bzw. ?modus=einfach setzt den Ansichtsmodus (2.7, #103)
+    if (q.get('modus') === 'experte' || q.get('modus') === 'einfach') localStorage.setItem('morpheusModus', q.get('modus'));
+  } catch { /* egal */ }
   const iso = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
   const F = (Area, Category, Check, Status, Value, Recommendation = '', x = {}) => ({ Area, Category, Check, Status, Value, Recommendation, OriginalStatus: '', Note: '', Effort: '', Benefit: '', Risk: '', Steps: [], Command: '', ...x });
   const base = [
     F('Sicherheit', 'System & Updates', 'Windows-Version', 'OK', 'Windows 11 Pro 24H2 (Demo)'),
-    F('Sicherheit', 'System & Updates', 'Windows Update: ausstehend', 'TIPP', 'Nur optional: Treiber', 'Optionale Treiber nur bei Problemen installieren.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering', Steps: ['Einstellungen > Windows Update > „Nach Updates suchen“.', 'Danach neu starten.'] }),
+    F('Sicherheit', 'System & Updates', 'Windows Update: ausstehend', 'INFO', 'Nur optional bzw. automatisch: Treiber', 'Defender lädt Signaturen selbst; optionale Treiber nur bei Problemen installieren, Grafiktreiber besser direkt vom Hersteller.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering', Steps: ['Einstellungen > Windows Update > „Nach Updates suchen“.', 'Danach neu starten.'] }),
     F('Sicherheit', 'Virenschutz', 'Microsoft Defender: Status', 'OK', 'Echtzeit-, Verhaltens- und Download-Schutz aktiv'),
     F('Sicherheit', 'Virenschutz', 'Defender: Einstellungen', 'TIPP', 'Netzwerkschutz aus; PUA-Schutz an', 'Netzwerkschutz einschalten.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering', Steps: ['Rechtsklick auf Start > „Terminal (Administrator)“.', 'Befehl einfügen.'], Command: 'Set-MpPreference -EnableNetworkProtection Enabled' }),
     F('Sicherheit', 'Virenschutz', 'Defender: ASR-Regeln', 'TIPP', 'Keine Regeln aktiv', 'Zwei Basisregeln aktivieren.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering' }),
@@ -25,7 +32,7 @@
     F('Sicherheit', 'Verschlüsselung & Firmware', 'TPM', 'SKIP', 'Nur mit Adminrechten prüfbar'),
     F('Sicherheit', 'Systemhärtung', 'Kernisolierung (VBS / Speicherintegrität)', 'INFO', 'VBS läuft, Speicherintegrität aus'),
     F('Sicherheit', 'Verschlüsselung & Firmware', 'BitLocker', 'ACK', 'Systemlaufwerk nicht verschlüsselt', '', { OriginalStatus: 'WARN', Note: 'Bewusst zurückgestellt bis 30.04.2027' }),
-    F('Sicherheit', 'Verschlüsselung & Firmware', 'Datensicherung', 'WARN', 'Dateiversionsverlauf aus; OneDrive: Desktop, Dokumente; kein Systemabbild', 'Dateiversionsverlauf einschalten oder wichtige Ordner über OneDrive sichern. Sicherst du mit einem anderen Programm oder auf ein NAS, trag den Befund in die Akzeptanzliste (accepted.psd1) ein.', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering', Steps: ['Einstellungen > System > Speicher > Erweiterte Speichereinstellungen > Sicherungsoptionen öffnen.', 'Dateiversionsverlauf einschalten und ein Ziel wählen (externe Festplatte oder NAS).', 'Optional: OneDrive-Sicherung für Desktop, Dokumente und Bilder einrichten.'] }),
+    F('Sicherheit', 'Verschlüsselung & Firmware', 'Datensicherung', 'WARN', 'Dateiversionsverlauf aus; OneDrive: Desktop, Dokumente; kein Systemabbild', 'Dateiversionsverlauf einschalten oder wichtige Ordner über OneDrive sichern. Sicherst du mit einem anderen Programm oder auf ein NAS, akzeptiere den Befund als gewollt.', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering', Steps: ['Einstellungen > System > Speicher > Erweiterte Speichereinstellungen > Sicherungsoptionen öffnen.', 'Dateiversionsverlauf einschalten und ein Ziel wählen (externe Festplatte oder NAS).', 'Optional: OneDrive-Sicherung für Desktop, Dokumente und Bilder einrichten.'] }),
     F('Sicherheit', 'Systemhärtung', 'LSA-Schutz', 'TIPP', 'aus', 'LSA-Schutz einschalten (Neustart).', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering' }),
     F('Sicherheit', 'Autostart & Persistenz', 'Autostarts: Signaturen (Autoruns)', 'WARN', 'Systemnahe Autostarts ohne verifizierte Signatur (1): DemoVendor Updater Task; Weitere Autostarts ohne Signatur (2): DemoTool, Old Helper', 'Prüfen, ob die Einträge zu Programmen gehören, die du kennst. Unbekannte Dienste nicht einfach löschen, sondern erst recherchieren.'),
     F('Sicherheit', 'Autostart & Persistenz', 'Autostarts: beschreibbare Pfade (Autoruns)', 'INFO', 'Autostarts in beschreibbaren Ordnern (1): DemoTool', 'Üblich bei Programmen in AppData; kein Rechtegewinn.'),
@@ -36,6 +43,8 @@
     F('Performance', 'Laufwerke & Speicherplatz', 'Größte Speicherverbraucher', 'INFO', 'C: C:\\Users\\Demo\\AppData (41 GB); F: F:\\SteamLibrary\\steamapps\\common\\Starfall Odyssey (142 GB); D: D:\\Videos (612 GB)'),
     F('Performance', 'Energie', 'Energieplan', 'OK', 'Ausbalanciert aktiv'),
     F('Performance', 'Energie', 'Schnellstart', 'TIPP', 'an: Treiberprobleme überdauern das Herunterfahren', 'Schnellstart ausschalten.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering' }),
+    F('Performance', 'Audio', 'Audio: Dienste', 'OK', 'Windows-Audio und Windows-Audio-Endpunkterstellung laufen und starten automatisch'),
+    F('Performance', 'Audio', 'Audio: Standardgeräte', 'INFO', 'Wiedergabe: Lautsprecher; Wiedergabe (Kommunikation): Kopfhörer; Aufnahme: Mikrofon', 'Hinweis: Klangverbesserungen und Zusatzsoftware nur bei Beschwerden testweise abschalten. Bei Knacksen oder Aussetzern hilft LatencyMon bei der Ursachensuche. Sound-Einstellungen: ms-settings:sound'),
     F('Performance', 'Auslastung', 'CPU-Auslastung', 'OK', 'Im Leerlauf 3 %'),
     F('Performance', 'Gaming & Grafik', 'Spielmodus', 'OK', 'an'),
     F('Performance', 'Gaming & Grafik', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'TIPP', 'aus', 'HAGS einschalten (Neustart).', { Effort: 'gering', Benefit: 'mittel', Risk: 'mittel' }),
@@ -176,7 +185,7 @@
     A('defender.asr-basis', 'Sicherheit', 'Defender: ASR-Regeln', 'ASR-Basisregeln aktivieren', 'Zwei Regeln gegen Treiber- und Anmeldedaten-Missbrauch.', 'mittel', 'gering', 'gering', { cmd: 'Add-MpPreference -AttackSurfaceReductionRules_Ids 56a863a9-875e-4185-98a7-b882c64b5ce5 -AttackSurfaceReductionRules_Actions <variante>', undo: 'Remove-MpPreference …', o: { varianten: ['Enabled', 'AuditMode'], zustand: { aktiv: false, wert: '0 Regeln', stand: iso(new Date()) } } }),
     A('fernzugriff.remoteunterstuetzung', 'Sicherheit', 'Remoteunterstützung', 'Remoteunterstützung ausschalten', 'Verhindert Fernhilfe-Einladungen.', 'gering', 'gering', 'gering', { cmd: 'Set-ItemProperty …', o: { zustand: { aktiv: true, wert: 'aus', stand: iso(new Date()) } } }),
     A('haertung.lsa', 'Sicherheit', 'LSA-Schutz', 'LSA-Schutz einschalten', 'Schützt gespeicherte Anmeldedaten im Arbeitsspeicher.', 'hoch', 'gering', 'gering', { cmd: 'New-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Lsa -Name RunAsPPL -Value 1 -Force', o: { neustart: true } }),
-    A('system.schnellstart', 'Leistung', 'Schnellstart', 'Schnellstart ausschalten', 'Windows fährt dann wirklich herunter.', 'mittel', 'gering', 'gering', { cmd: 'powercfg /hibernate off', undo: 'powercfg /hibernate on', expl: ['Schaltet Ruhezustand und Schnellstart ab.'], o: { zustand: { aktiv: false, wert: 'an', stand: iso(new Date()) } } }),
+    A('system.schnellstart', 'Leistung', 'Schnellstart', 'Schnellstart ausschalten', '„Herunterfahren“ fährt Windows dann wirklich komplett herunter, sodass Treiber-, Update- und BIOS-Änderungen sicher greifen. Der Start dauert mit einer NVMe-SSD kaum merklich länger; der Ruhezustand bleibt unberührt.', 'mittel', 'gering', 'gering', { cmd: 'powercfg /hibernate off', undo: 'powercfg /hibernate on', expl: ['Schaltet Ruhezustand und Schnellstart ab.'], o: { zustand: { aktiv: false, wert: 'an', stand: iso(new Date()) } } }),
     A('energie.plan', 'Leistung', 'Energieplan', 'Energieplan wechseln', 'Wechselt zu einem vorhandenen Energiesparplan.', 'mittel', 'gering', 'gering', { cmd: 'powercfg /setactive <variante>', o: { varianten: ['Ausbalanciert', 'Höchstleistung', 'Gaming (dynamisch)'], zustand: { aktiv: false, wert: 'Ausbalanciert', stand: iso(new Date()) } } }),
     A('gaming.spielmodus', 'Gaming', 'Spielmodus', 'Spielmodus einschalten', 'Priorisiert Spiele.', 'mittel', 'gering', 'gering', { cmd: 'Set-ItemProperty …', o: { zustand: { aktiv: true, wert: 'an', stand: iso(new Date()) } } }),
     A('gaming.hags', 'Gaming', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'HAGS einschalten', 'Die Grafikkarte plant ihren Speicher selbst.', 'mittel', 'gering', 'mittel', { cmd: 'Set-ItemProperty -Path HKLM:\\SYSTEM\\CurrentControlSet\\Control\\GraphicsDrivers -Name HwSchMode -Value 2', o: { neustart: true } }),
@@ -189,8 +198,8 @@
     { id: '20261024-190211-01', zeit: '2026-10-24T19:02:11', art: 'ausfuehren', aktion: 'netz.eee', titel: 'Energiesparfunktionen Netzwerkkarte aus', variante: null, vorher: 'an', nachher: 'aus', wiederherstellungspunkt: { seq: 56, zeit: '2026-10-24T19:02:00' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
     { id: '20261024-110000-01', zeit: '2026-10-24T11:00:00', art: 'ausfuehren', aktion: 'gaming.gamedvr', titel: 'Game DVR aus (Zustand wurde danach geändert)', variante: null, vorher: 1, nachher: 0, wiederherstellungspunkt: { seq: 55, zeit: '2026-10-24T10:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
   ];
-  const session = { datenordner: null, version: '2.6.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
-    safety: { schutzAn: true, laufwerk: 'C:', sperre24h: true, letzterPunkt: '2026-10-25T12:02:11', befehl: "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" } };
+  const session = { datenordner: null, version: '2.7.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
+    safety: { schutzAn: true, laufwerk: 'C:', sperre24h: true, seitStart: [], letzterPunkt: /punktHeute/.test(location.search) ? new Date(Date.now() - 36e5).toISOString() : '2026-10-25T12:02:11', befehl: "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" } };
   // v2.4 (#63): Demo-Schalter ?datenordner=1 (reparierbar, Nur-Lesen) bzw. ?datenordner=repariert (normal, Reparatur heute)
   const dMode = new URLSearchParams(location.search).get('datenordner');
   if (dMode === '1') {
@@ -275,6 +284,7 @@
     const id = newJob('aendern', lines, () => sel.map(a => {
       const vorher = a.zustand.wert; a.zustand = { aktiv: true, wert: variante || 'geändert', stand: iso(new Date()) };
       journal.unshift({ id: 'e' + Date.now() + a.id, zeit: iso(new Date()), art: 'ausfuehren', aktion: a.id, titel: a.titel, variante: variante || null, vorher, nachher: a.zustand.wert, wiederherstellungspunkt: { seq: 57, zeit: iso(new Date()) }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' });
+      session.safety.seitStart = [...new Set([...(session.safety.seitStart || []), a.id])];
       return { id: a.id, status: 'erledigt', vorher, nachher: a.zustand.wert, neustart: !!a.neustart, meldung: '' };
     }));
     return [200, { jobId: id }];
@@ -288,6 +298,7 @@
     if (e.titel.includes('geändert') && !force) return [409, { error: 'Der Zustand hat sich seit der Änderung geändert (aktuell ≠ gespeicherter Nachher-Zustand).' }];
     const id = newJob('aendern', ['Lese aktuellen Zustand …', 'Lege Wiederherstellungspunkt an …', 'Prüfe Wiederherstellungspunkt: vorhanden (#58)', 'Schreibe Journal-Eintrag …', 'Führe aus: Rückgängig', 'Prüfe Ergebnis …'], () => {
       e.status = 'zurueckgenommen';
+      session.safety.seitStart = (session.safety.seitStart || []).filter(x => x !== e.aktion);
       const a = actions.find(x => x.id === e.aktion); if (a) a.zustand = { aktiv: false, wert: String(e.vorher), stand: iso(new Date()) };
       journal.unshift({ id: 'u' + Date.now(), zeit: iso(new Date()), art: 'rueckgaengig', aktion: e.aktion, titel: e.titel, variante: null, vorher: e.nachher, nachher: e.vorher, wiederherstellungspunkt: { seq: 58, zeit: iso(new Date()) }, status: 'erledigt', bezug: e.id, meldung: '', benutzer: 'demo' });
       return { id: e.aktion, status: 'erledigt', vorher: e.nachher, nachher: e.vorher, neustart: false, meldung: '' };
@@ -686,7 +697,7 @@
     else if (path === '/api/actions/run') res = runActions(body.ids || [], body.variante);
     else if (path === '/api/journal') res = [200, journal];
     else if ((m = path.match(/^\/api\/journal\/([^/]+)\/undo$/))) res = undo(decodeURIComponent(m[1]), !!body.force, !!body.vorReparatur);
-    else if (path === '/api/restorepoints') res = [200, [{ seq: 57, zeit: '2026-10-25T12:02:11', beschreibung: 'pc-check: Demo-Änderung', typ: 'MODIFY_SETTINGS' }, { seq: 56, zeit: '2026-10-24T19:02:00', beschreibung: 'pc-check: Energiesparfunktionen Netzwerkkarte aus', typ: 'MODIFY_SETTINGS' }, { seq: 55, zeit: '2026-10-24T11:40:00', beschreibung: 'Windows Update', typ: 'APPLICATION_INSTALL' }]];
+    else if (path === '/api/restorepoints') res = [200, [{ seq: 57, zeit: '2026-10-25T12:02:11', beschreibung: 'Morpheus: Demo-Änderung', typ: 'MODIFY_SETTINGS' }, { seq: 56, zeit: '2026-10-24T19:02:00', beschreibung: 'Morpheus: Energiesparfunktionen Netzwerkkarte aus', typ: 'MODIFY_SETTINGS' }, { seq: 55, zeit: '2026-10-24T11:40:00', beschreibung: 'Windows Update', typ: 'APPLICATION_INSTALL' }]];
     else if (path === '/api/datenordner/reparieren') res = method === 'POST' ? datenordnerReparieren(body) : [405, { error: 'Nur POST' }];
     else if (path === '/api/shutdown') res = [200, { ok: true }];
     else if (path === '/api/scan') res = scan(body);

@@ -18,7 +18,7 @@ function New-FakeCodeTree {
         New-Item -ItemType Directory -Path (Join-Path $r $d) -Force | Out-Null
     }
     foreach ($f in 'pc-check.ps1', 'pc-check.cmd', 'lang\de\hilfe.psd1', 'lang\en\gui.psd1', 'lang\fr\gui.psd1', 'pc-check.aktionen.ps1', 'pc-check-gui.ps1', 'pc-check-gui.cmd',
-        'accepted.example.psd1', 'README.md', 'accepted.psd1', 'gui\index.html', 'gui\app.js', 'gui\app.css', 'gui\lib\Safety.ps1', 'gui\lib\Server.ps1',
+        'accepted.example.psd1', 'README.md', 'accepted.psd1', 'gui\index.html', 'gui\app.js', 'gui\app.css', 'gui\palette.js', 'gui\palettes.css', 'gui\lib\Safety.ps1', 'gui\lib\Server.ps1',
         'gui\lib\Install.ps1', 'gui\lib\notes.txt', 'gui\assets\logo.png', 'gui\dev\mock.js', 'tests\Safety.Tests.ps1', 'docs\x.md',
         'reports\pc-check_2026-01-01_0000.json', 'changes\journal.json', 'state\gui.log', '.git\config') {
         Set-Content -LiteralPath (Join-Path $r $f) -Value 'x'
@@ -101,7 +101,7 @@ Describe 'Get-MorpheusCodeFiles' {
     It 'liefert in einem nachgebauten Baum genau die Laufzeitdateien' {
         $r = New-FakeCodeTree $TestDrive
         $rel = @(Get-MorpheusCodeFiles -Root $r | ForEach-Object { $_.Substring($r.Length).TrimStart('\') } | Sort-Object)
-        $expected = @('README.md', 'accepted.example.psd1', 'gui\app.css', 'gui\app.js', 'gui\assets\logo.png', 'gui\index.html', 'gui\lib\Install.ps1',
+        $expected = @('README.md', 'accepted.example.psd1', 'gui\app.css', 'gui\app.js', 'gui\palette.js', 'gui\palettes.css','gui\assets\logo.png', 'gui\index.html', 'gui\lib\Install.ps1',
             'gui\lib\Safety.ps1', 'gui\lib\Server.ps1', 'pc-check-gui.cmd', 'pc-check-gui.ps1', 'pc-check.aktionen.ps1', 'pc-check.cmd',
             'lang\de\hilfe.psd1', 'lang\en\gui.psd1', 'pc-check.ps1') | Sort-Object
         ($rel -join '|') | Should Be ($expected -join '|')
