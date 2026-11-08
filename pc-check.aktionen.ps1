@@ -447,9 +447,9 @@
             $pitr = $null
             try { $pitr = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Setup\' -TaskName 'PITRTask' -ErrorAction Stop } catch { }
             if ($pitr -and ([string]$pitr.State -ne 'Disabled')) { $wert = (T 'katalog.speicher.mitPitr' $wert) }
-            # Ziel erreicht ab 8 % (die Aktion setzt 10 %). Der Zustand zählt in ganzen MB: Windows speichert die Grenze
+            # Ziel erreicht ab 8 % (die Aktion setzt 10 %) oder ab 49 GB (Point-in-time restore erlaubt höchstens 50 GB). Der Zustand zählt in ganzen MB: Windows speichert die Grenze
             # gerundet, bytegenau würde die Kontrolle nach dem Rückgängigmachen fälschlich abweichen.
-            [pscustomobject]@{ Aktiv = ($pct -ge 8); Wert = $wert; Zustand = [ordered]@{ Laufwerk = $lw; Max = ('{0}MB' -f [Math]::Floor([double]$max / 1MB)) } }
+            [pscustomobject]@{ Aktiv = (($pct -ge 8) -or ([double]$max -ge 49GB)); Wert = $wert; Zustand = [ordered]@{ Laufwerk = $lw; Max = ('{0}MB' -f [Math]::Floor([double]$max / 1MB)) } }
         }
         Ausfuehren = {
             param($Variante)

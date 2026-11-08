@@ -4,7 +4,7 @@
     Status     = @{
         CRIT = 'Critical: a real security or stability risk. Fix this first.'
         WARN = 'Warning: should be fixed, but is rarely urgent. Check whether it is intended.'
-        ACK  = 'Accepted: a warning that you deliberately entered in accepted.psd1 as intended. It comes back after the expiry date or when the finding changes.'
+        ACK  = 'Accepted: a warning that you deliberately accepted as intended (in the interface via "Accept", without it in the file accepted.psd1). It comes back after the expiry date or when the finding changes.'
         TIPP = 'Tip: not a problem, but a worthwhile improvement. Benefit, effort and risk are shown; the instructions are under "How to".'
         INFO = 'Note: information only, nothing to do.'
         OK   = 'OK: everything is fine.'
@@ -28,6 +28,7 @@
         'Gaming & Grafik'            = 'Windows settings that make games run smoother or choppier.'
         'Auslastung'                 = 'Snapshot of the base load: what costs processing time and memory in the background.'
         'Stabilität'                 = 'Crashes, hardware errors and startup problems. If they pile up, hardware, overclocking or a driver is often behind it.'
+        'Audio'                      = 'Sound settings that demonstrably cause errors: driver errors, stopped audio services, wrong default device. Read-only, no sound tuning.'
     }
 
     Pruefungen = @{
@@ -134,6 +135,12 @@
         'Overlays und Hintergrund-Tools'             = @{ Was = 'Running overlays and RGB/tuning tools.'; Warum = 'Each costs some performance and can cause stutter; some bring vulnerable drivers along.'; Harmlos = 'Tools that you actively use.' }
         'Virtualisierung und Spieleleistung'         = @{ Was = 'Whether virtualization and memory integrity are active.'; Warum = 'Costs a few percent of performance, but protects strongly.'; Harmlos = 'Recommendation: leave it on.' }
         'Resizable BAR und PCIe-Anbindung'           = @{ Was = 'Whether the CPU can address the whole graphics memory at once (Resizable BAR) and how the graphics card is connected.'; Warum = 'Resizable BAR brings a few percent more FPS in many current games; a card with too few lanes gives away performance.'; Harmlos = 'Older motherboards without the BIOS option; x8 for cards that only have x8; PCIe 3.0 instead of 4.0 costs hardly anything.' }
+        'NVIDIA-Treibereinstellungen'                = @{ Was = 'Reads the global NVIDIA driver profile (as in the NVIDIA Control Panel under 3D settings): shader cache, power management, V-Sync, maximum frame rate and G-SYNC.'; Warum = 'An accidentally global setting such as a disabled shader cache, forced V-Sync or a frame rate limit costs performance or causes stutter in all games.'; Harmlos = 'Deliberately set values, for example a frame rate limit or V-Sync on a monitor without G-SYNC. The check only reads and changes nothing.' }
+        'Audio: Treiberfehler' = @{ Was = 'Whether a present audio device reports an error code in Device Manager.'; Warum = 'A device with a driver error delivers no sound or disappears from the selection.'; Harmlos = 'Never: a reported error code is a real finding. Devices that are not present (unplugged) are not checked.' }
+        'Audio: Dienste' = @{ Was = 'Whether the Windows Audio and Windows Audio Endpoint Builder services are running and start automatically.'; Warum = 'Without these services there is no sound.'; Harmlos = 'Never: both normally always run.' }
+        'Audio: Standardgeräte' = @{ Was = 'Which devices Windows uses for playback and recording (each normal and communications).'; Warum = 'If no sound comes from speakers or headset, a monitor (HDMI/DisplayPort) is often selected as the default.'; Harmlos = 'Intended if sound should play through the monitor or TV. Information only.' }
+        'Audio: USB-Energiesparen' = @{ Was = 'Whether Windows may switch off USB ports when idle while a USB audio device is active.'; Warum = 'Can cause dropouts or crackling on USB headsets or microphones.'; Harmlos = 'Windows default; only relevant if there are actual dropouts.' }
+        'Audio: Ducking' = @{ Was = 'Whether Windows lowers other sounds during calls (Communications setting).'; Warum = 'Explains why music or games get quieter during Discord, Teams or phone calls.'; Harmlos = 'A preference, not an error.' }
         'Spielebibliotheken'                         = @{ Was = 'On which drives the games from Steam, Epic, GOG, Ubisoft and Xbox are stored and how full they are.'; Warum = 'Games on a hard disk load slowly and stutter when streaming in data; almost full SSDs become slower when writing.'; Harmlos = 'Old or rarely played games on a hard disk.' }
         'Netzwerkkarte: Energiesparfunktionen'       = @{ Was = 'Power-saving features of the LAN adapter (Energy Efficient Ethernet, Green Ethernet, Ultra Low Power).'; Warum = 'They put the connection to sleep during idle periods; waking up can cause short latency spikes.'; Harmlos = 'On laptops and pure office PCs where every watt counts.' }
         'CPU-Last (Stichprobe 5 s)'                  = @{ Was = 'CPU usage at idle over 5 seconds.'; Warum = 'A high base load without a running program points to background processes or malware.'; Harmlos = 'Shortly after startup (updates, indexing) or while pc-check itself is running.' }

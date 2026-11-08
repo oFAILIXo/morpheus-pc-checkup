@@ -5,9 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title data-t="titel">Morpheus – PC Check-up (Entwicklungsmodus mit Demodaten)</title>
 <link rel="icon" href="../assets/morpheus-icon.png">
+<script src="../palette.js"></script>
+<link rel="stylesheet" href="../palettes.css">
 <link rel="stylesheet" href="../app.css">
 </head>
 <body>
+<button type="button" id="skip" class="skip" data-t="kopf.zumInhalt">Zum Inhalt</button>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
   <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></symbol>
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
@@ -15,6 +18,8 @@
   <symbol id="i-pad" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3M16 12h.01M18 14h.01"/></symbol>
   <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"/></symbol>
   <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></symbol>
   <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
   <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 13h6M9 17h6"/></symbol>
@@ -39,6 +44,10 @@
     <header class="top" id="top">
       <div class="crumb" id="crumb" data-t="kopf.keinBericht">Kein Bericht geladen</div>
       <label class="search"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg><input id="gsearch" type="search" placeholder="Prüfungen durchsuchen …" data-t-placeholder="kopf.suchePlatzhalter" aria-label="Prüfungen durchsuchen" data-t-aria-label="kopf.sucheAria" autocomplete="off"><span class="kbd" aria-hidden="true">/</span></label>
+      <div class="modus" id="modus" role="group" aria-label="Ansicht" data-t-aria-label="kopf.modusAria">
+        <button type="button" data-modus="einfach" aria-pressed="false" title="Nur die Zusammenfassung und das Wichtigste" data-t-title="kopf.modusEinfachTitel" data-t="kopf.modusEinfach">Einfach</button>
+        <button type="button" data-modus="experte" aria-pressed="false" title="Alle Prüfungen, Werkzeuge und Details" data-t-title="kopf.modusExperteTitel" data-t="kopf.modusExperte">Experte</button>
+      </div>
       <button type="button" class="btn" id="ki-btn" title="Kopiert die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage" data-t-title="kopf.kiTitel"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-t="kopf.kiText">Für KI kopieren</span></button>
       <button type="button" class="btn ghost" id="st-toggle" aria-pressed="true" title="Statusleiste ein- oder ausblenden" data-t-title="kopf.statusTitel"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg><span data-t="kopf.statusText">Statusleiste</span></button>
       <a class="btn brand" href="#/scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span data-t="kopf.scanText">Neuer Scan</span></a>
@@ -51,7 +60,7 @@
   </aside>
 </div>
 <div class="modal" id="modal" aria-hidden="true"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" id="dlg">
-  <h3 id="dlg-title"></h3>
+  <h3 id="dlg-title" tabindex="-1"></h3>
   <div id="dlg-body"></div>
   <div class="right" id="dlg-buttons"></div>
 </div></div>

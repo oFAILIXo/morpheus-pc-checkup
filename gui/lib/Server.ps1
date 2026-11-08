@@ -1351,7 +1351,8 @@ function Invoke-GuiRoute {
     if (($Path -notlike '/api/*') -and ($Path -notlike '/report/*')) {
         if ($Method -ne 'GET') { Stop-GuiRequest 405 (T 'server.methodeNichtErlaubt') }
         if (($Path -eq '/') -or ($Path -eq '/index.html')) { Send-GuiStatic $Res 'index.html'; return }
-        if ($Path -in '/app.js', '/app.css') { Send-GuiStatic $Res $Path.TrimStart('/'); return }
+        # palette.js/palettes.css: Farbpalette vor dem ersten Zeichnen (2.7, #100), feste Namen wie app.js
+        if ($Path -in '/app.js', '/app.css', '/palette.js', '/palettes.css') { Send-GuiStatic $Res $Path.TrimStart('/'); return }
         # Bilder: nur feste Namensform aus gui\assets\ (Regex + Präfix-Prüfung in Send-GuiStatic), ohne Token (keine Daten)
         if ($Path -cmatch '^/assets/([a-z0-9-]+\.(png|svg|jpg))\z') { Send-GuiStatic $Res ('assets\' + $Matches[1]); return }
         if ($Path -eq '/favicon.ico') { Send-GuiStatic $Res 'assets\morpheus-icon.png'; return }

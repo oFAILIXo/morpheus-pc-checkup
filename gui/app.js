@@ -27,10 +27,10 @@ const cmpTxt = (a, b) => String(a).localeCompare(String(b), lc());
 // ---------------------------------------------------------------- Konstanten
 const STATUS = ['CRIT', 'WARN', 'TIPP', 'ACK', 'INFO', 'OK', 'SKIP'];
 let STATUS_NAME = {};   // Anzeigenamen der Status, gefüllt von buildTexts()
-const STATUS_COLOR = { CRIT: 'var(--red)', WARN: 'var(--orange)', TIPP: 'var(--magenta)', ACK: 'var(--violet)', INFO: 'var(--blue)', OK: 'var(--green)', SKIP: 'var(--b01)' };
+const STATUS_COLOR = { CRIT: 'var(--red)', WARN: 'var(--orange)', TIPP: 'var(--magenta)', ACK: 'var(--violet)', INFO: 'var(--blue)', OK: 'var(--green)', SKIP: 'var(--grey)' };
 const RANK = { CRIT: 0, WARN: 1, TIPP: 2, INFO: 3, ACK: 4, SKIP: 5, OK: 6 };
 const LEVEL = { gering: 1, mittel: 2, hoch: 3 };
-const GAMING_CHECKS = ['Bildschirme und Bildwiederholrate', 'Grafikkarte und Treiber', 'Resizable BAR und PCIe-Anbindung', 'Arbeitsspeicher', 'Prozessor-Energieeinstellungen', 'Energieplan',
+const GAMING_CHECKS = ['Bildschirme und Bildwiederholrate', 'Grafikkarte und Treiber', 'Resizable BAR und PCIe-Anbindung', 'NVIDIA-Treibereinstellungen', 'Arbeitsspeicher', 'Prozessor-Energieeinstellungen', 'Energieplan',
   'Spielebibliotheken', 'Spielmodus', 'Hardwarebeschleunigte GPU-Planung (HAGS)', 'Hintergrundaufzeichnung (Game DVR)', 'Optimierungen für Spiele im Fenstermodus',
   'Overlays und Hintergrund-Tools', 'Mausbeschleunigung', 'Netzwerkverbindung', 'Netzwerkkarte: Energiesparfunktionen', 'Virtualisierung und Spieleleistung'];
 const REPORT_RE = /^pc-check_\d{4}-\d{2}-\d{2}_\d{4}$/;
@@ -43,13 +43,18 @@ const NAV_STANDARD_AUF = { 'werkzeuge/wartung': true };   // Einzelwerkzeuge sof
 const CAT_VIEWS = ['sicherheit', 'leistung', 'gaming', 'stabilitaet', 'alle'];
 const LIVE_MS = 5000;
 const SB_KEY = 'pcCheckStatusbar';
+// Ansichtsmodus (2.7, #103): „einfach“ (Standard beim ersten Start) zeigt Zusammenfassung und offene Befunde, „experte“ alles.
+// Nur Anzeige: Bestätigungen, Wiederherstellungspunkt, Warnbanner, Akzeptieren und Rückgängig bleiben in beiden Modi.
+const MODUS_KEY = 'morpheusModus';
+const NUR_EXPERTE = ['alle', 'checkliste', 'berichte', 'rohdaten'];   // Menüpunkte, die der einfache Modus nicht zeigt (per Link weiter erreichbar)
+const NUR_EXPERTE_ZU = ['checkliste', 'berichte', 'rohdaten'];          // beim Wechsel nach „einfach“ von hier zur Übersicht
 
 // ---------------------------------------------------------------- Zustand
 const S = {
   token: null, session: null, reports: [], cur: null, report: null, findings: [], cache: {},
   actions: [], help: null, checklist: {}, journal: null, view: 'uebersicht', rv: 0,
   ui: { f: {}, reveal: null, focusSpOrdner: false }, sel: new Set(), variant: {}, cmp: [], origName: null, scan: null, multiBtns: [],
-  points: null, live: { state: 'idle', data: null }, sbOn: true,
+  points: null, live: { state: 'idle', data: null }, sbOn: true, einfach: true, rest: {},
   speicher: null, spSrc: '', spApi: null, spPop: null, spJob: null, spOrdner: null, spoMsg: null, spoJob: null,   // Speicherverbraucher (Abschnitt 14.7)
 };
 
@@ -79,6 +84,19 @@ function h(tag, attrs, ...kids) {
   }
   add(e, kids);
   return e;
+}
+/** Text mit klickbaren Windows-Einstellungs-Verweisen (wie im HTML-Bericht): nur das feste Muster
+ *  ms-settings:<a-z-> wird zum Link, alles andere bleibt Textknoten (kein innerHTML, keine anderen Schemata). */
+function settingsLinks(text) {
+  const s = String(text == null ? '' : text), out = [], rx = /ms-settings:[a-z-]+/g;
+  let last = 0, m;
+  while ((m = rx.exec(s))) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    out.push(h('a', { href: m[0], text: m[0] }));
+    last = rx.lastIndex;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
 }
 const svgNS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs) {
@@ -119,19 +137,31 @@ function fmtShort(s) {
   const d = new Date(s); if (isNaN(d)) return '';
   return LANG === 'en' ? `${String(d.getFullYear()).slice(2)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${String(d.getFullYear()).slice(2)}`;
 }
+/** Technische Werte aus Windows (Defender-Modi u. a.) in Klartext (2.7, #95); Unbekanntes bleibt, wie es ist. */
+const PLAIN = { enabled: 'wert.an', disabled: 'wert.aus', auditmode: 'wert.audit', notconfigured: 'wert.nichtKonfiguriert', warn: 'wert.warnen', true: 'wert.an', false: 'wert.aus' };
+const plainVal = v => { const k = PLAIN[String(v).trim().toLowerCase()]; return k ? t(k) : String(v); };
+/** Zustand im Journal: {aktiv, wert, zustand} als „an“/„aus“ bzw. Wert in Worten, nie als JSON (2.7, #95). */
 function fmtState(v) {
   if (v == null) return t('zustand.nichtGesetzt');
+  if (typeof v === 'object' && !Array.isArray(v) && ('wert' in v || 'aktiv' in v)) {
+    if (v.wert != null && v.wert !== '') return plainVal(v.wert);
+    if (v.zustand == null) return t('zustand.nichtGesetzt');
+    if (v.aktiv === true || v.aktiv === false) return t(v.aktiv ? 'wert.an' : 'wert.aus');
+  }
   if (typeof v === 'object') { let s = JSON.stringify(v); if (s.length > 120) s = s.slice(0, 117) + '…'; return s; }
-  return String(v);
+  return plainVal(v);
 }
 function toast(msg) {
   const el = h('div', { class: 'toast', role: 'status', text: msg });
   document.body.append(el);
   setTimeout(() => el.remove(), 3500);
 }
-async function copyText(text, btn) {
+async function copyText(text, btn, okToast) {
   const label = btn ? btn.textContent : '';
-  const done = ok => { if (btn) { btn.textContent = ok ? t('kopieren.ok') : t('kopieren.nein'); setTimeout(() => { btn.textContent = label; }, 2000); } else toast(ok ? t('kopieren.toastOk') : t('kopieren.toastNein')); };
+  const done = ok => {
+    if (btn) { btn.textContent = ok ? t('kopieren.ok') : t('kopieren.nein'); setTimeout(() => { btn.textContent = label; }, 2000); }
+    if (!btn || (ok && okToast)) toast(ok ? (okToast || t('kopieren.toastOk')) : t('kopieren.toastNein'));
+  };
   try { await navigator.clipboard.writeText(text); done(true); return; } catch { /* Rückfall */ }
   const ta = h('textarea', { style: 'position:fixed;left:-9999px', 'aria-hidden': 'true' });
   ta.value = text; document.body.append(ta); ta.select();
@@ -304,6 +334,8 @@ function counts(list) { const c = {}; STATUS.forEach(s => { c[s] = 0; }); list.f
 function actionsFor(f) { return S.actions.filter(a => norm(a.pruefung) === f.Check); }
 function actionView(a) { return a.kategorie === 'Sicherheit' ? 'sicherheit' : a.kategorie === 'Gaming' ? 'gaming' : a.kategorie === 'Stabilität' ? 'stabilitaet' : 'leistung'; }
 const safety = () => (S.session && S.session.safety) || {};
+// Seit dem letzten Windows-Start ausgeführt und erst nach einem Neustart wirksam (2.7, #95; Liste vom Server aus dem Journal)
+const restartPending = a => !!(a && a.neustart && a.zustand && a.zustand.aktiv === true && [].concat(safety().seitStart || []).includes(a.id));
 // Nur-Lesen-Modus: der Codeordner ist nicht gesichert (oder keine Adminrechte); der Server antwortet bei Änderungen mit 403
 const readOnly = () => !!(S.session && S.session.readOnly);
 const locked = () => safety().schutzAn === false || readOnly();
@@ -311,22 +343,52 @@ const lockTitle = () => readOnly() ? t('sperre.nurLesen') : t('sperre.schutzAus'
 function uiF(view) { return S.ui.f[view] || (S.ui.f[view] = { mode: 'all', term: '' }); }
 
 // ---------------------------------------------------------------- Dialog
-const Dlg = { prev: null, running: false, onEsc: null, onClose: null };
+const Dlg = { prev: null, prevKey: null, running: false, onEsc: null, onClose: null };
+/**
+ * Fokus über ein Neuzeichnen retten (2.7, #95): Nach „Fertig“ zeichnet die Ansicht neu und der Auslöser ist weg;
+ * dann gleiche Karte (data-id) und dort gleiches Bedienelement, sonst die Karte selbst, sonst der Inhaltsbereich.
+ */
+function focusKey(el) {
+  const vw = $('#view');
+  if (!el || el === document.body || !vw || !vw.contains(el) || el === vw) return null;
+  const card = el.closest('[data-id],[data-check]');
+  return { id: card ? (card.dataset.id || 'c:' + card.dataset.check) : null, tag: el.tagName, label: el.getAttribute('aria-label') || (el.textContent || '').trim().slice(0, 60) };
+}
+function focusRestore(k) {
+  const vw = $('#view');
+  if (!k || !vw) return false;
+  const root = k.id ? [...vw.querySelectorAll('[data-id],[data-check]')].find(x => (x.dataset.id || 'c:' + x.dataset.check) === k.id) : null;
+  const scope = root || vw;
+  // Sichtbarkeit über checkVisibility: In geschlossenem <details> ist offsetParent in Chromium nicht null, focus() scheitert dann still
+  const vis = x => (x.checkVisibility ? x.checkVisibility() : x.offsetParent !== null);
+  const cand = [...scope.querySelectorAll(k.tag)].filter(x => !x.disabled && (x.getAttribute('aria-label') || (x.textContent || '').trim().slice(0, 60)) === k.label);
+  const same = cand.find(vis);
+  for (const target of [same, root].filter(Boolean)) {
+    if (target === root && !root.hasAttribute('tabindex')) root.setAttribute('tabindex', '-1');
+    target.focus({ preventScroll: true });
+    if (document.activeElement === target) return true;
+  }
+  return false;
+}
 function dlgOpen(title, body, buttons, opts = {}) {
   Dlg.running = !!opts.lock; Dlg.onEsc = opts.onEsc || null; Dlg.onClose = opts.onClose || null;
-  if (!$('#modal').classList.contains('on')) Dlg.prev = document.activeElement;
+  if (!$('#modal').classList.contains('on')) { Dlg.prev = document.activeElement; Dlg.prevKey = focusKey(Dlg.prev); }
   $('#dlg-title').textContent = title;
   $('#dlg-body').replaceChildren(...[].concat(body).filter(Boolean));
   const bx = $('#dlg-buttons'); bx.replaceChildren();
   buttons.forEach(b => bx.append(h('button', { type: 'button', class: b.primary ? 'primary' : (b.danger ? 'danger' : ''), disabled: !!b.disabled, onclick: b.onClick, text: b.label })));
   const m = $('#modal'); m.classList.add('on'); m.setAttribute('aria-hidden', 'false');
-  const first = bx.querySelector('button.primary:not(:disabled)') || bx.querySelector('button:not(:disabled)');
-  if (first) first.focus();
+  // Bestätigungen (opts.focus = 'cancel') starten auf „Abbrechen“, damit Enter nichts ändert (2.7, #92)
+  const first = (opts.focus === 'cancel' && bx.querySelector('button:not(.primary):not(.danger):not(:disabled)'))
+    || bx.querySelector('button.primary:not(:disabled)') || bx.querySelector('button:not(:disabled)');
+  // Ohne bedienbaren Knopf (Job läuft) bleibt der Fokus im Dialog, auf dem Titel, statt auf body zu fallen (2.7, #95)
+  if (first) first.focus(); else $('#dlg-title').focus();
 }
 function dlgClose() {
   const m = $('#modal'); m.classList.remove('on'); m.setAttribute('aria-hidden', 'true'); Dlg.running = false;
   const cb = Dlg.onClose; Dlg.onClose = null; Dlg.onEsc = null; if (cb) cb();
-  if (Dlg.prev && Dlg.prev.isConnected) Dlg.prev.focus();
+  if (Dlg.prev && Dlg.prev.isConnected && Dlg.prev !== document.body) Dlg.prev.focus();
+  else if (!focusRestore(Dlg.prevKey)) { const vw = $('#view'); if (vw) vw.focus({ preventScroll: true }); }
 }
 document.addEventListener('keydown', e => {
   const m = $('#modal');
@@ -355,35 +417,48 @@ let RESULT_TEXT = {};
 const FORCE_RE = /zustand.*ge[äa]ndert|ge[äa]ndert.*zustand|state.*changed|changed.*state/i;
 
 /** Gemeinsame Anzeige eines laufenden Jobs im Dialog: Schritte, Live-Log, Ergebnis. */
-function jobView(steps) {
+function jobView(steps, confirm = false) {
   const ul = h('ul', { class: 'steps', 'aria-label': t('run.ablauf') }, steps.map(s => h('li', null, h('span', { class: 's' }), s[0])));
-  const log = h('pre', { class: 'log', 'aria-live': 'polite', text: '' });
+  // Das Protokoll ist zum Nachlesen; angesagt wird nur der aktuelle Schritt (2.7, #95), sonst liest ein Screenreader jede Logzeile vor
+  const log = h('pre', { class: 'log', 'aria-live': 'off', tabindex: '0', 'aria-label': t('run.protokoll'), text: '' });
+  const live = h('p', { class: 'vh', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+  // Hinweis auf den Windows-Dialog steht über der Liste und verschwindet, sobald der Server antwortet (2.7, #92)
+  let hint = confirm ? h('p', { class: 'jobhint', role: 'status', text: t('win.bestaetigen') }) : null;
   let cur = -1;
-  const setLi = (li, cls) => { li.className = cls; li.firstChild.textContent = cls === 'done' ? '✓' : (cls === 'fail' ? '✕' : ''); };
+  // Nur bei echtem Wechsel neu setzen, sonst startet die Haken-Animation bei jeder Logzeile neu
+  const setLi = (li, cls) => { if (li.className === cls) return; li.className = cls; li.firstChild.replaceChildren(cls === 'done' ? icon('tick') : (cls === 'fail' ? icon('x') : '')); };
   const mark = (idx, cls) => { [...ul.children].forEach((li, i) => setLi(li, i < idx ? 'done' : (i === idx ? cls : ''))); };
   return {
-    nodes: [ul, log], ul, log,
+    get nodes() { return [hint, ul, log, live].filter(Boolean); }, ul, log,
     lines(arr) {
+      if (arr.length && hint) { hint.remove(); hint = null; }
       for (const l of arr) {
         log.append(document.createTextNode(l + '\n'));
         const i = steps.findIndex((s, k) => k >= cur && s[1].test(l));
-        if (i >= 0 && i >= cur) { cur = i; mark(i, 'run'); }
+        if (i >= 0 && i > cur) { cur = i; mark(i, 'run'); live.textContent = t('run.schrittLive', i + 1, steps.length, steps[i][0]); }
+        else if (i >= 0 && i >= cur) { cur = i; mark(i, 'run'); }
       }
       log.scrollTop = log.scrollHeight;
     },
-    finish(ok) { if (ok) [...ul.children].forEach(li => setLi(li, 'done')); else mark(Math.max(cur, 0), 'fail'); },
+    finish(ok) {
+      if (hint) { hint.remove(); hint = null; }
+      if (ok) [...ul.children].forEach(li => setLi(li, 'done')); else mark(Math.max(cur, 0), 'fail');
+      live.textContent = ok ? t('run.liveFertig') : t('run.liveFehler');
+    },
   };
 }
-function resultList(items) {
+function resultList(items, undo = false) {
   const arr = [].concat(items || []).filter(Boolean);
   if (!arr.length) return null;
   return h('ul', { class: 'result' }, arr.map(r => {
     const a = S.actions.find(x => x.id === r.id);
     const okc = r.status === 'erledigt' ? 'ok' : (String(r.status).startsWith('fehl') ? 'rem' : 'warn');
+    // Beim Rückgängig heißt „erledigt“: der frühere Zustand ist wieder da (sonst klänge es nach erneutem Einschalten)
+    const st = undo && r.status === 'erledigt' ? t('run.res.zurueckgenommen') : (RESULT_TEXT[r.status] || r.status || '');
     return h('li', null,
       h('b', { text: a ? a.titel : (r.id || t('run.aktion')) }), ' ',
-      h('span', { class: okc, text: RESULT_TEXT[r.status] || r.status || '' }),
-      r.meldung ? h('div', { class: 'note', text: r.meldung }) : null,
+      h('span', { class: okc, text: st }),
+      r.meldung ? h('div', { class: 'note' }, settingsLinks(r.meldung)) : null,
       r.status === 'erledigt' && r.neustart ? h('div', { class: 'warn', text: t('run.neustartNoetig') }) : null);
   }));
 }
@@ -394,21 +469,39 @@ async function afterChange() {
 }
 function runCmdText(a, variante) { return (a.befehle && a.befehle.ausfuehren || '').replace(/<variante>/g, variante || '<variante>'); }
 
+/**
+ * Bestätigung vor einer Anpassung (2.7, #92): erst die Bedeutung (was ändert sich, Risiko, Neustart),
+ * dann das Sicherheitsnetz in voller Lesbarkeit, der Befehl nur aufklappbar. Startfokus auf „Abbrechen“.
+ */
 function openRunDialog(actions, variante) {
   if (!actions.length) return;
-  const title = actions.length > 1 ? t('run.titelMehrere', actions.length) : actions[0].titel;
+  const multi = actions.length > 1;
+  const title = multi ? t('run.titelMehrere', actions.length) : actions[0].titel;
   const body = [];
   actions.forEach(a => {
     const v = a.varianten && a.varianten.length ? (variante || S.variant[a.id] || a.varianten[0]) : null;
-    body.push(h('div', null, actions.length > 1 ? h('b', { text: a.titel }) : null, v ? h('div', { class: 'note', text: t('run.variante', varName(a, v)) }) : null, cmdBlock(runCmdText(a, v), false)));
+    const lv = levelsNode(null, a.aufwand, a.risiko);
+    body.push(h('div', { class: 'run-item' },
+      multi ? h('b', { class: 'run-t', text: a.titel }) : null,
+      a.erklaerung ? h('p', { class: 'run-was', text: a.erklaerung }) : null,
+      lv || a.neustart ? h('div', { class: 'lv block' }, lv ? [...lv.children] : null, a.neustart ? h('span', { class: 'restart', text: t('karte.neustartNoetig') }) : null) : null,
+      v ? h('p', { class: 'run-var', text: t('run.variante', varName(a, v)) }) : null,
+      h('details', { class: 'cmd' }, h('summary', { text: t('run.befehlZeigen') }), cmdBlock(runCmdText(a, v), false))));
   });
   const noRp = actions.some(a => a.ohneWiederherstellungspunkt || a.id === 'system.wiederherstellung');
-  body.push(h('div', { class: 'note', text: noRp ? t('run.ohnePunktNote') : t('run.mitPunktNote') }));
-  if (actions.some(a => a.neustart)) body.push(h('div', { class: 'warn', style: 'margin-top:6px', text: t('run.neustartHinweis') }));
-  dlgOpen(title, body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('btn.ausfuehren'), primary: true, onClick: () => startRun(actions, title, variante) }]);
+  body.push(h('div', { class: 'assure' + (noRp ? ' a-warn' : '') }, icon(noRp ? 'warn' : 'undo'),
+    h('p', { text: noRp ? t('run.ohnePunktNote') : t('run.mitPunktNote') })));
+  if (actions.some(a => a.neustart)) body.push(h('p', { class: 'run-hint', text: t('run.neustartHinweis') }));
+  // 24-Stunden-Sperre: hier sagen, was sie für genau diesen Klick bedeutet, statt eines Banners (2.7, #92, #107).
+  // Ruhig, solange sie nur theoretisch ist; getönt, wenn Morpheus heute schon einen Punkt angelegt hat.
+  if (!noRp && safety().sperre24h) {
+    const greift = sperreGreift();
+    body.push(h('div', { class: 'run-hint' + (greift ? ' warn' : '') }, h('p', { text: greift ? t('run.sperre24Heute') : t('run.sperre24') }), sperreMehr()));
+  }
+  dlgOpen(title, body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: multi ? t('run.knopfMehrere', actions.length) : t('btn.ausfuehren'), primary: true, onClick: () => startRun(actions, title, variante) }], { focus: 'cancel' });
 }
 async function startRun(actions, title, variante) {
-  const jv = jobView(RUN_STEPS);
+  const jv = jobView(RUN_STEPS, true);
   const single = actions.length === 1 && actions[0].varianten && actions[0].varianten.length;
   const v = single ? (variante || S.variant[actions[0].id] || actions[0].varianten[0]) : null;
   dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
@@ -416,21 +509,34 @@ async function startRun(actions, title, variante) {
   try {
     const body = { ids: actions.map(a => a.id) };
     if (v) body.variante = v;
-    jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/actions/run', { method: 'POST', body });
     job = await followJob(r.jobId, jv.lines);
   } catch (e) { err = e; }
-  finishJob(title, jv, job, err, t('btn.fertig'));
+  const msg = err ? err.message : (job && job.status === 'failed' && job.ergebnis && job.ergebnis.error) || '';
+  finishJob(title, jv, job, err, t('btn.fertig'), false, sperreAusweg(msg));
 }
-function finishJob(title, jv, job, err, doneLabel) {
+/** Ausweg, wenn Windows heute keinen Wiederherstellungspunkt mehr anlegt (#95, für Ausführen seit #107); Befehl nur aufklappbar. */
+function sperreAusweg(msg) {
+  if (!/kein Wiederherstellungspunkt angelegt|No restore point could be created/i.test(msg || '')) return null;
+  const mehr = sperreMehr();
+  return [h('h3', { text: t('undo.auswegTitel') }), h('ul', { class: 'ausweg' },
+    h('li', { text: t('undo.auswegMorgen') }),
+    mehr ? h('li', null, t('undo.auswegSperre'), mehr) : null)];
+}
+function finishJob(title, jv, job, err, doneLabel, undo = false, extra = null) {
   const ok = !err && job && job.status === 'done';
   jv.finish(ok);
   const body = [...jv.nodes];
   const res = job && job.ergebnis;
   if (err) body.push(h('p', { class: 'rem', text: err.message }));
   else if (job && job.status === 'failed') body.push(h('p', { class: 'rem', text: (res && res.error) || t('run.fehlgeschlagen') }));
-  const list = res && !res.error ? resultList(res) : null;
+  const list = res && !res.error ? resultList(res, undo) : null;
   if (list) body.push(h('h3', { text: t('run.ergebnis') }), list);
+  if (extra) body.push(...[].concat(extra).filter(Boolean));
+  // Abschluss in Worten und der Weg zurück (2.7, #92); nur wenn mindestens eine Änderung wirklich erledigt ist
+  const anyDone = [].concat(res || []).some(r => r && r.status === 'erledigt');
+  if (ok && anyDone) body.push(h('p', { class: 'run-next' }, undo ? t('run.nachRueck') : t('run.nachAusfuehren'), ' ',
+    h('a', { href: '#/aenderungen', text: t('run.zuAenderungen'), onclick: () => dlgClose() })));
   dlgOpen(title, body, [{ label: doneLabel, primary: true, onClick: dlgClose }]);
   Dlg.running = false;
   afterChange();
@@ -440,17 +546,17 @@ function finishJob(title, jv, job, err, doneLabel) {
 function openUndoDialog(e) {
   const body = [
     h('p', { text: t('undo.text', e.titel || e.aktion, fmtState(e.nachher), fmtState(e.vorher)) }),
-    h('div', { class: 'note', text: t('undo.note') }),
+    h('div', { class: 'assure' }, icon('undo'), h('p', { text: t('undo.note') })),
+    safety().sperre24h ? h('p', { class: 'run-hint', text: e.wiederherstellungspunkt && e.wiederherstellungspunkt.seq != null ? t('undo.sperre24Punkt', '#' + e.wiederherstellungspunkt.seq) : t('undo.sperre24') }) : null,
   ];
-  dlgOpen(t('undo.titel'), body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('undo.knopf'), primary: true, onClick: () => startUndo(e, false) }]);
+  dlgOpen(t('undo.titel'), body, [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('undo.knopf'), primary: true, onClick: () => startUndo(e, false) }], { focus: 'cancel' });
 }
 async function startUndo(e, force, vorRep) {
   const title = t('undo.titelRun', e.titel || e.aktion);
-  const jv = jobView(RUN_STEPS);
+  const jv = jobView(RUN_STEPS, true);
   dlgOpen(title, jv.nodes, [{ label: t('btn.laeuft'), disabled: true }], { lock: true });
   let job = null, err = null;
   try {
-    jv.lines([t('win.bestaetigen')]);
     const r = await api(`/api/journal/${encodeURIComponent(e.id)}/undo`, { method: 'POST', body: Object.assign({}, force ? { force: true } : null, vorRep ? { vorReparatur: true } : null) });
     job = await followJob(r.jobId, jv.lines);
   } catch (x) { err = x; }
@@ -467,7 +573,8 @@ async function startUndo(e, force, vorRep) {
       [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('undo.trotzdem'), danger: true, onClick: () => startUndo(e, true, vorRep) }]);
     return;
   }
-  finishJob(title, jv, job, err, t('btn.fertig'));
+  // Kein Punkt möglich und der Punkt der Ausführung fehlt (2.7, #95): Ausweg nennen statt nur abzubrechen
+  finishJob(title, jv, job, err, t('btn.fertig'), true, sperreAusweg(msg));
 }
 
 // ---------------------------------------------------------------- Bausteine
@@ -479,7 +586,7 @@ function infoTip(check, cat) {
   if (e) tip = h('span', { class: 'tip', role: 'tooltip' }, h('b', { text: t('tip.was') }), e.Was, h('br'), h('b', { text: t('tip.warum') }), e.Warum, h('br'), h('b', { text: t('tip.harmlos') }), e.Harmlos);
   else if (K[cat]) tip = h('span', { class: 'tip', role: 'tooltip', text: K[cat] });
   if (!tip) return null;
-  return [h('button', { type: 'button', class: 'info', 'aria-label': t('tip.aria'), 'aria-expanded': 'false', text: 'i' }), tip];
+  return [h('button', { type: 'button', class: 'info', 'aria-label': t('tip.aria'), 'aria-expanded': 'false' }), tip];
 }
 function howTo(f) {
   const steps = f.Steps || [];
@@ -488,32 +595,42 @@ function howTo(f) {
     steps.length ? h('ol', null, steps.map(s => h('li', { text: s }))) : null,
     f.Command ? cmdBlock(f.Command) : null);
 }
-function actionCard(a) {
+/** Aktionskarte; inFinding: im Befund, der schon „KI fragen“ hat (#107). Umgesetzte Anpassungen als eine ruhige Zeile. */
+function actionCard(a, inFinding) {
   const z = a.zustand || {};
   const done = z.aktiv === true, lock = locked();
+  if (done && !restartPending(a)) {
+    return h('div', { class: 'action quiet one', 'data-id': a.id },
+      h('div', { class: 'ah' }, icon('tick'), h('span', { class: 'at', text: a.titel }),
+        h('div', { class: 'acts' }, h('span', { class: 'state on', text: t('karte.bereitsErledigt') }))));
+  }
   const hasVar = a.varianten && a.varianten.length;
   const stateNode = h('span', { class: 'state ' + (z.aktiv === true ? 'on' : (z.aktiv === false ? 'off' : 'unk')), title: z.stand ? t('karte.gelesen', fmtDate(z.stand)) : null },
-    h('i'), z.wert != null && z.wert !== '' ? t('karte.zustand', z.wert, done ? ' ✓' : '') : t('karte.zustandUnbekannt'));
+    h('i'), z.wert != null && z.wert !== '' ? t('karte.zustand', plainVal(z.wert), '') : t('karte.zustandUnbekannt'));
   let sel = null, curCmd = runCmdText(a, hasVar ? (S.variant[a.id] || a.varianten[0]) : null);
   const cmdPre = h('pre'); fillCmd(cmdPre, curCmd);
   if (hasVar) {
     sel = h('select', { 'aria-label': t('karte.variante'), onchange: e => { S.variant[a.id] = e.target.value; curCmd = runCmdText(a, e.target.value); fillCmd(cmdPre, curCmd); } },
       a.varianten.map(v => h('option', { value: v, selected: (S.variant[a.id] || a.varianten[0]) === v, text: varName(a, v) })));
   }
-  const chk = (!hasVar && !done && !lock)
+  const chk = (!hasVar && !done && !lock && !S.einfach)   // Mehrfachauswahl nur im Experten-Modus (#103)
     ? h('input', { type: 'checkbox', checked: S.sel.has(a.id), 'aria-label': t('karte.auswaehlen', a.titel), onchange: e => { if (e.target.checked) S.sel.add(a.id); else S.sel.delete(a.id); updateMulti(); } })
     : null;
-  const btn = done ? h('button', { type: 'button', class: 'sm', disabled: true, text: t('karte.bereitsErledigt') })
+  const pend = restartPending(a);
+  const btn = pend ? h('span', { class: 'restart pending', text: t('karte.neustartAusstehend') })
+    : done ? h('button', { type: 'button', class: 'sm', disabled: true, text: t('karte.bereitsErledigt') })
     : lock ? h('button', { type: 'button', class: 'sm', disabled: true, title: lockTitle(), text: t('karte.gesperrt') })
-      : h('button', { type: 'button', class: 'sm primary', text: t('btn.ausfuehren'), onclick: () => openRunDialog([a], sel ? sel.value : null) });
+      : h('button', { type: 'button', class: 'sm primary', text: t('btn.ausfuehren'), 'aria-label': t('run.ausfuehrenAria', a.titel), onclick: () => openRunDialog([a], sel ? sel.value : null) });
   const expl = (a.befehle && a.befehle.erklaerung) || [];
   const copyBtn = h('button', { type: 'button', class: 'copy', text: t('kopieren.knopf'), onclick: e => copyText(curCmd, e.currentTarget) });
   return h('div', { class: 'action' + (done ? ' quiet' : ''), 'data-id': a.id },
     h('div', { class: 'ah' }, chk, h('span', { class: 'at', text: a.titel }), levelsNode(a.nutzen, a.aufwand, a.risiko),
       a.neustart ? h('span', { class: 'lv' }, h('span', { class: 'restart', text: t('karte.neustartNoetig') })) : null,
-      h('div', { class: 'acts' }, sel, stateNode, btn)),
+      h('div', { class: 'acts' }, inFinding ? null : kiBtn(a.titel, () => kiAktion(a, sel ? sel.value : null)), sel, stateNode, btn)),
     a.erklaerung ? h('p', { class: 'ae', text: a.erklaerung }) : null,
-    h('details', { class: 'cmd' }, h('summary', { text: t('karte.befehlZeigen') }),
+    // ASR-Modi in Worten statt Enabled/AuditMode (2.7, #95)
+    a.id === 'defender.asr-basis' ? h('p', { class: 'ae', text: t('karte.asrModi') }) : null,
+    S.einfach ? null : h('details', { class: 'cmd' }, h('summary', { text: t('karte.befehlZeigen') }),
       h('div', { class: 'code' }, h('div', { class: 'ch' }, h('span', { text: t('cmd.psAdmin') }), copyBtn), cmdPre),
       expl.length ? h('ul', { class: 'explain' }, expl.map(x => h('li', { text: x }))) : null,
       a.befehle && a.befehle.rueckgaengig ? h('div', { class: 'note' }, tn('karte.rueckgaengig', h('code', { text: a.befehle.rueckgaengig }))) : null));
@@ -528,27 +645,36 @@ function findingRow(f, opts = {}) {
   const m = S.checklist[f.Check];
   const acts = actionsFor(f);
   const note = f.Status === 'ACK' ? t('befund.urspruenglich', STATUS_NAME[f.OriginalStatus] || f.OriginalStatus || '', f.Note || '') : f.Note;
-  const todo = (isOpen(f) || canAccept(f)) ? h('div', { class: 'todo' },
-    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'done' ? 'on' : '', 'data-mark': 'done', title: t('befund.erledigtTitel'), text: t('befund.erledigtText'), onclick: () => toggleMark(f.Check, 'done') }),
-    !isOpen(f) ? null : h('button', { type: 'button', class: m && m.state === 'later' ? 'on' : '', 'data-mark': 'later', title: t('befund.spaeterTitel'), text: t('befund.spaeterText'), onclick: () => toggleMark(f.Check, 'later') }),
+  // Eine Hauptaktion je Karte (2.7, #95): Merken, Akzeptieren und Rohdaten ruhig in der Fußzeile; eine Markierung bleibt sichtbar
+  // Einfacher Modus (#103): ohne Vormerken (Checkliste), Rohdaten und Stufen; Akzeptieren und „KI fragen“ bleiben
+  const einfach = S.einfach, merken = isOpen(f) && !einfach;
+  const todo = (merken || canAccept(f)) ? h('div', { class: 'todo' },
+    !merken ? null : h('button', { type: 'button', class: m && m.state === 'done' ? 'on' : '', 'aria-pressed': String(!!(m && m.state === 'done')), 'data-mark': 'done', title: t('befund.erledigtTitel'), text: t('befund.erledigtText'), onclick: () => toggleMark(f.Check, 'done') }),
+    !merken ? null : h('button', { type: 'button', class: m && m.state === 'later' ? 'on' : '', 'aria-pressed': String(!!(m && m.state === 'later')), 'data-mark': 'later', title: t('befund.spaeterTitel'), text: t('befund.spaeterText'), onclick: () => toggleMark(f.Check, 'later') }),
     canAccept(f) ? h('button', { type: 'button', 'data-mark': 'acc', title: readOnly() ? lockTitle() : t('befund.akzTitel'), disabled: readOnly(), text: t('befund.akzText'), onclick: () => openAkzeptieren({ art: 'befund', check: f.Check }) }) : null) : null;
-  const lvl = levelsNode(f.Benefit, f.Effort, f.Risk);
-  const tbls = tablesFor(f.Check);
+  const lvl = einfach ? null : levelsNode(f.Benefit, f.Effort, f.Risk);
+  const tbls = einfach ? [] : tablesFor(f.Check);
   const dataBtn = tbls.length ? h('button', { type: 'button', class: 'btn sm ghost data-link', title: t('befund.datenTitel'), text: tbls.length > 1 ? t('befund.datenMehr', tbls.length) : t('befund.datenText'), onclick: () => openRaw(tbls) }) : null;
+  const marked = m && (m.state === 'done' || m.state === 'later') && isOpen(f)
+    ? h('span', { class: 'mk', text: m.state === 'done' ? t('befund.markErledigt', m.date || '') : t('befund.markSpaeter') }) : null;
+  // Merken, Akzeptieren und Rohdaten direkt in der Fußzeile, ohne „Mehr“-Klick (2.7, #95, Nutzertest)
+  const ki = kiBtn(chkName(f), () => kiBefund(f));   // „KI fragen“ (2.7, #101)
+  const more = todo || dataBtn || ki ? h('div', { class: 'fbtns' }, todo, dataBtn, ki) : null;
   return h('div', { class: 'card finding' + (m && m.state === 'done' ? ' m-done' : ''), 'data-check': f.Check, 'data-status': f.Status },
     h('div', { class: 'fhead' },
       h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] || f.Status }),
       h('span', { class: 'fname' }, chkName(f), infoTip(f.Check, f.Category)),
-      opts.hint ? h('span', { class: 'cat-hint', text: `${areaName(f)} · ${catName(f)}` }) : null,
-      dataBtn, todo),
+      opts.hint ? h('span', { class: 'cat-hint', text: `${areaName(f)} · ${catName(f)}` }) : null),
     h('p', { class: 'fval', text: f.Value }),
-    note ? h('div', { class: 'fnote', text: note }) : null,
-    f.Recommendation ? h('div', { class: 'frec', text: f.Recommendation }) : null,
+    note ? h('div', { class: 'fnote' }, settingsLinks(note)) : null,
+    f.Recommendation ? h('div', { class: 'frec' }, settingsLinks(f.Recommendation)) : null,
     defenderTool(f),
-    sysTool(f),
-    lvl ? h('div', { class: 'lvwrap' }, lvl) : null,
+    einfach ? null : sysTool(f),   // Sysinternals gibt es nur im Experten-Modus
+    // Stufen nur ohne Aktionskarte, die zeigt sie selbst; Merken/Akzeptieren/Rohdaten ruhig in der Fußzeile (2.7, #92)
+    lvl && !acts.length ? h('div', { class: 'lvwrap' }, lvl) : null,
     howTo(f),
-    acts.map(actionCard));
+    acts.map(a => actionCard(a, true)),
+    more || marked ? h('div', { class: 'fsec' }, marked, more) : null);
 }
 const DEF_FIND = { 'Defender: Signaturen': 'signaturen', 'Defender: Scans': 'schnellscan' };
 /** Knopf am Befund „Defender: Signaturen“ / „Defender: Scans“ (nur bei offenem Befund), startet dieselbe Aufgabe wie unter „Werkzeuge“. */
@@ -658,6 +784,8 @@ async function runDatenordner(art) {
   dlgOpen(title, [h('p', { class: 'ok', text: r.meldung || t('dord.fertig') }), h('p', { text: t('dord.neustartNoetig') }), note],
     [{ label: t('dord.spaeter'), onClick: () => { dlgClose(); refreshView(); } }, { label: t('dord.beenden'), primary: true, onClick: quit }]);
 }
+// Die 24-Stunden-Sperre ist kein Banner mehr (#107): Sie ist auf fast jedem PC aktiv und betrifft erst den Klick auf
+// „Ausführen“ oder „Rückgängig“. Dort erklären die Dialoge sie, im Fehlerfall mit Ausweg; dazu eine Zeile unter Werkzeuge.
 function safetyBanner() {
   const s = safety();
   if (dOrdReparierbar()) return dOrdBanner();
@@ -675,12 +803,21 @@ function safetyBanner() {
     return banner('', 'warn', h('b', { text: t('sb.speicherKlein') }), t('sb.speicherKleinText', s.speicherMax || t('sb.wenigeGB')),
       h('a', { href: '#/sicherheit', text: t('sb.vergroessern') }), '.');
   }
-  if (s.sperre24h) {
-    return banner('', 'warn', h('b', { text: t('sb.sperre24') }), t('sb.sperre24Text'),
-      h('details', { class: 'cmd' }, h('summary', { text: t('sb.sperre24Befehl') }), cmdBlock(s.befehl || ''),
-        h('ul', { class: 'explain' }, h('li', { text: t('sb.sperre24L1') }), h('li', null, tn('sb.sperre24L2', h('code', { text: 'Remove-ItemProperty … -Name SystemRestorePointCreationFrequency' }))))));
-  }
   return null;
+}
+/** Morpheus hat in den letzten 24 Stunden selbst einen Punkt angelegt: Die Sperre greift dann sehr wahrscheinlich. */
+function sperreGreift() {
+  const s = safety();
+  if (!s.sperre24h || !s.letzterPunkt) return false;
+  const d = new Date(s.letzterPunkt).getTime();
+  return !isNaN(d) && Date.now() - d < 864e5;
+}
+/** Befehl zum Aufheben der 24-Stunden-Sperre, in beiden Modi nur aufklappbar („Mehr …“, #107). */
+function sperreMehr() {
+  const s = safety();
+  if (!s.befehl) return null;
+  return h('details', { class: 'cmd' }, h('summary', { text: t('sb.sperre24Befehl') }), cmdBlock(s.befehl),
+    h('ul', { class: 'explain' }, h('li', { text: t('sb.sperre24L1') }), h('li', null, tn('sb.sperre24L2', h('code', { text: 'Remove-ItemProperty … -Name SystemRestorePointCreationFrequency' })))));
 }
 const MONO_COL = /^(Pfad|Path|Image Path|Launch String|Befehl\w*|Ort|Datei(?:name|pfad)?|Sha256)$|(^|[\s_-])(Pfad|Path|Befehl|Ort|Datei|Dateiname|Sha256)($|[\s_-])/i;
 const accLocal = new Set();   // lokal als „akzeptiert (ab nächstem Scan)“ markierte Sigcheck-Dateien (Pfad klein)
@@ -719,7 +856,8 @@ function badgeFor(id) {
   const list = S.findings.filter(f => viewOf(f) === id);
   const c = counts(list), n = c.CRIT + c.WARN + c.TIPP;
   if (!n) return null;
-  return h('span', { class: 'cnt ' + (c.CRIT ? 'c' : c.WARN ? 'w' : 't'), title: t('badge.titel', c.CRIT, c.WARN, c.TIPP), text: String(n) });
+  return h('span', { class: 'cnt ' + (c.CRIT ? 'c' : c.WARN ? 'w' : 't'), title: t('badge.titel', c.CRIT, c.WARN, c.TIPP) },
+    h('span', { class: 'vh', text: t('badge.titel', c.CRIT, c.WARN, c.TIPP) }), h('span', { 'aria-hidden': 'true', text: String(n) }));
 }
 // ---- Aufklappbares Menü (2.5, #65): Bereiche klappen Kategorien, Filter bzw. Werkzeuge auf; Zustand je Benutzer in localStorage
 function navLaden() {
@@ -857,14 +995,15 @@ function renderNav() {
   const fokus = document.activeElement && document.activeElement.closest && document.activeElement.closest('#nav .nv-item');
   const fokusKey = fokus ? fokus.dataset.key : null, fokusTog = !!(fokusKey && document.activeElement.classList.contains('nv-tog'));
   navUid = 0;
-  $('#nav').replaceChildren(h('div', { class: 'navgroup' }, NAV.map(n => {
+  // Einfacher Modus (#103): ohne Expertenpunkte und ohne Unterpunkte
+  $('#nav').replaceChildren(h('div', { class: 'navgroup' }, NAV.filter(n => !(S.einfach && NUR_EXPERTE.includes(n.id))).map(n => {
     if (n.group) return h('div', { class: 'navh', text: n.group });
     if (n.sprache) return spracheEintrag();
     let b = null;
     if (n.badge) b = badgeFor(n.id);
     else if (n.id === 'berichte') b = S.reports.length ? h('span', { class: 'cnt n', text: String(S.reports.length) }) : null;
     else if (n.id === 'checkliste') { const k = Object.keys(S.checklist).length; b = k ? h('span', { class: 'cnt i', text: String(k) }) : null; }
-    const kinder = n.kinder ? navKinder(n).map(k => navUnter(k, 1)) : null;
+    const kinder = n.kinder && !S.einfach ? navKinder(n).map(k => navUnter(k, 1)) : null;
     // Klick auf den Bereich öffnet die Ansicht und klappt ihn auf (wie im Azure Portal)
     return navEintrag({ key: n.id, label: n.label, href: '#/' + n.id, ic: n.icon, badge: b, aktiv: S.view === n.id, ebene: 0, kinder,
       onclick: () => { if (kinder && kinder.length && !navIstAuf(n.id)) navUmschalten(n.id, true); S.ui.navSub = null; } });
@@ -911,6 +1050,7 @@ function initNav() {
 function updateChrome() {
   const m = S.report && S.report.Meta;
   $('#crumb').replaceChildren(...(m ? [t('kopf.berichtVom'), h('b', { text: fmtDate(m.Erstellt) }), t('kopf.profil', m.Profil || '–')] : [t('kopf.keinBerichtVorhanden')]));
+  $('#crumb').title = $('#crumb').textContent;   // ganz lesbar, wenn die Zeile gekürzt ist (#103)
   $('#ki-btn').disabled = !S.report;
   syncSearch();
   renderStatusReport();
@@ -930,7 +1070,7 @@ function initTopbar() {
   });
   gs.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); if (gs.value) { gs.value = ''; gs.dispatchEvent(new Event('input')); } gs.blur(); } });
   document.addEventListener('keydown', e => {
-    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || $('#modal').classList.contains('on')) return;
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || S.einfach || $('#modal').classList.contains('on')) return;   // Suche nur im Experten-Modus (#103)
     const tg = e.target, tag = tg && tg.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (tg && tg.isContentEditable)) return;
     e.preventDefault(); gs.focus(); gs.select();
@@ -950,27 +1090,35 @@ function miniChips(list) {
   return [...STATUS.filter(s => c[s] && s !== 'OK'), ...(c.OK ? ['OK'] : [])].map(s => h('span', { class: 'chip ' + s, text: `${c[s]} ${STATUS_NAME[s]}` }));
 }
 function catView(id, title, sub, pred, extra) {
-  const fs = S.findings.filter(pred), st = uiF(id);
+  const fs = S.findings.filter(pred), st = uiF(id), einfach = S.einfach;
   const box = h('div');
-  const filtBtns = filters().map(([m, l]) => h('button', { type: 'button', 'data-filter': m, class: st.mode === m ? 'active' : '', text: l, onclick: () => { st.mode = m; build(); } }));
+  const filtBtns = filters().map(([m, l]) => h('button', { type: 'button', 'data-filter': m, class: st.mode === m ? 'active' : '', 'aria-pressed': st.mode === m ? 'true' : 'false', text: l, onclick: () => { st.mode = m; build(); } }));
   const multi = h('button', { type: 'button', class: 'primary', text: t('multi.knopf', 0), disabled: true, onclick: () => openRunDialog(S.actions.filter(a => S.sel.has(a.id))) });
   const hasActions = S.actions.length > 0;
-  const bar = h('div', { class: 'toolbar sticky' }, h('div', { class: 'filters', role: 'group', 'aria-label': t('cv.filterAria') }, filtBtns), hasActions ? h('div', { class: 'tools' }, multi) : null);
-  if (hasActions) { S.multiBtns = [multi]; }
-  const mine = S.actions.filter(a => actionView(a) === id && !findingByCheck(norm(a.pruefung)));
+  // Einfacher Modus (#103): ohne Filterleiste und Mehrfachauswahl; offene Befunde zuerst, der Rest als eine aufklappbare Zeile
+  const bar = einfach ? null : h('div', { class: 'toolbar sticky' }, h('div', { class: 'filters', role: 'group', 'aria-label': t('cv.filterAria') }, filtBtns), hasActions ? h('div', { class: 'tools' }, multi) : null);
+  if (hasActions) { S.multiBtns = einfach ? [] : [multi]; }
+  const mine = einfach ? [] : S.actions.filter(a => actionView(a) === id && !findingByCheck(norm(a.pruefung)));
+  const zeigt = f => einfach ? (!!S.rest[id] || isOpen(f)) : passes(f, st);
   function build() {
-    filtBtns.forEach(b => b.classList.toggle('active', b.dataset.filter === st.mode));
+    filtBtns.forEach(b => { const on = b.dataset.filter === st.mode; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
     const groups = [];
-    fs.forEach(f => { let g = groups.find(x => x.cat === f.Category); if (!g) groups.push(g = { cat: f.Category, name: catName(f), all: [], vis: [] }); g.all.push(f); if (passes(f, st)) g.vis.push(f); });
+    fs.forEach(f => { let g = groups.find(x => x.cat === f.Category); if (!g) groups.push(g = { cat: f.Category, name: catName(f), all: [], vis: [] }); g.all.push(f); if (zeigt(f)) g.vis.push(f); });
     const nodes = [];
     groups.forEach(g => {
       if (!g.vis.length) return;
-      nodes.push(h('div', { class: 'section-title', 'data-kat': g.cat }, h('h3', null, g.name, infoTip('', g.cat)), miniChips(g.all), h('span', { class: 'bar' })));
+      nodes.push(h('div', { class: 'section-title', 'data-kat': g.cat }, h('h2', null, g.name, infoTip('', g.cat)), miniChips(g.all), h('span', { class: 'bar' })));
       g.vis.forEach(f => nodes.push(findingRow(f)));
     });
-    if (!nodes.length && fs.length) nodes.push(h('div', { class: 'card muted', text: t('cv.keinePassend') }));
+    if (einfach && fs.length) {
+      const rest = fs.filter(f => !isOpen(f)).length, auf = !!S.rest[id];
+      if (!fs.some(isOpen) && !auf) nodes.push(h('div', { class: 'card muted', text: t('modus.nichtsZuTun') }));
+      if (rest) nodes.push(h('div', { class: 'card einfach-rest' }, icon('tick'), h('span', { text: rest === 1 ? t('modus.rest1') : t('modus.restN', rest) }),
+        h('button', { type: 'button', class: 'btn sm', 'aria-expanded': String(auf), text: auf ? t('modus.restAus') : t('modus.restZeigen'),
+          onclick: () => { S.rest[id] = !auf; build(); const b = box.querySelector('.einfach-rest button'); if (b) b.focus(); } })));
+    } else if (!nodes.length && fs.length) nodes.push(h('div', { class: 'card muted', text: t('cv.keinePassend') }));
     if (!fs.length && !mine.length) nodes.push(h('div', { class: 'card muted', text: t('cv.keine') }));
-    if (mine.length && st.mode === 'all' && !st.term) nodes.push(h('div', { class: 'more' }, h('div', { class: 'section-title' }, h('h3', { text: t('cv.weitere') }), h('span', { class: 'bar' })), h('div', { class: 'card' }, mine.map(actionCard))));
+    if (mine.length && st.mode === 'all' && !st.term) nodes.push(h('div', { class: 'more' }, h('div', { class: 'section-title' }, h('h2', { text: t('cv.weitere') }), h('span', { class: 'bar' })), h('div', { class: 'card' }, mine.map(a => actionCard(a)))));
     box.replaceChildren(...nodes);
     updateMulti();
     if (S.ui.reveal) doReveal();
@@ -982,7 +1130,7 @@ function catView(id, title, sub, pred, extra) {
 function gamingGrid() {
   const rows = GAMING_CHECKS.map(c => findingByCheck(c)).filter(Boolean);
   if (!rows.length) return null;
-  return h('div', { id: 'gaming-check' }, h('div', { class: 'section-title' }, h('h3', { text: t('menu.unter.gamingCheck') }), h('span', { class: 'bar' })), h('div', { class: 'card' }, h('div', { class: 'gaming' }, rows.map(f =>
+  return h('div', { id: 'gaming-check' }, h('div', { class: 'section-title' }, h('h2', { text: t('menu.unter.gamingCheck') }), h('span', { class: 'bar' })), h('div', { class: 'card' }, h('div', { class: 'gaming' }, rows.map(f =>
     h('div', { class: 'g-item', style: `--c:${STATUS_COLOR[f.Status]}` },
       h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] }),
       h('a', { href: '#/gaming', text: chkName(f), onclick: e => { e.preventDefault(); reveal(f.Check); } }),
@@ -996,12 +1144,12 @@ V.stabilitaet = () => catView('stabilitaet', t('menu.stabilitaet'), t('v.stabili
 V.alle = () => catView('alle', t('menu.alle'), t('v.alle.sub'), () => true);
 
 // ---------------------------------------------------------------- Ansicht: Übersicht
-/** Zustandswert: 100 − 20·Kritisch − 5·Warnung − 1·Tipp (mindestens 0). */
-const scoreOf = c => Math.max(0, 100 - 20 * (c.CRIT || 0) - 5 * (c.WARN || 0) - (c.TIPP || 0));
+/** Zustandswert: 100 − 20·Kritisch − 5·Warnung (mindestens 0). Tipps zählen nicht (Entscheidung 2.7, #95). */
+const scoreOf = c => Math.max(0, 100 - 20 * (c.CRIT || 0) - 5 * (c.WARN || 0));
 function scoreInfo(v) {
-  if (v >= 85) return { title: t('score.gut'), c1: '#2aa198', c2: '#859900' };
-  if (v >= 60) return { title: t('score.einige'), c1: '#b58900', c2: '#e0b23a' };
-  return { title: t('score.handlung'), c1: '#cb4b16', c2: '#dc322f' };
+  if (v >= 85) return { title: t('score.gut'), c1: 'var(--cyan)', c2: 'var(--green)' };
+  if (v >= 60) return { title: t('score.einige'), c1: 'var(--yellow)', c2: 'var(--t-yellow)' };
+  return { title: t('score.handlung'), c1: 'var(--orange)', c2: 'var(--red)' };
 }
 function chartNode(title, pts, prop, unit, better, color) {
   pts = pts.filter(p => p[prop] != null);
@@ -1017,7 +1165,7 @@ function chartNode(title, pts, prop, unit, better, color) {
   const line = xy.map(p => `${p.x},${p.y}`).join(' ');
   const gid = 'ga' + Math.random().toString(36).slice(2, 8);
   const defs = svg('defs'), lg = svg('linearGradient', { id: gid, x1: '0', y1: '0', x2: '0', y2: '1' });
-  lg.append(svg('stop', { offset: '0', 'stop-color': color || '#2aa198', 'stop-opacity': '.35' }), svg('stop', { offset: '1', 'stop-color': color || '#2aa198', 'stop-opacity': '0' }));
+  lg.append(svg('stop', { offset: '0', style: `stop-color:${color || 'var(--cyan)'};stop-opacity:.35` }), svg('stop', { offset: '1', style: `stop-color:${color || 'var(--cyan)'};stop-opacity:0` }));
   defs.append(lg); s.append(defs);
   s.append(svg('path', { class: 'area', d: `M${xy[0].x},${hh} L${line.replace(/ /g, ' L')} L${xy[xy.length - 1].x},${hh}Z`, fill: `url(#${gid})` }));
   s.append(svg('polyline', { points: line }));
@@ -1047,8 +1195,8 @@ async function fillCharts(box, token) {
   const quick = list.map(r => ({ datum: r.created, zustand: scoreOf(r.counts || {}), probleme: ((r.counts || {}).CRIT || 0) + ((r.counts || {}).WARN || 0), startSek: null, index: null, freiC: null }));
   const draw = pts => {
     if (token !== S.rv) return;
-    const nodes = [chartNode(t('chart.zustand'), pts, 'zustand', t('chart.von100'), 'high', '#2aa198'), chartNode(t('chart.probleme'), pts, 'probleme', '', 'low', '#cb4b16'), chartNode(t('chart.start'), pts, 'startSek', 's', 'low', '#268bd2'),
-      chartNode(t('chart.index'), pts, 'index', t('chart.von10'), 'high', '#6c71c4'), chartNode(t('chart.freiC'), pts, 'freiC', '%', 'high', '#859900')].filter(Boolean);
+    const nodes = [chartNode(t('chart.zustand'), pts, 'zustand', t('chart.von100'), 'high', 'var(--cyan)'), chartNode(t('chart.probleme'), pts, 'probleme', '', 'low', 'var(--orange)'), chartNode(t('chart.start'), pts, 'startSek', 's', 'low', 'var(--blue)'),
+      chartNode(t('chart.index'), pts, 'index', t('chart.von10'), 'high', 'var(--violet)'), chartNode(t('chart.freiC'), pts, 'freiC', '%', 'high', 'var(--green)')].filter(Boolean);
     box.replaceChildren(...(nodes.length ? nodes : [h('p', { class: 'muted', text: t('chart.mindestens') })]));
   };
   draw(quick);
@@ -1063,26 +1211,38 @@ function heroText(c) {
   const n = (c.CRIT || 0) + (c.WARN || 0) + (c.TIPP || 0);
   return t('hero.satz', c.CRIT ? '' : t('hero.nichtsKritisches'), parts.length > 1 ? parts.slice(0, -1).join(', ') + t('hero.und') + parts[parts.length - 1] : parts[0], n === 1 ? t('hero.wartet') : t('hero.warten'));
 }
-function ringNode(score) {
-  const C = 351.86, si = scoreInfo(score);
+/** Ringfarbe nach dem schwersten offenen Befund, nicht nach dem Wert (2.7, #92): kritisch rot, Warnung orange, sonst grün. */
+function ringColors(c) {
+  if (c.CRIT) return { c1: 'var(--orange)', c2: 'var(--red)' };
+  if (c.WARN) return { c1: 'var(--yellow)', c2: 'var(--orange)' };
+  return { c1: 'var(--cyan)', c2: 'var(--green)' };
+}
+function ringNode(score, c) {
+  const C = 351.86, si = ringColors(c);
   const s = svg('svg', { viewBox: '0 0 132 132', 'aria-hidden': 'true' });
   const defs = svg('defs'), g = svg('linearGradient', { id: 'gr', x1: '0', y1: '0', x2: '1', y2: '1' });
-  g.append(svg('stop', { offset: '0', 'stop-color': si.c1 }), svg('stop', { offset: '1', 'stop-color': si.c2 }));
+  g.append(svg('stop', { offset: '0', style: 'stop-color:' + si.c1 }), svg('stop', { offset: '1', style: 'stop-color:' + si.c2 }));
   defs.append(g);
   const val = svg('circle', { class: 'val', cx: 66, cy: 66, r: 56, stroke: 'url(#gr)', 'stroke-width': 12, fill: 'none', 'stroke-linecap': 'round', 'stroke-dasharray': C, 'stroke-dashoffset': C });
-  s.append(defs, svg('circle', { cx: 66, cy: 66, r: 56, stroke: '#ffffff12', 'stroke-width': 12, fill: 'none' }), val);
+  s.append(defs, svg('circle', { cx: 66, cy: 66, r: 56, style: 'stroke:color-mix(in srgb,var(--ink) 7.06%,transparent)', 'stroke-width': 12, fill: 'none' }), val);
   requestAnimationFrame(() => requestAnimationFrame(() => val.setAttribute('stroke-dashoffset', String(+(C * (1 - score / 100)).toFixed(1)))));
   return h('div', { class: 'ring', role: 'img', 'aria-label': t('ring.aria', score) }, s, h('div', { class: 'v' }, h('div', null, h('b', { text: String(score) }), h('span', { text: t('chart.von100') }))));
 }
-/** Zeile in „Nächste Schritte“ / „Lohnende Tipps“. */
-function stepRow(f, showLevels) {
+/**
+ * Zeile in „Nächste Schritte“ / „Lohnende Tipps“. Nur der erste nächste Schritt bekommt den Primär-Knopf (#107);
+ * Tipps führen nie direkt aus, sondern zum Befund: erst verstehen, dann handeln.
+ */
+function stepRow(f, showLevels, first) {
   // Nur bestätigt offene Aktionen: Ein noch nicht gelesener Zustand (zustand null) gilt nicht als offen,
   // sonst erscheint „Ausführen“ für Erledigtes und endet in „Schon erledigt, nichts geändert“.
   const open = actionsFor(f).filter(a => a.zustand && a.zustand.aktiv === false && !(a.varianten && a.varianten.length));
   const go = e => { e.preventDefault(); reveal(f.Check); };
   let btn;
-  if (open.length === 1 && !locked()) btn = h('button', { type: 'button', class: 'sm primary', text: t('btn.ausfuehren'), onclick: () => openRunDialog([open[0]]) });
-  else btn = h('button', { type: 'button', class: 'sm', text: (f.Steps && f.Steps.length) || f.Command ? t('howto.summary') : t('step.ansehen'), onclick: go });
+  const pend = actionsFor(f).filter(restartPending);
+  if (pend.length && !open.length) btn = h('span', { class: 'restart pending', text: t('karte.neustartAusstehend') });
+  else if (f.Status === 'TIPP') btn = h('button', { type: 'button', class: 'sm', text: t('step.ansehen'), onclick: go });
+  else if (open.length === 1 && !locked()) btn = h('button', { type: 'button', class: first ? 'sm primary' : 'sm', text: t('btn.ausfuehren'), 'aria-label': t('run.ausfuehrenAria', open[0].titel), onclick: () => openRunDialog([open[0]]) });
+  else btn = h('button', { type: 'button', class: first ? 'sm primary' : 'sm', text: (f.Steps && f.Steps.length) || f.Command ? t('howto.summary') : t('step.ansehen'), onclick: go });
   return h('div', { class: 'row' }, h('span', { class: 'chip ' + f.Status, text: STATUS_NAME[f.Status] }),
     h('div', null, h('div', { class: 't' }, h('a', { href: '#/' + viewOf(f), text: chkName(f), onclick: go }), showLevels ? levelsNode(f.Benefit, f.Effort, f.Risk) : null),
       h('div', { class: 'd', text: f.Recommendation || f.Value })), btn);
@@ -1098,21 +1258,38 @@ V.uebersicht = () => {
   const token = S.rv;
   const toFilter = s => () => { S.ui.f.alle = { mode: s, term: '' }; if (location.hash === '#/alle') refreshView(); else location.hash = '#/alle'; };
   const pill = (s, label, color) => h('button', { type: 'button', class: 'pill', style: `--c:${color}`, title: hp && hp[s] ? hp[s] : t('uebersicht.nurDiese'), onclick: toFilter(s) }, h('i'), `${c[s]} ${label}`);
-  const kpi = (s, label) => h('button', { type: 'button', class: 'kpi', style: `--c:${STATUS_COLOR[s]}`, title: hp && hp[s] ? hp[s] : t('uebersicht.nurDiese'), onclick: toFilter(s) }, h('b', { text: String(c[s]) }), h('span', null, h('i'), label));
+  const kpi = (s, label) => h('button', { type: 'button', class: 'kpi', style: `--c:${STATUS_COLOR[s]}`, title: hp && hp[s] ? hp[s] : t('uebersicht.nurDiese'), onclick: toFilter(s) }, h('b', { text: String(c[s]) }), h('span', null, h('i'), c[s] === 1 ? { CRIT: t('kpi1.CRIT'), WARN: t('kpi1.WARN'), TIPP: t('kpi1.TIPP'), SKIP: t('kpi1.SKIP') }[s] : label));
+  // Einfacher Modus (#103): Zustandsring mit Klartext, die nächsten Schritte und die besten Tipps; Kennzahlen, Verlauf und Legende nur für Experten
+  if (S.einfach) {
+    const mehr = (n, key, mode) => n > 3 ? h('p', { class: 'note' }, t(key, n) + ' ', h('a', { href: '#/alle', text: t('uebersicht.alleAnzeigen'), onclick: () => { S.ui.f.alle = { mode, term: '' }; } })) : null;
+    return h('section', null,
+      h('h1', { text: t('menu.uebersicht') }),
+      h('p', { class: 'sub', text: t('uebersicht.sub', fmtDate(m.Erstellt), jaNein(m.Admin), m.DauerSek != null ? t('uebersicht.dauer', m.DauerSek) : '', m.Computer || '') }),
+      reportBar(), safetyBanner(),
+      h('div', { class: 'card hero' }, ringNode(score, c), h('div', null, h('h2', { text: si.title }), h('p', { text: heroText(c) }))),
+      h('div', { class: 'grid g-2' },
+        h('div', { class: 'card' }, h('h2', null, t('uebersicht.naechste'), h('span', { class: 'hint', text: t('uebersicht.naechsteHint') })),
+          todo.length ? [h('div', { class: 'list' }, todo.slice(0, 3).map((f, i) => stepRow(f, false, i === 0))), mehr(todo.length, 'uebersicht.insgesamtPunkte', 'problem')]
+            : h('p', { text: t('uebersicht.keinHandlung') })),
+        h('div', { class: 'card' }, h('h2', null, t('uebersicht.tipps'), h('span', { class: 'hint', text: t('uebersicht.tippsHint') })),
+          tips.length ? [h('div', { class: 'list' }, tips.slice(0, 3).map(f => stepRow(f, false))), mehr(tips.length, 'uebersicht.insgesamtTipps', 'TIPP')]
+            : h('p', { class: 'muted', text: t('uebersicht.keineTipps') }))),
+      einfachHinweis());
+  }
   const root = h('section', null,
     h('h1', { text: t('menu.uebersicht') }),
     h('p', { class: 'sub', text: t('uebersicht.sub', fmtDate(m.Erstellt), jaNein(m.Admin), m.DauerSek != null ? t('uebersicht.dauer', m.DauerSek) : '', m.Computer || '') }),
     reportBar(), safetyBanner(),
     h('div', { class: 'grid g-hero' },
-      h('div', { class: 'card hero' }, ringNode(score),
-        h('div', null, h('h3', { text: si.title }), h('p', { text: heroText(c) }),
+      h('div', { class: 'card hero' }, ringNode(score, c),
+        h('div', null, h('h2', { text: si.title }), h('p', { text: heroText(c) }),
           h('div', { class: 'pills' }, pill('OK', t('status.ok'), 'var(--green)'), pill('ACK', t('uebersicht.akzeptiert'), 'var(--cyan)'), pill('INFO', c.INFO === 1 ? t('uebersicht.hinweis1') : t('uebersicht.hinweisN'), 'var(--blue)')),
           h('div', { class: 'formula', text: t('uebersicht.formel') }))),
       h('div', { class: 'card' }, h('h2', { text: t('uebersicht.aufEinenBlick') }),
         h('div', { class: 'kpis' }, kpi('CRIT', t('menu.filter.crit')), kpi('WARN', t('menu.filter.warn')), kpi('TIPP', t('menu.filter.tipp')), kpi('SKIP', t('menu.filter.skip'))))),
     h('div', { class: 'grid g-2' },
       h('div', { class: 'card' }, h('h2', null, t('uebersicht.naechste'), h('span', { class: 'hint', text: t('uebersicht.naechsteHint') })),
-        todo.length ? [h('div', { class: 'list' }, todo.slice(0, 3).map(f => stepRow(f, false))), todo.length > 3 ? h('p', { class: 'note' }, t('uebersicht.insgesamtPunkte', todo.length) + ' ', h('a', { href: '#/alle', text: t('uebersicht.alleAnzeigen'), onclick: () => { S.ui.f.alle = { mode: 'problem', term: '' }; } })) : null]
+        todo.length ? [h('div', { class: 'list' }, todo.slice(0, 3).map((f, i) => stepRow(f, false, i === 0))), todo.length > 3 ? h('p', { class: 'note' }, t('uebersicht.insgesamtPunkte', todo.length) + ' ', h('a', { href: '#/alle', text: t('uebersicht.alleAnzeigen'), onclick: () => { S.ui.f.alle = { mode: 'problem', term: '' }; } })) : null]
           : h('p', { text: t('uebersicht.keinHandlung') })),
       h('div', { class: 'card' }, h('h2', null, t('uebersicht.tipps'), h('span', { class: 'hint', text: t('uebersicht.tippsHint') })),
         tips.length ? [h('div', { class: 'list' }, tips.slice(0, 5).map(f => stepRow(f, true))),
@@ -1131,7 +1308,7 @@ function changesCard(ch) {
     h('p', { class: 'muted', text: t('chg.verglichen', prev, ch.AdminVorher === false ? t('chg.adminHinweis') : '') }),
     status.length ? [h('h3', { text: t('chg.geaenderte') }), tableFrom(status)] : null,
     Object.keys(bestand).map(tab => h('div', null, h('h3', { text: tblName(tab) }), h('ul', { class: 'chg' },
-      (bestand[tab].Neu || []).map(x => h('li', { class: 'add', text: '➕ ' + x })), (bestand[tab].Entfernt || []).map(x => h('li', { class: 'rem', text: '➖ ' + x }))))),
+      (bestand[tab].Neu || []).map(x => h('li', { class: 'add', text: '+ ' + x })), (bestand[tab].Entfernt || []).map(x => h('li', { class: 'rem', text: '− ' + x }))))),
     !status.length && !Object.keys(bestand).length ? h('p', { text: t('chg.keine') }) : null);
 }
 
@@ -1150,9 +1327,13 @@ function protect(text, ctx) {
     .replace(/(\\Users\\)[^\\\s"']+/gi, '$1<Benutzer>'); // zusätzlich zur PS-Fassung: Profilordner
   return s;
 }
+function kiCtx() {
+  const m = (S.report && S.report.Meta) || {};
+  return { pc: m.Computer || (S.session && S.session.pc) || '', user: (S.session && (S.session.benutzer || S.session.user)) || ((S.journal || [])[0] || {}).benutzer || '' };
+}
 function buildKi() {
   const m = S.report.Meta, sys = ((S.report.Data || {}).System || [])[0] || {};
-  const ctx = { pc: m.Computer || (S.session && S.session.pc) || '', user: (S.session && (S.session.benutzer || S.session.user)) || ((S.journal || [])[0] || {}).benutzer || '' };
+  const ctx = kiCtx();
   const c = counts(S.findings), L = [];
   L.push(t('ki.zeile1'));
   L.push(t('ki.zeile2'), '');
@@ -1170,6 +1351,94 @@ function buildKi() {
     });
   });
   return L.join('\n');
+}
+
+// ---------------------------------------------------------------- Knopf „KI fragen“ (2.7, #101)
+// Kopiert eine Frage für eine beliebige KI, die eine Prüfung, Anpassung oder Funktion in einfachen Worten erklären lässt.
+// Nur Zwischenablage, kein Netz. Persönliches wird wie bei „Für KI kopieren“ ersetzt (protect). Werte vom PC stehen in einem
+// Datenblock mit zufälliger Markierung, damit z. B. ein Autostart-Name wie „Ignoriere alles …“ für die KI keine Anweisung wird.
+const KI_KEY = 'morpheusKiFragen', KI_MAX = 700, KI_MAX_GESAMT = 6000;
+function kiOn() { try { return localStorage.getItem(KI_KEY) !== '0'; } catch { return true; } }
+function kiClean(v, ctx) {
+  if (v == null || v === '') return '';
+  let s = protect(Array.isArray(v) ? v.filter(x => x != null && x !== '').join('; ') : String(v), ctx)
+    .replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮⁦-⁩]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  if (s.length > KI_MAX) s = s.slice(0, KI_MAX) + t('kf.gekuerzt');
+  return s;
+}
+function kiMarke() {
+  const a = new Uint8Array(4);
+  try { crypto.getRandomValues(a); } catch { for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
+  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+const kiStufen = (n, a, r) => [[t('stufe.nutzen'), n], [t('stufe.aufwand'), a], [t('stufe.risiko'), r]].filter(x => x[1]).map(x => `${x[0]} ${stufeName(x[1])}`).join(', ');
+/** Prompt bauen. fragen: Texte der fünf Fragen; felder: [[Bezeichnung, Wert], …], leere Werte fallen weg. */
+function kiPrompt(thema, fragen, felder) {
+  const ctx = kiCtx(), mk = kiMarke();
+  const sys = (((S.report && S.report.Data) || {}).System || [])[0] || {};
+  let daten = felder.concat([[t('kf.f.windows'), [sys.Edition, sys.Version].filter(Boolean).join(' ')]])
+    .map(([k, v]) => [k, kiClean(v, ctx)]).filter(x => x[1])
+    .map(([k, v]) => v.includes('\n') ? `${k}:\n${v}` : `${k}: ${v}`).join('\n');
+  // Die Markierung darf im Datenteil nicht vorkommen (praktisch ausgeschlossen, aber billig zu prüfen)
+  daten = daten.split(mk).join('');
+  if (daten.length > KI_MAX_GESAMT) daten = daten.slice(0, KI_MAX_GESAMT) + t('kf.gekuerzt');
+  return [t('kf.einleitung'), '', thema, ...fragen, '', t('kf.stil'), '',
+    t('kf.datenHinweis', mk), t('kf.anfang', mk), daten, t('kf.ende', mk), '', t('kf.sprache')].join('\n');
+}
+function kiBefund(f) {
+  const P = (S.help && (S.help.Pruefungen || S.help.pruefungen)) || {}, e = P[f.Check] || {};
+  const note = f.Status === 'ACK' ? t('befund.urspruenglich', STATUS_NAME[f.OriginalStatus] || f.OriginalStatus || '', f.Note || '') : f.Note;
+  return kiPrompt(t('kf.thema.befund'), [t('kf.befund.1'), t('kf.befund.2'), t('kf.befund.3'), t('kf.befund.4'), t('kf.befund.5')], [
+    [t('kf.f.pruefung'), chkName(f)],
+    [t('kf.f.bereich'), [areaName(f), catName(f)].filter(Boolean).join(' / ')],
+    [t('kf.f.ergebnis'), STATUS_NAME[f.Status] || f.Status],
+    [t('kf.f.wert'), f.Value],
+    [t('kf.f.hinweis'), note],
+    [t('kf.f.empfehlung'), f.Recommendation],
+    [t('kf.f.was'), e.Was], [t('kf.f.warum'), e.Warum], [t('kf.f.harmlos'), e.Harmlos],
+    [t('kf.f.einschaetzung'), kiStufen(f.Benefit, f.Effort, f.Risk)],
+    // Ein „KI fragen“ je Befund (#107): Die Anpassungen samt Befehl stehen deshalb hier mit drin
+    [t('kf.f.anpassungen'), actionsFor(f).map(a => [a.titel, a.erklaerung].filter(Boolean).join(': '))],
+    [t('kf.f.befehl'), actionsFor(f).length === 1 ? runCmdText(actionsFor(f)[0], S.variant[actionsFor(f)[0].id] || ((actionsFor(f)[0].varianten || [])[0])) : null]]);
+}
+function kiAktion(a, variante) {
+  const z = a.zustand || {}, hasVar = a.varianten && a.varianten.length;
+  const v = hasVar ? (variante || S.variant[a.id] || a.varianten[0]) : null;
+  const ohnePunkt = a.ohneWiederherstellungspunkt || a.id === 'system.wiederherstellung';
+  return kiPrompt(t('kf.thema.aktion'), [t('kf.aktion.1'), t('kf.aktion.2'), t('kf.aktion.3'), t('kf.aktion.4'), t('kf.aktion.5')], [
+    [t('kf.f.anpassung'), a.titel],
+    [t('kf.f.erklaerung'), a.erklaerung],
+    [t('kf.f.einschaetzung'), kiStufen(a.nutzen, a.aufwand, a.risiko)],
+    [t('kf.f.neustart'), jaNein(a.neustart)],
+    [t('kf.f.zustand'), z.wert != null && z.wert !== '' ? plainVal(z.wert) : t('karte.zustandUnbekannt')],
+    [t('kf.f.varianten'), hasVar ? a.varianten.map(x => varName(a, x)) : null],
+    [t('kf.f.befehl'), runCmdText(a, v)],
+    [t('kf.f.rueckgaengig'), a.befehle && a.befehle.rueckgaengig],
+    [t('kf.f.sicherung'), ohnePunkt ? t('kf.sicherungNein') : t('kf.sicherungJa')]]);
+}
+/** Funktion oder Werkzeug: titel, Beschreibung und weitere Felder ([Bezeichnung, Wert]). */
+function kiWerkzeug(titel, erkl, felder) {
+  return kiPrompt(t('kf.thema.werkzeug'), [t('kf.werkzeug.1'), t('kf.werkzeug.2'), t('kf.werkzeug.3'), t('kf.werkzeug.4'), t('kf.werkzeug.5')],
+    [[t('kf.f.funktion'), titel], [t('kf.f.erklaerung'), erkl]].concat(felder || []));
+}
+function kiWartung(w, lw) {
+  const hp = S.help && (S.help.Wartung || S.help.wartung), help = (hp && hp[w.id]) || {};
+  return kiWerkzeug(w.titel, w.erklaerung, [
+    [t('kf.f.art'), (WT_KLASSE[w.klasse] || [])[1]],
+    [t('kf.f.was'), help.Was], [t('kf.f.wann'), help.Wann], [t('kf.f.hinweis'), [help.Hinweis, w.hinweis].filter(Boolean).join(' ')],
+    [t('kf.f.dauer'), w.dauer], [t('kf.f.internet'), w.internet ? t('allg.ja') : null],
+    [t('kf.f.befehl'), wtBefehl(w, lw)]]);
+}
+/** Kleiner Knopf „KI fragen“; build liefert den Prompt erst beim Klick (aktueller Zustand, Variante, Laufwerk). */
+function kiBtn(titel, build) {
+  if (!kiOn()) return null;
+  return h('button', { type: 'button', class: 'sm ghost ki-ask', title: t('kf.titel'), 'aria-label': t('kf.aria', titel), text: t('kf.knopf'),
+    onclick: e => { const b = e.currentTarget; let p = ''; try { p = build(); } catch (x) { toast(x.message); return; } copyText(p, b, t('kf.toast')); } });
+}
+/** Kartenüberschrift mit Knopf „KI fragen“ rechts (Werkzeuge). */
+function kiHead(titel, build) {
+  const b = kiBtn(titel, build);
+  return b ? h('div', { class: 'ki-head' }, h('h2', { text: titel }), b) : h('h2', { text: titel });
 }
 
 // ---------------------------------------------------------------- Ansicht: Checkliste
@@ -1200,7 +1469,7 @@ const jstat = s => ({ begonnen: t('jr.s.begonnen'), erledigt: t('jr.s.erledigt')
 /** Protokoll-Eintrag einer Wartung bzw. eines Programm-Updates (Abschnitt 18.8): kein Rückgängig, kein „vorher → nachher“. */
 function journalWartung(e) {
   const st = e.status, failed = String(st).startsWith('fehl');
-  const color = failed ? 'var(--red)' : (st === 'erledigt' ? 'var(--cyan)' : (st === 'begonnen' ? 'var(--yellow)' : 'var(--b01)'));
+  const color = failed ? 'var(--red)' : (st === 'erledigt' ? 'var(--cyan)' : (st === 'begonnen' ? 'var(--yellow)' : 'var(--grey)'));
   const chip = st === 'erledigt' ? h('span', { class: 'chip OK', text: t('jr.s.erledigt') })
     : failed ? h('span', { class: 'chip CRIT', text: t('jr.s.fehlgeschlagen') })
       : st === 'abgebrochen' ? h('span', { class: 'chip INFO', text: t('jr.abgebrochen') })
@@ -1222,14 +1491,14 @@ function journalWartung(e) {
 function journalEvent(e) {
   if (e.art === 'wartung' || e.art === 'update') return journalWartung(e);
   const undone = e.status === 'zurueckgenommen', failed = String(e.status).startsWith('fehl'), isUndo = e.art === 'rueckgaengig';
-  const color = failed ? 'var(--red)' : undone ? 'var(--b01)' : isUndo ? 'var(--green)' : 'var(--cyan)';
+  const color = failed ? 'var(--red)' : undone ? 'var(--grey)' : isUndo ? 'var(--green)' : 'var(--cyan)';
   const chip = failed ? h('span', { class: 'chip CRIT', text: jstat(e.status) || e.status })
     : undone ? h('span', { class: 'chip INFO', text: t('jr.s.zurueckgenommen') })
       : isUndo ? h('span', { class: 'chip ACK', text: t('jr.ruecknahme') })
         : h('span', { class: 'chip ' + (e.status === 'erledigt' ? 'OK' : 'WARN'), text: e.status === 'erledigt' ? t('jr.aktiv') : (jstat(e.status) || e.status) });
   const canUndo = e.status === 'erledigt' && !isUndo;
   return h('div', { class: 'ev', style: `--c:${color}` },
-    h('div', { class: 'h' }, h('b', { style: undone ? 'color:var(--b1)' : null, text: isUndo ? t('jr.rueckTitel', e.titel || e.aktion) : (e.titel || e.aktion) }), chip,
+    h('div', { class: 'h' }, h('b', { style: undone ? 'color:var(--fg)' : null, text: isUndo ? t('jr.rueckTitel', e.titel || e.aktion) : (e.titel || e.aktion) }), chip,
       h('span', { class: 'when', title: fmtDate(e.zeit), text: fmtWhen(e.zeit) }),
       canUndo ? h('button', { type: 'button', class: 'sm', disabled: readOnly(), title: readOnly() ? lockTitle() : null, onclick: () => openUndoDialog(e) }, icon('undo'), t('jr.rueckKnopf')) : null),
     h('div', { class: 'm' }, `${fmtState(e.vorher)} → ${fmtState(e.nachher)}`, e.variante ? ` (${e.variante})` : '',
@@ -1254,7 +1523,7 @@ V.aenderungen = () => {
     renderStatusReport();
     rbox.replaceChildren(h('h2', { text: t('jr.punkte') }), ...(list && list.length
       ? [h('div', { class: 'list' }, list.map(p => h('div', { class: 'row rp' }, h('code', { text: '#' + p.seq }),
-        h('div', null, h('div', { class: 't', style: 'font-weight:500', text: p.beschreibung }), h('div', { class: 'd', text: `${fmtWhen(p.zeit)}${p.typ ? ' · ' + p.typ : ''}` }))))),
+        h('div', null, h('div', { class: 't', style: 'font-weight:500', text: p.beschreibung }), h('div', { class: 'd', text: `${fmtWhen(p.zeit)}${p.typ ? ' · ' + tk('rp.typ.' + p.typ, p.typ) : ''}` }))))),
       h('p', { class: 'note' }, tn('jr.rstrui', h('code', { text: 'rstrui.exe' })))]
       : [h('p', { class: 'muted', text: t('jr.keinePunkte') })]));
   }).catch(e => rbox.replaceChildren(h('h2', { text: t('jr.punkte') }), h('p', { class: 'rem', text: e.message })));
@@ -1352,6 +1621,8 @@ async function runScan(body) {
       await loadSpeicher();
       S.scan.msg = banner('info', 'doc', h('b', { text: t('scan.fertig') }), t('scan.neuerBericht'), h('a', { href: '#/uebersicht', text: t('scan.zurUebersicht') }));
       toast(t('scan.toastFertig'));
+      // Zustände der Anpassungen passend zum neuen Bericht neu lesen; sonst zeigt eine Karte z. B. „aus“, obwohl der Scan „an“ meldet
+      refreshActionStates();
     } else S.scan.msg = h('p', { class: 'rem', text: (job.ergebnis && job.ergebnis.error) || t('scan.fehlgeschlagen') });
   } catch (e) { S.scan.running = false; S.scan.msg = h('p', { class: 'rem', text: e.message }); }
   const u = ui();
@@ -1389,6 +1660,24 @@ V.rohdaten = () => {
   if (first) setTimeout(() => first.scrollIntoView({ block: 'start', behavior: 'smooth' }), 50);
   return sec;
 };
+/** Darstellung (2.7, #100): Farbpalette und Modus; wirkt sofort über palette.js (Attribute auf <html>), gespeichert dort in localStorage. */
+function darstellungKarte() {
+  const MP = window.MorpheusPalette;
+  if (!MP) return null;
+  const akt = MP.get();
+  const dunkelNachSystem = () => { try { return matchMedia('(prefers-color-scheme: dark)').matches; } catch { return true; } };
+  const musterModus = theme => theme === 'system' ? (dunkelNachSystem() ? 'dark' : 'light') : theme;
+  const muster = [];
+  const swatch = p => { const s = h('span', { class: 'pal-swatch', 'data-pal': p, 'data-mode': musterModus(akt.theme), 'aria-hidden': 'true' }, h('i'), h('i'), h('i'), h('i'), h('i')); muster.push(s); return s; };
+  const gruppe = (name, legende, werte, aktuell, label, vorne, wahl) => h('fieldset', { class: 'pal-group' }, h('legend', { text: legende }),
+    h('div', { class: 'pal-opts' }, ...werte.map(v => h('label', { class: 'pal-opt' },
+      h('input', { type: 'radio', name, value: v, checked: v === aktuell, onchange: () => wahl(v) }), vorne ? vorne(v) : null, h('span', { text: label(v) })))));
+  return h('div', { class: 'card pal-card' },
+    h('p', { class: 'muted', text: t('set.darstellungSub') }),
+    gruppe('mo-palette', t('set.palette'), MP.PALETTEN, akt.palette, v => ({ solarized: t('set.pal.solarized'), gruvbox: t('set.pal.gruvbox'), oblivion: t('set.pal.oblivion'), sandstone: t('set.pal.sandstone') })[v] || v, swatch, v => MP.set(v, null)),
+    gruppe('mo-modus', t('set.modus'), MP.MODI, akt.theme, v => t({ dark: 'set.dunkel', light: 'set.hell', system: 'set.system' }[v]), null,
+      v => { const a = MP.set(null, v); muster.forEach(s => s.setAttribute('data-mode', musterModus(a.theme))); }));
+}
 V.einstellungen = () => {
   const m = (S.report && S.report.Meta) || {}, s = safety();
   const acc = S.findings.filter(f => f.Status === 'ACK');
@@ -1399,7 +1688,12 @@ V.einstellungen = () => {
       h('tr', null, h('td', { text: t('set.zeitraum') }), h('td', { text: m.EventDays != null ? t('scan.tage', m.EventDays) : '–' })),
       h('tr', null, h('td', { text: t('set.schutz') }), h('td', null, s.schutzAn === false ? h('span', { class: 'rem', text: t('set.aus') }) : h('span', { class: 'ok', text: t('set.an') + (s.laufwerk ? ' (' + s.laufwerk + ')' : '') }), t('set.sperre24'), s.sperre24h ? h('span', { class: 'warn', text: t('set.aktiv') }) : h('span', { class: 'ok', text: t('set.aus') }))),
       h('tr', null, h('td', { text: t('set.letzterPunkt') }), h('td', { text: s.letzterPunkt ? fmtDate(s.letzterPunkt) : '–' })),
-      h('tr', null, h('td', { text: t('set.version') }), h('td', { text: (S.session && S.session.version) || '' }))))),
+      h('tr', null, h('td', { text: t('set.version') }), h('td', { text: (S.session && S.session.version) || '' })),
+      // „KI fragen“ ein-/ausblenden (2.7, #101); nur eine Anzeige-Vorliebe dieses Fensters, darum localStorage
+      h('tr', null, h('td', { text: t('kf.set') }), h('td', null,
+        h('label', null, h('input', { type: 'checkbox', checked: kiOn(), onchange: e => { try { localStorage.setItem(KI_KEY, e.target.checked ? '1' : '0'); } catch { /* ohne Speicher weiter */ } refreshView(); } }), ' ' + t('kf.setText')),
+        h('div', { class: 'note', text: t('kf.setNote') })))))),
+    h('h2', { text: t('set.darstellung') }), darstellungKarte(),
     h('h2', { text: t('set.akzListe') }), dOrdHinweis(),
     h('div', { class: 'card' }, akzBody),
     h('h2', { text: t('set.akzAbw', acc.length) }),
@@ -1419,7 +1713,7 @@ function akzTable(d, box) {
   if (!regeln.length) return h('div', null, intro, h('p', { class: 'muted', text: t('akz.keine') }));
   const rows = regeln.map(r => h('tr', null,
     h('td', { text: r.check || '' }),
-    h('td', { class: 'mono', text: r.datei || r.match || '' }),
+    h('td', { class: 'mono', text: r.datei || String(r.match || '').replace(/^\^(.*)\$$/, '$1') }),
     h('td', { text: r.reason || '' }),
     h('td', null, r.until || t('akz.unbegrenzt'), r.abgelaufen ? [' ', h('span', { class: 'chip WARN', text: t('akz.abgelaufen') })] : null),
     h('td', { text: r.quelle === 'gui' ? 'GUI' : t('akz.vonHand') }),
@@ -1451,19 +1745,19 @@ function openAkzeptieren(tg) {
   const datei = tg.art === 'datei';
   const today = new Date(), maxD = new Date(today.getFullYear() + 5, today.getMonth(), today.getDate());
   const minS = ymd(today), maxS = ymd(maxD);
-  const reason = h('textarea', { rows: 3, maxlength: 300, 'aria-label': t('akz.begrAria'), placeholder: t('akz.warum'), style: 'width:100%' });
+  const reason = h('textarea', { id: 'akz-begr', rows: 3, maxlength: 300, 'aria-label': t('akz.begrAria'), 'aria-describedby': 'akz-msg', placeholder: t('akz.warum'), style: 'width:100%' });
   const count = h('span', { class: 'muted', text: '0 / 300' });
   const bis = h('input', { type: 'date', 'aria-label': t('akz.giltBisAria'), min: minS, max: maxS });
-  const msg = h('p', { role: 'alert' });
+  const msg = h('p', { id: 'akz-msg', role: 'alert' });
   const send = h('button', { type: 'button', class: 'primary', text: t('akz.knopf') });
   const close = h('button', { type: 'button', text: t('btn.abbrechen'), onclick: dlgClose });
   const clean = () => reason.value.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-  reason.addEventListener('input', () => { count.textContent = `${clean().length} / 300`; });
+  reason.addEventListener('input', () => { reason.removeAttribute('aria-invalid'); count.textContent = `${clean().length} / 300`; });
   const fail = text => { msg.className = 'rem'; msg.textContent = text; };
   send.onclick = async () => {
     if (Dlg.running) return;
     const begruendung = clean();
-    if (begruendung.length < 3 || begruendung.length > 300) { fail(t('akz.errBegr')); reason.focus(); return; }
+    if (begruendung.length < 3 || begruendung.length > 300) { fail(t('akz.errBegr')); reason.setAttribute('aria-invalid', 'true'); reason.focus(); return; }
     if (bis.value && (!/^\d{4}-\d{2}-\d{2}$/.test(bis.value) || bis.value < minS || bis.value > maxS)) { fail(t('akz.errBis')); bis.focus(); return; }
     const body = datei ? { art: 'datei', bericht: S.cur + '.json', pfad: tg.pfad, begruendung } : { art: 'befund', bericht: S.cur + '.json', check: tg.check, begruendung };
     if (bis.value) body.bis = bis.value;
@@ -1551,17 +1845,32 @@ function defBody(d) {
 V.werkzeuge = () => {
   const body = h('div', null, h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
+  let defD = null;
+  const defKi = () => {
+    const st = (defD && defD.stand) || {};
+    return kiWerkzeug(t('menu.unter.defender'), t('def.funde'), [
+      [t('kf.f.funktionen'), [t('def.signaturenAkt'), t('def.schnellscanStart'), t('def.offline')]],
+      [t('kf.f.stand'), st.fehler ? null : [
+        t('def.lblSignaturen') + ' ' + (st.signaturAlterTage != null ? ageText(st.signaturAlterTage) : '–'),
+        t('def.lblSchnellscan') + ' ' + (st.schnellscan ? (st.schnellscanAlterTage != null ? ageText(st.schnellscanAlterTage) : fmtDate(st.schnellscan)) : t('def.nochNie')),
+        t('def.lblEchtzeit') + ' ' + onOff(st.echtzeit)[0]]]]);
+  };
   api('/api/defender').then(d => {
     if (token !== S.rv) return;
+    defD = d || {};
     body.replaceChildren(...defBody(d || {}).filter(Boolean));
     const o = d && d.offline;
     if (o && o.status === 'countdown' && !$('#modal').classList.contains('on')) openCountdown(o);
   }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('def.ladenFehler', e.message) })); });
+  const defCard = h('div', { class: 'card', id: 'def-card' }, kiHead(t('menu.unter.defender'), defKi), body);
+  // Einfacher Modus (#103): nur Virenscan und Programm-Updates
+  if (S.einfach) return h('section', null, h('h1', { text: t('menu.werkzeuge') }), h('p', { class: 'sub', text: t('modus.wzSub') }),
+    readOnly() ? safetyBanner() : null, defCard, updCard(), einfachHinweis());
   return h('section', null, h('h1', { text: t('menu.werkzeuge') }), h('p', { class: 'sub', text: t('wz.sub') }),
     readOnly() ? safetyBanner() : null,
-    // Reihenfolge (2.4): Wartung & Reparatur zuerst
+    // Reihenfolge nach Wunsch (2.4): Wartung & Reparatur zuerst
     wartungCard(),
-    h('div', { class: 'card', id: 'def-card' }, h('h2', { text: t('menu.unter.defender') }), body),
+    defCard,
     updCard(),
     sysCard(),
     spOrdnerCard());
@@ -1582,7 +1891,7 @@ function spOrdnerCard() {
     if (token !== S.rv) return;
     const busy = !!S.spoJob, dis = ro || busy;
     const list = S.spOrdner;
-    const kids = [h('h2', { text: t('spo.titel') }),
+    const kids = [kiHead(t('spo.titel'), () => kiWerkzeug(t('spo.titel'), t('spo.note'), [])),
       h('p', { class: 'note', text: t('spo.note') })];
     if (!list) {
       kids.push(S.spoMsg && S.spoMsg.err ? h('p', { class: 'rem', text: S.spoMsg.err }) : h('p', { class: 'muted', text: t('laedt') }));
@@ -1655,7 +1964,10 @@ function sysCard() {
     }
   }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('sys.ladenFehler', e.message) })); });
   load();
-  return h('div', { class: 'card', id: 'sys-card' }, h('h2', { text: t('sys.titel') }), body);
+  const sysKi = () => kiWerkzeug(t('sys.titel'), t('sys.kostenlos'), [
+    [t('kf.f.funktionen'), ((S.sys && Array.isArray(S.sys.werkzeuge)) ? S.sys.werkzeuge : []).map(w => [w.titel || w.name, tk('sys.info.' + w.name, '')].filter(Boolean).join(': '))],
+    [t('kf.f.hinweis'), t('sys.ergebnisse')]]);
+  return h('div', { class: 'card', id: 'sys-card' }, kiHead(t('sys.titel'), sysKi), body);
 }
 function sysBody(d, prog) {
   if (d.fehler) return [h('p', { class: 'rem', text: t('sys.nichtLesbar', d.fehler) })];
@@ -2096,7 +2408,8 @@ function wtRow(w, d, dis, tt) {
     help ? h('details', { class: 'cmd' }, h('summary', { text: t('wt.mehr') }),
       h('div', { class: 'wt-help' }, help.Was ? h('p', null, h('b', { text: t('wt.h.was') }), help.Was) : null, help.Wann ? h('p', null, h('b', { text: t('wt.h.wann') }), help.Wann) : null, help.Hinweis ? h('p', null, h('b', { text: t('wt.h.hinweis') }), help.Hinweis) : null)) : null,
     h('details', { class: 'cmd' }, h('summary', { text: t('wt.befehlZeigen') }), cb),
-    h('div', { class: 'wt-acts' }, sel, h('button', { type: 'button', class: 'sm' + (w.klasse === 'reparatur' ? '' : ' primary'), disabled: off, title: off ? (noLw && !dis ? noLw : tt) : null, text: t('wt.startenPunkte'), onclick: () => wtStartDlg(w, sel ? sel.value : null) })));
+    h('div', { class: 'wt-acts' }, sel, h('button', { type: 'button', class: 'sm' + (w.klasse === 'reparatur' ? '' : ' primary'), disabled: off, title: off ? (noLw && !dis ? noLw : tt) : null, text: t('wt.startenPunkte'), onclick: () => wtStartDlg(w, sel ? sel.value : null) }),
+      kiBtn(w.titel, () => kiWartung(w, sel ? sel.value : null))));
 }
 function wtRestore(d, dis, tt) {
   const sf = d.safety || safety(), w = wtTool(WT_PUNKT_ID);
@@ -2110,9 +2423,13 @@ function wtRestore(d, dis, tt) {
     h('p', { class: 'wt-expl', text: t('wt.r.expl') }),
     state,
     sf.schutzAn === false ? h('div', null, h('p', { class: 'wt-meta', text: t('wt.r.schutzAus') }), sf.befehlSchutz ? cmdBlock(sf.befehlSchutz) : null) : null,
-    sf.sperre24h ? h('div', null, h('p', { class: 'wt-meta', text: t('wt.r.sperreText') }), sf.befehl ? cmdBlock(sf.befehl) : null,
+    sf.sperre24h ? h('div', null, h('p', { class: 'wt-meta', text: t('wt.r.sperreText') }), sf.befehl ? h('details', { class: 'cmd' }, h('summary', { text: t('sb.sperre24Befehl') }), cmdBlock(sf.befehl)) : null,
       h('p', { class: 'wt-meta', text: t('wt.r.mehr') })) : null,
-    h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', disabled: off, title: off ? (dis ? tt : t('wt.r.btnTitel')) : null, text: t('wt.r.anlegen'), onclick: () => wtStartDlg(w, null) })));
+    h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', disabled: off, title: off ? (dis ? tt : t('wt.r.btnTitel')) : null, text: t('wt.r.anlegen'), onclick: () => wtStartDlg(w, null) }),
+      kiBtn(t('menu.werkzeug.punkt'), () => kiWerkzeug(t('menu.werkzeug.punkt'), t('wt.r.expl'), [
+        [t('kf.f.stand'), [t('wt.r.schutz') + ' ' + (sf.schutzAn === false ? t('set.aus') : (sf.schutzAn === true ? t('set.an') : t('allg.unbekannt'))),
+          t('wt.r.sperre') + ' ' + (sf.sperre24h ? t('set.aktiv') : t('allg.nein'))]],
+        [t('kf.f.befehl'), w.befehl]]))));
 }
 function wtBody(d, upd) {
   S.wt.tools = Array.isArray(d.werkzeuge) ? d.werkzeuge : [];
@@ -2143,7 +2460,8 @@ function wtBody(d, upd) {
       h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: t('menu.werkzeug.zuverlaessigkeit') }), klasseChip('diagnose')),
       h('p', { class: 'wt-expl', text: t('wt.rel.expl') }),
       h('p', { class: 'wt-meta', text: t('wt.rel.meta') }),
-      h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: t('wt.rel.oeffnen'), onclick: wtZuverlaessigkeit }))));
+      h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: t('wt.rel.oeffnen'), onclick: wtZuverlaessigkeit }),
+        kiBtn(t('menu.werkzeug.zuverlaessigkeit'), () => kiWerkzeug(t('menu.werkzeug.zuverlaessigkeit'), t('wt.rel.expl'), [[t('kf.f.hinweis'), t('wt.rel.meta')]])))));
     if (g.name === 'Energieberichte') {
       gk.push(h('h3', { class: 'wt-sub', text: t('wt.berichte') }));
       gk.push(berichte.length ? h('div', { class: 'wt-reps' }, berichte.map(b => {
@@ -2283,16 +2601,16 @@ function updCard() {
     if (token !== S.rv) return;
     body.replaceChildren(...updBody(d || {}).filter(Boolean));
   }, e => { if (token === S.rv) body.replaceChildren(h('p', { class: 'rem', text: t('upd.ladenFehler', e.message) })); });
-  return h('div', { class: 'card', id: 'upd-card' }, h('h2', { text: t('upd.titel') }), body);
+  return h('div', { class: 'card', id: 'upd-card' }, kiHead(t('upd.titel'), () => kiWerkzeug(t('upd.titel'), t('upd.expl'), [[t('kf.f.befehl'), wtTool(WT_WINGET_ID).befehl]])), body);
 }
 
 // ---------------------------------------------------------------- Rechte Statusleiste
-const sbVisible = () => S.sbOn && window.matchMedia('(min-width:1400px)').matches;
+const sbVisible = () => S.sbOn && !S.einfach && window.matchMedia('(min-width:1400px)').matches;
 const clampPct = v => Math.max(0, Math.min(100, Number(v) || 0));
 const TONE_OF = { OK: 'green', ACK: 'green', INFO: 'yellow', TIPP: 'yellow', WARN: 'orange', CRIT: 'red', SKIP: 'grey' };
 const toneOf = f => (f && TONE_OF[f.Status]) || 'grey';
 function scCard(title, src, isLive, ...kids) {
-  return h('section', { class: 'sc' }, h('div', { class: 'sc-h' }, h('h4', { text: title }), h('span', { class: 'src' + (isLive ? ' live' : ''), text: src })), ...kids);
+  return h('section', { class: 'sc' }, h('div', { class: 'sc-h' }, h('h3', { text: title }), h('span', { class: 'src' + (isLive ? ' live' : ''), text: src })), ...kids);
 }
 function sparkNode(vals, w = 74, hh = 20) {
   const s = svg('svg', { class: 'sp', viewBox: `0 0 ${w} ${hh}`, 'aria-hidden': 'true' });
@@ -2461,7 +2779,7 @@ async function livePoll() {
 }
 function liveEnsure() { if (sbVisible() && S.live.state !== 'unsupported' && !document.hidden && !liveTimer && !liveBusy) livePoll(); }
 function applySb() {
-  $('#app').classList.toggle('st-off', !S.sbOn);
+  $('#app').classList.toggle('st-off', !S.sbOn || S.einfach);   // im einfachen Modus ohne Statusleiste (#103)
   $('#st-toggle').setAttribute('aria-pressed', S.sbOn ? 'true' : 'false');
   renderStatusLive(); renderStatusReport();
   if (sbVisible()) liveEnsure(); else { liveStop(); closeSpPop(false); }
@@ -2477,6 +2795,28 @@ function initStatusbar() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) liveStop(); else liveEnsure(); });
   applySb();
 }
+// ---------------------------------------------------------------- Ansichtsmodus Einfach/Experte (2.7, #103)
+function modusAnwenden() {
+  document.documentElement.dataset.modus = S.einfach ? 'einfach' : 'experte';
+  document.querySelectorAll('#modus button').forEach(b => b.setAttribute('aria-pressed', String((b.dataset.modus === 'einfach') === S.einfach)));
+}
+function setModus(einfach) {
+  if (S.einfach === einfach) return;
+  S.einfach = einfach;
+  try { localStorage.setItem(MODUS_KEY, einfach ? 'einfach' : 'experte'); } catch { /* ohne Speicher weiter */ }
+  modusAnwenden();
+  applySb();
+  if (einfach) { S.sel.clear(); S.rest = {}; }
+  if (einfach && NUR_EXPERTE_ZU.includes(S.view)) location.hash = '#/uebersicht'; else refreshView();
+}
+function initModus() {
+  try { S.einfach = localStorage.getItem(MODUS_KEY) !== 'experte'; } catch { S.einfach = true; }
+  modusAnwenden();
+  const sw = $('#modus'); if (!sw) return;
+  sw.addEventListener('click', e => { const b = e.target.closest('button[data-modus]'); if (b) setModus(b.dataset.modus === 'einfach'); });
+}
+const einfachHinweis = () => h('p', { class: 'einfach-hinweis' }, t('modus.hinweis'),
+  h('button', { type: 'button', class: 'btn link', text: t('modus.zuExperte'), onclick: () => setModus(false) }));
 async function loadExtra() {
   const [j, p] = await Promise.all([api('/api/journal').catch(() => null), api('/api/restorepoints').catch(() => null)]);
   if (j) S.journal = j;
@@ -2595,7 +2935,7 @@ function spItem(label, path, bytes, max, extra, sub) {
 }
 function spSection(title, list, empty, build) {
   const max = list.reduce((m, x) => Math.max(m, Number(x.bytes) || 0), 0);
-  return h('div', { class: 'sp-sec' }, h('h4', { text: title }), list.length ? list.map(x => build(x, max)) : h('p', { class: 'note', text: empty }));
+  return h('div', { class: 'sp-sec' }, h('h3', { text: title }), list.length ? list.map(x => build(x, max)) : h('p', { class: 'note', text: empty }));
 }
 function renderSpPop() {
   const P = S.spPop, pop = spEl();
@@ -2655,6 +2995,7 @@ function reveal(check) {
   S.ui.reveal = check;
   const v = viewOf(f);
   S.ui.f[v] = { mode: 'all', term: '' };
+  if (S.einfach && !isOpen(f)) S.rest[v] = true;   // im einfachen Modus ist ein erledigter Befund sonst zugeklappt (#103)
   if (location.hash === '#/' + v) refreshView(); else location.hash = '#/' + v;
 }
 function doReveal() {
@@ -2676,12 +3017,15 @@ function renderView(keepScroll) {
   // Beim Neuzeichnen laden Karten (z. B. Werkzeuge) ihren Inhalt nachträglich; bis dahin ist die Seite kürzer und
   // scrollTo würde nach oben gekappt. Die alte Höhe bleibt deshalb kurz als Mindesthöhe stehen (2.5.0, Test C).
   const vw = $('#view');
+  // Fokus im Inhalt merken; nach dem Neuzeichnen auf das gleiche Element bzw. die gleiche Karte (2.7, #95)
+  const fk = keepScroll ? focusKey(document.activeElement) : null;
   clearTimeout(S.ui.minHT);
   vw.style.minHeight = keepScroll ? vw.offsetHeight + 'px' : '';
   if (keepScroll) S.ui.minHT = setTimeout(() => { vw.style.minHeight = ''; }, 3000);
   vw.replaceChildren(node);
   renderNav();
   if (keepScroll) window.scrollTo(0, y); else if (!S.ui.reveal) window.scrollTo(0, 0);
+  if (fk && !focusRestore(fk)) vw.focus({ preventScroll: true });
   if (S.ui.reveal) doReveal();
   if (S.ui.navZiel && !keepScroll) navZielZeigen();
 }
@@ -2785,6 +3129,7 @@ async function switchLang() {
 
 // ---------------------------------------------------------------- Start
 async function init() {
+  initModus();   // vor dem Laden, damit Kopfleiste und Statusleiste nicht kurz im falschen Modus erscheinen
   try { await initToken(); } catch (e) { fatal(e.message); return; }
   if (!S.token) { fatal(t('api.keinToken')); return; }
   try {
@@ -2796,6 +3141,7 @@ async function init() {
   }
   startHeartbeat();
   initTopbar(); initStatusbar(); initNav();
+  $('#skip').addEventListener('click', () => $('#view').focus());   // Sprunglink zum Inhalt (2.7, #92)
   window.addEventListener('hashchange', route);
   route();
   loadExtra();

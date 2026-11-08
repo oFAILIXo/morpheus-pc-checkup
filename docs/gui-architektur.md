@@ -24,7 +24,7 @@ Dieses Dokument ist der Vertrag für alle Teilaufgaben. Wer an einem Teil arbeit
 | `gui/lib/Server.ps1` | HTTP-Server, Routing, Sicherheitsprüfungen, Jobs | T1 |
 | `gui/lib/Safety.ps1` | Wiederherstellungspunkt anlegen und prüfen, Journal, Ausführen/Rückgängig-Ablauf | T2 |
 | `pc-check.aktionen.ps1` | Aktionskatalog (gibt ein Array von Hashtables zurück) | T3 |
-| `gui/index.html`, `gui/app.css`, `gui/app.js` | Oberfläche (Vanilla JS, Hash-Routing) | T4 |
+| `gui/index.html`, `gui/app.css`, `gui/app.js`, `gui/palette.js`, `gui/palettes.css` | Oberfläche (Vanilla JS, Hash-Routing); Farbpaletten seit 2.7 (#100, erzeugt von `gui/dev/make-palettes.ps1`) | T4 |
 | `docs/gui-mockup.html` | klickbares Mockup mit Demodaten, Vorlage für T4 | T0 |
 | `tests/*.Tests.ps1` | Pester-3.4-Tests (in Windows enthalten) | T5 |
 
@@ -66,7 +66,7 @@ Der Server läuft mit Adminrechten. Jede Webseite im Browser kann Anfragen an `1
 3. **Token:** Jede Anfrage unter `/api/` und `/report/` braucht das Token, sonst 401.
    - API: Header `X-PcCheck-Token`.
    - `/report/…`: Parameter `?t=`, weil ein iframe keinen Header setzen kann.
-   - Statische Dateien (`/`, `/app.js`, `/app.css`) gibt es ohne Token. Sie enthalten keine Daten.
+   - Statische Dateien (`/`, `/app.js`, `/app.css`, seit 2.7 `/palette.js`, `/palettes.css`) gibt es ohne Token. Sie enthalten keine Daten.
    - Vergleich in konstanter Zeit.
 4. **Origin:** Ist `Origin` gesetzt, muss er `http://127.0.0.1:<Port>` sein, sonst 403. Der Server sendet **nie** CORS-Header und beantwortet `OPTIONS` mit 405.
 5. **Änderungen nur per `POST`** mit `Content-Type: application/json`. Fremde Seiten lösen damit einen CORS-Preflight aus, der scheitert.
@@ -132,7 +132,7 @@ Der Scan läuft als `powershell.exe -NoProfile -ExecutionPolicy Bypass -File pc-
 ### 7.2 Ablauf „Rückgängig“
 
 Rückgängig ist selbst eine Änderung und folgt deshalb demselben Ablauf:
-- neuer Wiederherstellungspunkt,
+- neuer Wiederherstellungspunkt, → ab 2.7 (#95): Scheitert er (24-h-Sperre), dient der Punkt der Ausführung als Sicherung, wenn er in `Get-ComputerRestorePoint` noch mit gleicher Sequenznummer **und** gleicher Zeit steht (`PcCheckSafetyFindExecutionPoint`). Er hält genau den Zustand fest, zu dem Rückgängig zurückkehrt. Der Rückgängig-Eintrag verweist dann auf ihn (`wiederherstellungspunkt.wiederverwendet = true`). Fehlt er, bricht Rückgängig wie bisher ab, und die Oberfläche nennt den Ausweg (morgen erneut, Befehl zum Aufheben der Sperre).
 - Journal-Eintrag `rueckgaengig` mit `bezug = <eintragId>`,
 - `Rueckgaengig` mit dem gespeicherten Vorher-Zustand,
 - Prüfung per `Lesen`.
@@ -143,10 +143,12 @@ Hat sich der Zustand seit der Änderung geändert (aktuell ≠ gespeicherter Nac
 
 ```json
 { "schutzAn": true, "laufwerk": "C:", "sperre24h": true, "letzterPunkt": "2026-10-25T12:02:11",
-  "befehl": "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" }
+  "befehl": "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force",
+  "seitStart": ["haertung.lsa"] }
 ```
 
 - `sperre24h` ist wahr, wenn `SystemRestorePointCreationFrequency` fehlt oder > 0 ist.
+- `seitStart` (ab 2.7, #95): Aktionen, die laut Journal seit dem letzten Windows-Start (`Win32_OperatingSystem.LastBootUpTime`, einmal je Prozess gelesen) ausgeführt und nicht zurückgenommen wurden. Die Oberfläche zeigt davon Aktionen mit `neustart` als „Ausgeführt – Neustart ausstehend“. Ohne lesbare Startzeit ist die Liste leer.
 - Die Oberfläche zeigt dann ein Banner mit Erklärung und Befehl zum Kopieren.
 - **Die GUI ändert das nicht selbst.** Es ist eine Systemeinstellung, die der Nutzer bewusst setzt.
 - Ist der Computerschutz aus, sind alle Ausführen-Buttons gesperrt, und es gibt den Befehl `Enable-ComputerRestore -Drive 'C:\'`.

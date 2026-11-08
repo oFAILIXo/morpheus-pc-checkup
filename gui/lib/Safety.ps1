@@ -28,6 +28,13 @@ $script:PcCheckRestorePointListImpl = {
 }
 # So lange (Sekunden) wird nach dem Anlegen auf den Punkt gewartet, bevor er als fehlend gilt
 $script:PcCheckRestorePointWaitSeconds = 6
+# Letzter Windows-Start (ändert sich nicht, solange der Prozess läuft; einmal gelesen). Tests ersetzen den Block.
+$script:PcCheckBootTimeImpl = {
+    if (-not $script:PcCheckBootTimeCache) {
+        try { $script:PcCheckBootTimeCache = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime } catch { return $null }
+    }
+    $script:PcCheckBootTimeCache
+}
 
 $script:PcCheckSafetyRegRestore = 'SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
 $script:PcCheckSafetyRegPolicy = 'SOFTWARE\Policies\Microsoft\Windows NT\SystemRestore'
@@ -494,10 +501,22 @@ function Get-PcCheckSafetyStatus {
     $disable = PcCheckSafetyRegValue $script:PcCheckSafetyRegPolicy 'DisableSR'
     $freq = PcCheckSafetyRegValue $script:PcCheckSafetyRegRestore 'SystemRestorePointCreationFrequency'
     $last = $null
+    $seitStart = New-Object System.Collections.ArrayList
     try {
         $entries = @(PcCheckSafetyReadJournal $DataRoot)
         for ($i = $entries.Count - 1; $i -ge 0; $i--) {
             if ($entries[$i].wiederherstellungspunkt) { $last = [string]$entries[$i].wiederherstellungspunkt.zeit; break }
+        }
+        # Seit dem letzten Windows-Start ausgeführte Aktionen (2.7, #95); die GUI markiert davon die mit Neustart
+        # als 'ausgeführt - Neustart ausstehend'. Ohne lesbare Startzeit bleibt die Liste leer.
+        $boot = & $script:PcCheckBootTimeImpl
+        if ($null -ne $boot) {
+            foreach ($e in $entries) {
+                $ez = PcCheckSafetyToDate $e.zeit
+                if (([string]$e.art -ceq 'ausfuehren') -and ([string]$e.status -ceq 'erledigt') -and ($null -ne $ez) -and ($ez -ge $boot) -and (-not $seitStart.Contains([string]$e.aktion))) {
+                    [void]$seitStart.Add([string]$e.aktion)
+                }
+            }
         }
     } catch { $last = $null }
     $sperre = $true
@@ -513,6 +532,7 @@ function Get-PcCheckSafetyStatus {
         befehlSchutz = (PcCheckSafetyCommandEnable)
         speicherKlein = [bool]($sp -and $sp.klein)
         speicherMax  = $(if ($sp) { $sp.text } else { $null })
+        seitStart    = [string[]]@($seitStart)
     }
 }
 
@@ -705,6 +725,26 @@ function Test-PcCheckVorReparatur {
     return (($null -eq $repZeit) -or ($null -eq $eintragZeit) -or ($eintragZeit -lt $repZeit))
 }
 
+# Punkt der Ausführung eines Journal-Eintrags, wenn er in der Liste noch existiert (Sequenznummer und Zeit gleich).
+# Rückgabe @{ seq; zeit; wiederverwendet = $true } oder $null (auch wenn die Liste nicht lesbar ist).
+function PcCheckSafetyFindExecutionPoint {
+    param($Entry)
+    $p = $Entry.wiederherstellungspunkt
+    if ($null -eq $p) { return $null }
+    $seq = 0
+    if (-not [int]::TryParse([string]$p.seq, [ref]$seq)) { return $null }
+    if ($seq -le 0) { return $null }
+    $zeit = [string]$p.zeit
+    try {
+        foreach ($x in @(PcCheckSafetyListPoints)) {
+            if (($x.seq -eq $seq) -and ((PcCheckSafetyIso $x.zeit) -ceq $zeit)) {
+                return @{ seq = $seq; zeit = $zeit; wiederverwendet = $true }
+            }
+        }
+    } catch { }
+    $null
+}
+
 function Undo-PcCheckChange {
     [CmdletBinding()]
     param(
@@ -749,7 +789,16 @@ function Undo-PcCheckChange {
     if ($a.OhneWiederherstellungspunkt -eq $true) {
         PcCheckSafetyLog (T 'server.safety.ohnePunktRuecknahme' $a.Titel)
     } else {
-        $point = PcCheckSafetyEnsureRestorePoint -Description (T 'server.safety.punktRuecknahme' $a.Titel) -JobStart $jobStart
+        try {
+            $point = PcCheckSafetyEnsureRestorePoint -Description (T 'server.safety.punktRuecknahme' $a.Titel) -JobStart $jobStart
+        } catch {
+            # 24-h-Sperre (2.7, #95): Der Punkt der Ausführung zeigt genau den Zustand, zu dem die Rücknahme
+            # zurückkehrt. Existiert er noch (gleiche Sequenznummer und Zeit), dient er als Sicherung.
+            $orig = PcCheckSafetyFindExecutionPoint $entry
+            if ($null -eq $orig) { throw }
+            PcCheckSafetyLog (T 'server.safety.punktDerAusfuehrung' $orig.seq)
+            $point = $orig
+        }
     }
 
     $vorherJ = PcCheckSafetyJournalState $current

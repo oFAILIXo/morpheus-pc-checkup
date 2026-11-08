@@ -42,7 +42,7 @@
     'katalog.wiederherstellung.an' = 'on for {0}'
     'katalog.wiederherstellung.ausRichtlinie' = 'off (by policy)'
     'katalog.wiederherstellung.aus' = 'off for {0}'
-    'katalog.speicher.pitr' = 'Windows manages the limit through "Point-in-time restore" and resets it at every startup. Please set it yourself: Settings > System > Recovery > Point-in-time restore > View or edit, slider to about 10%. If Point-in-time restore is off there: sysdm.cpl > System Protection > Configure > Max Usage.'
+    'katalog.speicher.pitr' = 'Windows manages the limit through "Point-in-time restore" and resets a value that was only set in sysdm.cpl or with vssadmin at the next startup. Please set it yourself in both places; the Settings value is the one that counts: 1. ms-settings:recovery > Point-in-time restore > View or edit, slider to about 10% (Windows allows at most 50 GB). 2. The same value under sysdm.cpl > System Protection > Configure > Max Usage. After a restart, run Morpheus again: the "Restore" finding shows whether the value has held.'
     'katalog.speicher.schutzAus' = 'System protection is off; run "Turn on system protection" first.'
     'katalog.speicher.nurAdmin' = 'can only be read with administrator rights'
     'katalog.speicher.keinSpeicher' = 'no storage set up for {0} yet'

@@ -1700,4 +1700,44 @@ Describe 'Test-GuiServerEnde und Heartbeat-Schutz' {
     }
 }
 
+Describe 'Farbpaletten: statische Dateien und Einbindung (2.7, #100)' {
+    BeforeEach {
+        $script:Gui = @{ Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path; DataRoot = $script:TestDir; ReadOnly = $true; ReadOnlyReason = 'test'; Token = 'testtoken'
+            Jobs = @{}; LastHeartbeat = (Get-Date); Status = 0 }
+    }
+    It 'liefert /palette.js und /palettes.css ohne Token aus' {
+        $r = Invoke-TestRoute 'GET' '/palette.js' ''
+        $r.status | Should Be 200
+        $r.raw | Should Match 'MorpheusPalette'
+        $r = Invoke-TestRoute 'GET' '/palettes.css' ''
+        $r.status | Should Be 200
+        $r.raw | Should Match ':root\[data-palette="gruvbox"\]'
+    }
+    It 'liefert andere Namen im gui-Ordner weiterhin nicht aus' {
+        (Invoke-TestRoute 'GET' '/palette.json' '').status | Should Be 404
+    }
+    It 'index.html lädt palette.js im Kopf vor dem Stylesheet und ohne Inline-Skript (CSP script-src self)' {
+        $t = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\index.html'), [Text.Encoding]::UTF8)
+        $kopf = $t.Substring(0, $t.IndexOf('</head>'))
+        $kopf | Should Match '<script src="palette\.js"></script>\s*<link rel="stylesheet" href="palettes\.css">\s*<link rel="stylesheet" href="app\.css">'
+        ([regex]::Matches($t, '<script>')).Count | Should Be 0
+    }
+    It 'palette.js nimmt nur bekannte Werte an, Standard ist Solarized dunkel' {
+        $t = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\palette.js'), [Text.Encoding]::UTF8)
+        $t | Should Match "PALETTEN = \['solarized', 'gruvbox', 'oblivion', 'sandstone'\]"
+        $t | Should Match "lies\(K_PAL, PALETTEN, 'solarized'\)"
+        $t | Should Match "lies\(K_MODUS, MODI, 'dark'\)"
+    }
+    It 'palettes.css ist aktuell (gleich der Ausgabe von gui\dev\make-palettes.ps1) und hält AA ein' {
+        $css = Join-Path $PSScriptRoot '..\gui\palettes.css'
+        $neu = Join-Path $script:TestDir 'palettes-neu.css'
+        New-Item -ItemType Directory -Force $script:TestDir | Out-Null
+        $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\gui\dev\make-palettes.ps1') -Ziel $neu 2>&1
+        $LASTEXITCODE | Should Be 0
+        ($out -join "`n") | Should Match '0 Fehler'
+        # Zeilenenden egal (git autocrlf checkt CRLF aus, der Generator schreibt LF)
+        [IO.File]::ReadAllText($neu).Replace("`r`n", "`n") | Should Be ([IO.File]::ReadAllText($css).Replace("`r`n", "`n"))
+    }
+}
+
 Remove-Item -LiteralPath $script:TestDir -Recurse -Force -ErrorAction SilentlyContinue

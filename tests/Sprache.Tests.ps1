@@ -241,3 +241,17 @@ Describe 'Sprache.ps1' {
 
     $env:MORPHEUS_SPRACHE = $altEnv
 }
+
+Describe 'Point-in-time restore: Hinweis (Karte #76)' {
+    foreach ($sp in 'de', 'en') {
+        It "nennt in $sp beide Stellen, den Einstellungs-Link und die 50-GB-Grenze" {
+            $k = Get-LangDatei $sp 'katalog'
+            $s = Get-LangDatei $sp 'scan'
+            foreach ($text in @($k['katalog.speicher.pitr'], $s['scan.wh.zuKleinPitrEmpf'])) {
+                $text | Should Match 'ms-settings:recovery'
+                $text | Should Match 'sysdm\.cpl'
+                $text | Should Match '50 GB'
+            }
+        }
+    }
+}

@@ -211,7 +211,7 @@ function Get-MorpheusCodeFiles {
     $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
     $out = New-Object System.Collections.Generic.List[string]
     foreach ($n in 'pc-check.ps1', 'pc-check.cmd', 'pc-check-start.ps1', 'pc-check.aktionen.ps1', 'pc-check-gui.ps1', 'pc-check-gui.cmd',
-        'accepted.example.psd1', 'README.md', 'LICENSE', 'gui\index.html', 'gui\app.js', 'gui\app.css',
+        'accepted.example.psd1', 'README.md', 'LICENSE', 'gui\index.html', 'gui\app.js', 'gui\app.css', 'gui\palette.js', 'gui\palettes.css',
         # Sprachdateien (2.6, #66): feste Liste wie in gui\lib\Sprache.ps1, kein Suchmuster
         # (je Datei höchstens 500 Schlüssel, Grenze von Import-PowerShellDataFile; deshalb mehrere Teile je Bereich)
         'lang\de\scan.psd1', 'lang\de\scannamen.psd1', 'lang\de\leistung.psd1', 'lang\de\bericht.psd1', 'lang\de\server.psd1', 'lang\de\serverlib.psd1',
