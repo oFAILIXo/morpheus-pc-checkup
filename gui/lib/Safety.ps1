@@ -46,6 +46,14 @@ function PcCheckSafetyLog {
     Write-Information -MessageData ('[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Text) -InformationAction Continue
 }
 
+# Fortschritt i/n an den Server (2.8, #137). Nur wenn gui\lib\Fortschritt.ps1 geladen ist (Job-Skripte run/undo);
+# ohne die Datei (Tests, Konsole) passiert nichts. Fehler beim Melden halten keine Änderung auf.
+function PcCheckSafetyFortschritt {
+    param([int]$I, [int]$N, [string]$Phase, [AllowNull()][string]$Text)
+    if (-not (Get-Command -Name Write-MorpheusFortschritt -ErrorAction SilentlyContinue)) { return }
+    try { Write-MorpheusFortschritt -Modus 'zaehler' -I $I -N $N -Phase $Phase -Text $Text } catch { }
+}
+
 function PcCheckSafetyDefaultRoot {
     Split-Path -Parent (Split-Path -Parent $script:PcCheckSafetyDir)
 }
@@ -70,6 +78,64 @@ function PcCheckSafetyIsAdmin {
     try {
         ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     } catch { $false }
+}
+
+# Hilfen für die Rueckgaengig-Blöcke in pc-check.aktionen.ps1 (#114): Pfad, Name und Typ stehen fest im Code,
+# aus dem Journal kommt nur der Wert (und ob er bzw. der Schlüssel vorher existierte). Abweichungen werden vor jeder Änderung abgelehnt.
+function Set-PcCheckRegDWordRuecknahme {
+    param([Parameter(Mandatory)][string]$Pfad, [Parameter(Mandatory)][string]$Name, $Vorher)
+    if ([string]$Vorher.Typ -cne 'DWord') { throw (T 'katalog.ruecknahme.typAbweichend' $Name ([string]$Vorher.Typ) 'DWord') }
+    $wert = [int]$Vorher.Wert
+    if (-not (Test-Path -LiteralPath $Pfad)) { New-Item -Path $Pfad -Force -ErrorAction Stop | Out-Null }
+    New-ItemProperty -LiteralPath $Pfad -Name $Name -PropertyType DWord -Value $wert -Force -ErrorAction Stop | Out-Null
+}
+
+# Mehrere Werte: erst alle Einträge prüfen, dann schreiben – weicht einer ab, wird nichts geändert.
+function Restore-PcCheckRegWerte {
+    param([Parameter(Mandatory)][hashtable[]]$Ziele, [Parameter(Mandatory)][ValidateSet('DWord', 'String')][string]$Typ, $Vorher)
+    $liste = @($Vorher.Werte)
+    if ($liste.Count -ne $Ziele.Count) { throw (T 'katalog.ruecknahme.zielAbweichend' $Ziele.Count $liste.Count) }
+    for ($i = 0; $i -lt $Ziele.Count; $i++) {
+        $v = $liste[$i]
+        if (([string]$v.Pfad -ine $Ziele[$i].Pfad) -or ([string]$v.Name -ine $Ziele[$i].Name)) {
+            throw (T 'katalog.ruecknahme.zielAbweichend' ($Ziele[$i].Pfad + ' : ' + $Ziele[$i].Name) (([string]$v.Pfad) + ' : ' + ([string]$v.Name)))
+        }
+        if ($null -ne $v.Wert) {
+            if ([string]$v.Typ -cne $Typ) { throw (T 'katalog.ruecknahme.typAbweichend' $Ziele[$i].Name ([string]$v.Typ) $Typ) }
+            if ($Typ -eq 'DWord') { [void][int]$v.Wert }
+            elseif ([string]$v.Wert -notmatch '^[0-9]{1,5}$') { throw (T 'katalog.ruecknahme.wertUngueltig' $Ziele[$i].Name ([string]$v.Wert)) }
+        }
+    }
+    for ($i = 0; $i -lt $Ziele.Count; $i++) {
+        $v = $liste[$i]
+        $pfad = $Ziele[$i].Pfad; $name = $Ziele[$i].Name
+        if ($null -eq $v.Wert) {
+            if (Test-Path -LiteralPath $pfad) {
+                if ((Get-Item -LiteralPath $pfad -ErrorAction Stop).GetValueNames() -contains $name) { Remove-ItemProperty -LiteralPath $pfad -Name $name -ErrorAction Stop }
+                if ($v.SchluesselVorhanden -eq $false) {
+                    $k = Get-Item -LiteralPath $pfad -ErrorAction Stop
+                    if (($k.ValueCount -eq 0) -and ($k.SubKeyCount -eq 0)) { Remove-Item -LiteralPath $pfad -ErrorAction Stop }
+                }
+            }
+        } else {
+            if ($Typ -eq 'DWord') { $wert = [int]$v.Wert } else { $wert = [string]$v.Wert }
+            if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
+            New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+        }
+    }
+}
+
+# SystemParametersInfo (Maus, SPI_SETMOUSE) per P/Invoke im Speicher über Reflection.Emit statt Add-Type:
+# Add-Type kompiliert über %TEMP%, dort könnte ein Benutzerprogramm die DLL tauschen. Typ wird je Prozess einmal erzeugt.
+function Get-PcCheckMausSpi {
+    foreach ($a in [AppDomain]::CurrentDomain.GetAssemblies()) {
+        if ($a.IsDynamic -and ($a.GetName().Name -eq 'MorpheusMaus')) { $t = $a.GetType('MorpheusMaus.Spi', $false); if ($t) { return $t } }
+    }
+    $asm = [AppDomain]::CurrentDomain.DefineDynamicAssembly((New-Object Reflection.AssemblyName 'MorpheusMaus'), [Reflection.Emit.AssemblyBuilderAccess]::Run)
+    $tb = $asm.DefineDynamicModule('MorpheusMaus').DefineType('MorpheusMaus.Spi', 'Public, Class')
+    $m = $tb.DefinePInvokeMethod('SystemParametersInfo', 'user32.dll', [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [bool], [Type[]]@([uint32], [uint32], [int[]], [uint32]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+    $m.SetImplementationFlags([Reflection.MethodImplAttributes]::PreserveSig)
+    $tb.CreateType()
 }
 
 # Vergleichsschlüssel für Zustände: JSON-normalisiert, $null bleibt 'null'
@@ -418,9 +484,34 @@ function Get-PcCheckCatalog {
     $result.ToArray()
 }
 
+# „Zurücknehmen“ an der Karte (#166): Journal-Eintrag, den die Karte über die gewöhnliche Rückgängig-Route zurücknehmen darf, sonst $null.
+# Nur wenn Morpheus die Anpassung selbst gesetzt hat (Eintrag ausfuehren/erledigt, nicht schon zurückgenommen), der gelesene
+# Zustand noch dem Nachher-Zustand des Eintrags entspricht, der Ursprungszustand „nicht angewendet“ war und der Eintrag nicht
+# aus der Zeit vor einer Datenordner-Reparatur stammt. Alles andere (von Windows oder Dritten gesetzt, später geändert,
+# Ursprung unbekannt) bekommt keinen Knopf; die Rücknahme prüft der Server bei der Route erneut.
+function Get-PcCheckKartenRueckgaengig {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Action, $State, $Journal, [string]$DataRoot)
+    if (($null -eq $State) -or ($State.aktiv -ne $true) -or [string]::IsNullOrEmpty([string]$State.schluessel)) { return $null }
+    if ($null -eq $Action.Rueckgaengig) { return $null }
+    foreach ($e in @($Journal)) {   # neueste zuerst (Get-PcCheckJournal)
+        if (([string]$e.aktion -cne [string]$Action.Id) -or ([string]$e.art -cne 'ausfuehren')) { continue }
+        # Nur der neueste Ausführen-Eintrag entscheidet: ist er zurückgenommen oder fehlgeschlagen, zählt kein älterer.
+        if ([string]$e.status -cne 'erledigt') { return $null }
+        if (($null -eq $e.vorher) -or ($null -eq $e.nachher)) { return $null }
+        if ($e.vorher.aktiv -eq $true) { return $null }
+        $nk = $null
+        try { $nk = PcCheckSafetyStateKey $e.nachher.zustand } catch { return $null }
+        if ($nk -cne [string]$State.schluessel) { return $null }
+        if ($DataRoot -and (Test-PcCheckVorReparatur -DataRoot $DataRoot -Eintrag $e)) { return $null }
+        return $e
+    }
+    $null
+}
+
 function ConvertTo-PublicAction {
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Action, $State)
+    param([Parameter(Mandatory)]$Action, $State, $Journal, [string]$DataRoot)
     $var = $null
     if ($Action.Varianten) { $var = @($Action.Varianten) }
     $cmdRun = $null; $cmdUndo = $null; $cmdHelp = @()
@@ -447,6 +538,7 @@ function ConvertTo-PublicAction {
         ohneWiederherstellungspunkt = ($Action.OhneWiederherstellungspunkt -eq $true)
         befehle   = [pscustomobject]@{ ausfuehren = $cmdRun; rueckgaengig = $cmdUndo; erklaerung = $cmdHelp }
         zustand   = $zustand
+        zuruecknehmen = (Get-PcCheckKartenRueckgaengig -Action $Action -State $State -Journal $Journal -DataRoot $DataRoot)
     }
 }
 
@@ -458,7 +550,8 @@ function Get-PcCheckActionStates {
     foreach ($a in @($Catalog)) {
         try {
             $s = PcCheckSafetyReadState $a
-            $result[[string]$a.Id] = @{ aktiv = $s.aktiv; wert = $s.wert; stand = $s.stand }
+            # schluessel: nur intern (Vergleich mit dem Journal für „Zurücknehmen“ an der Karte, #166), nie an die GUI
+            $result[[string]$a.Id] = @{ aktiv = $s.aktiv; wert = $s.wert; stand = $s.stand; schluessel = $(try { PcCheckSafetyStateKey $s.zustand } catch { $null }) }
         } catch {
             $result[[string]$a.Id] = @{ aktiv = $false; wert = (T 'server.safety.fehlerWert' $_.Exception.Message); stand = (Get-Date).ToString('s') }
         }
@@ -605,7 +698,10 @@ function Invoke-PcCheckChange {
     # --- 1./2. Lesen und Voraussetzungen ---
     $results = New-Object System.Collections.ArrayList
     $plan = New-Object System.Collections.ArrayList
+    $k = 0
     foreach ($a in $actions) {
+        PcCheckSafetyFortschritt $k $actions.Count 'zustand' $a.Titel
+        $k++
         PcCheckSafetyLog (T 'server.safety.pruefe' $a.Titel)
         try {
             $before = PcCheckSafetyReadState $a
@@ -642,25 +738,31 @@ function Invoke-PcCheckChange {
     if ($noPoint) {
         PcCheckSafetyLog (T 'server.safety.ohnePunkt' $plan[0].action.Titel)
     } else {
+        PcCheckSafetyFortschritt 0 $plan.Count 'punkt' $null
         if ($plan.Count -eq 1) { $desc = (T 'server.safety.punktBeschreibung' $plan[0].action.Titel) } else { $desc = (T 'server.safety.punktBeschreibungMehrere' $plan.Count) }
         $point = PcCheckSafetyEnsureRestorePoint -Description $desc -JobStart $jobStart
     }
 
     # --- 4./5. Journal, Ausführen, Kontrolle ---
+    $k = 0
     foreach ($item in $plan) {
         $a = $item.action
         $before = $item.before
         $var = $null
         if ($a.Varianten) { $var = $Variante }
+        PcCheckSafetyFortschritt $k $plan.Count 'journal' $a.Titel
         $vorherJ = PcCheckSafetyJournalState $before
         $entryId = PcCheckSafetyNewEntryId $DataRoot
         PcCheckSafetyAddEntry $DataRoot (PcCheckSafetyNewEntry $entryId 'ausfuehren' $a $var $vorherJ $point $null)
+        PcCheckSafetyFortschritt $k $plan.Count 'ausfuehren' $a.Titel
+        $k++
         PcCheckSafetyLog (T 'server.safety.fuehreAus' $a.Titel)
 
         $err = ''
         $after = $null
         try { & $a.Ausfuehren $var | Out-Null } catch { $err = $_.Exception.Message }
         if ($err -eq '') {
+            PcCheckSafetyFortschritt ($k - 1) $plan.Count 'pruefen' $a.Titel
             try { $after = PcCheckSafetyReadState $a } catch { $err = (T 'server.safety.kontrolleFehler' $_.Exception.Message) }
         }
         if (($err -eq '') -and $after.aktiv) {
@@ -694,6 +796,7 @@ function Invoke-PcCheckChange {
         PcCheckSafetyLog "$($a.Titel): $status"
         [void]$results.Add((PcCheckSafetyNewResult $a $status $vorherJ $nach $msg $entryId))
     }
+    PcCheckSafetyFortschritt $plan.Count $plan.Count 'pruefen' $null
     $results.ToArray()
 }
 
@@ -772,6 +875,7 @@ function Undo-PcCheckChange {
     $a = PcCheckSafetyFindAction $catalog ([string]$entry.aktion)
     if ($null -eq $a) { throw (T 'server.safety.nichtImKatalog' $entry.aktion) }
 
+    PcCheckSafetyFortschritt 0 1 'zustand' $a.Titel
     PcCheckSafetyLog (T 'server.safety.pruefeZustand' $a.Titel)
     $current = PcCheckSafetyReadState $a
     # Verteidigung in der Tiefe: Ein gefälschter Journal-Eintrag darf der Aktion keinen Zustand unterschieben,
@@ -789,6 +893,7 @@ function Undo-PcCheckChange {
     if ($a.OhneWiederherstellungspunkt -eq $true) {
         PcCheckSafetyLog (T 'server.safety.ohnePunktRuecknahme' $a.Titel)
     } else {
+        PcCheckSafetyFortschritt 0 1 'punkt' $a.Titel
         try {
             $point = PcCheckSafetyEnsureRestorePoint -Description (T 'server.safety.punktRuecknahme' $a.Titel) -JobStart $jobStart
         } catch {
@@ -801,11 +906,13 @@ function Undo-PcCheckChange {
         }
     }
 
+    PcCheckSafetyFortschritt 0 1 'journal' $a.Titel
     $vorherJ = PcCheckSafetyJournalState $current
     $undoId = PcCheckSafetyNewEntryId $DataRoot
     $var = $null
     if ($entry.variante) { $var = [string]$entry.variante }
     PcCheckSafetyAddEntry $DataRoot (PcCheckSafetyNewEntry $undoId 'rueckgaengig' $a $var $vorherJ $point $EntryId)
+    PcCheckSafetyFortschritt 0 1 'ausfuehren' $a.Titel
     PcCheckSafetyLog (T 'server.safety.nehmeZurueck' $a.Titel)
 
     $target = $null
@@ -814,11 +921,13 @@ function Undo-PcCheckChange {
     $after = $null
     try { & $a.Rueckgaengig $target | Out-Null } catch { $err = $_.Exception.Message }
     if ($err -eq '') {
+        PcCheckSafetyFortschritt 0 1 'pruefen' $a.Titel
         try { $after = PcCheckSafetyReadState $a } catch { $err = (T 'server.safety.kontrolleFehler' $_.Exception.Message) }
     }
     if (($err -eq '') -and ((PcCheckSafetyStateKey $after.zustand) -cne (PcCheckSafetyStateKey $target))) {
         $err = (T 'server.safety.nachRuecknahmeAbweichend')
     }
+    PcCheckSafetyFortschritt 1 1 'pruefen' $null
     if ($err -eq '') {
         $nach = PcCheckSafetyJournalState $after
         PcCheckSafetyUpdateEntry $DataRoot $undoId @{ status = 'erledigt'; nachher = $nach; meldung = '' }

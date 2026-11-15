@@ -824,6 +824,26 @@ function New-MorpheusIcon {
     catch { return $false }
 }
 
+# Fortschritt in der Konsole (2.9, #142): Installation und Selbst-Update. Nur mit gui\lib\Fortschritt.ps1 und nur, wenn
+# Test-MorpheusKonsolenFortschritt es erlaubt (kein Job, keine umgeleitete Ausgabe). Fehler stören die Installation nie.
+function MorpheusInstallFortschrittAn {
+    try {
+        if (-not (Get-Command -Name Test-MorpheusKonsolenFortschritt -CommandType Function -ErrorAction SilentlyContinue)) { return $false }
+        return [bool](Test-MorpheusKonsolenFortschritt)
+    }
+    catch { return $false }
+}
+
+function MorpheusInstallFortschritt {
+    param([string]$Status, [int]$Prozent = 0, [switch]$Fertig)
+    try {
+        $ProgressPreference = 'Continue'
+        if ($Fertig) { Write-Progress -Id 2 -Activity (T 'server.install.fsAktivitaet') -Completed }
+        else { Write-Progress -Id 2 -Activity (T 'server.install.fsAktivitaet') -Status $Status -PercentComplete ([Math]::Max(0, [Math]::Min(100, $Prozent))) }
+    }
+    catch { }
+}
+
 <#
 .SYNOPSIS
     Installiert Morpheus nach C:\Program Files\Morpheus (bzw. -Target), richtet den Datenordner und die
@@ -856,27 +876,36 @@ function Install-Morpheus {
     # Codedateien kopieren (nur die Liste aus Get-MorpheusCodeFiles); der Rest bleibt draußen
     $srcFiles = @(Get-MorpheusCodeFiles -Root $Source)
     $keep = @{}
-    foreach ($f in $srcFiles) {
-        $rel = $f.Substring($Source.Length).TrimStart('\')
-        $keep[$rel.ToLowerInvariant()] = $true
-        $dest = Join-Path $Target $rel
-        $dd = Split-Path -Parent $dest
-        if (-not (Test-Path -LiteralPath $dd -PathType Container)) { [void](New-Item -ItemType Directory -Path $dd -Force) }
-        Copy-Item -LiteralPath $f -Destination $dest -Force
-    }
-    # Codedateien, die es in der Quelle nicht mehr gibt, im Ziel entfernen
-    foreach ($old in @(Get-MorpheusCodeFiles -Root $Target)) {
-        $rel = $old.Substring($Target.Length).TrimStart('\')
-        if (-not $keep.ContainsKey($rel.ToLowerInvariant())) { Remove-Item -LiteralPath $old -Force }
-    }
+    # Konsole (2.9, #142): Write-Progress 'Datei i von n'; in einem Job oder bei umgeleiteter Ausgabe nichts
+    $fs = MorpheusInstallFortschrittAn
+    $fsI = 0
+    try {
+        foreach ($f in $srcFiles) {
+            $fsI++
+            if ($fs) { MorpheusInstallFortschritt -Status (T 'server.install.fsDatei' $fsI $srcFiles.Count) -Prozent ([int][Math]::Floor(100.0 * $fsI / $srcFiles.Count)) }
+            $rel = $f.Substring($Source.Length).TrimStart('\')
+            $keep[$rel.ToLowerInvariant()] = $true
+            $dest = Join-Path $Target $rel
+            $dd = Split-Path -Parent $dest
+            if (-not (Test-Path -LiteralPath $dd -PathType Container)) { [void](New-Item -ItemType Directory -Path $dd -Force) }
+            Copy-Item -LiteralPath $f -Destination $dest -Force
+        }
+        if ($fs) { MorpheusInstallFortschritt -Status (T 'server.install.fsPruefen') -Prozent 100 }
+        # Codedateien, die es in der Quelle nicht mehr gibt, im Ziel entfernen
+        foreach ($old in @(Get-MorpheusCodeFiles -Root $Target)) {
+            $rel = $old.Substring($Target.Length).TrimStart('\')
+            if (-not $keep.ContainsKey($rel.ToLowerInvariant())) { Remove-Item -LiteralPath $old -Force }
+        }
 
-    # Symbol für die Verknüpfung (misslingt es, geht es ohne Symbol weiter)
-    $ico = Join-Path $Target 'morpheus.ico'
-    $png = Join-Path $Source 'gui\assets\morpheus-icon.png'
-    $haveIcon = $false
-    if (Test-Path -LiteralPath $png -PathType Leaf) { $haveIcon = New-MorpheusIcon -PngPath $png -IcoPath $ico }
+        # Symbol für die Verknüpfung (misslingt es, geht es ohne Symbol weiter)
+        $ico = Join-Path $Target 'morpheus.ico'
+        $png = Join-Path $Source 'gui\assets\morpheus-icon.png'
+        $haveIcon = $false
+        if (Test-Path -LiteralPath $png -PathType Leaf) { $haveIcon = New-MorpheusIcon -PngPath $png -IcoPath $ico }
 
-    $chk = Test-MorpheusSecurePath -Path $Target -Recurse
+        $chk = Test-MorpheusSecurePath -Path $Target -Recurse
+    }
+    finally { if ($fs) { MorpheusInstallFortschritt -Fertig } }
     if (-not $chk.Sicher) { throw (T 'server.install.zielUnsicher' $Target ($chk.Gruende -join ' | ')) }
 
     # Datenordner und einmalige Übernahme von Berichten und Akzeptanzliste (nur was noch fehlt).

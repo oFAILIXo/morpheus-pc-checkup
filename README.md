@@ -20,7 +20,7 @@ Morpheus prüft rund 110 Punkte zu Sicherheit und Leistung eines Windows-11-PCs:
 
 > **Hinweis:** Die Prüfung ändert nichts am System. Die Oberfläche ändert Einstellungen nur nach einem Klick und einer Bestätigung. Vor jeder Änderung wird ein Wiederherstellungspunkt angelegt.
 
-**Inhalt:** [Schnellstart](#schnellstart-in-3-schritten) · [Neu in 2.7](#neu-in-27) · [Features](#features) · [Bedienung](#bedienung) · [Anpassungen per Klick](#anpassungen-per-klick) · [Absicherung](#absicherung-von-%C3%A4nderungen) · [Sicherheit der GUI](#sicherheit-der-gui) · [Daten](#wo-liegen-meine-daten) · [Nur Scan](#nur-scan-ohne-oberfl%C3%A4che) · [Akzeptanzliste](#bewusst-gewollte-befunde-acceptedpsd1) · [Wartung](#wartung--reparatur) · [Programme aktualisieren](#programme-aktualisieren) · [Sysinternals](#sysinternals-werkzeuge) · [Datenschutz](#datenschutz) · [Was geprüft wird](#was-gepr%C3%BCft-wird) · [Versionen](#versionen) · [Deinstallation](#deinstallation)
+**Inhalt:** [Schnellstart](#schnellstart-in-3-schritten) · [Neu in 2.10](#neu-in-210) · [Features](#features) · [Bedienung](#bedienung) · [Anpassungen per Klick](#anpassungen-per-klick) · [Absicherung](#absicherung-von-%C3%A4nderungen) · [Sicherheit der GUI](#sicherheit-der-gui) · [Daten](#wo-liegen-meine-daten) · [Nur Scan](#nur-scan-ohne-oberfl%C3%A4che) · [Akzeptanzliste](#bewusst-gewollte-befunde-acceptedpsd1) · [Wartung](#wartung--reparatur) · [Programme aktualisieren](#programme-aktualisieren) · [Sysinternals](#sysinternals-werkzeuge) · [Datenschutz](#datenschutz) · [Was geprüft wird](#was-gepr%C3%BCft-wird) · [Versionen](#versionen) · [Deinstallation](#deinstallation)
 
 ### Schnellstart in 3 Schritten
 
@@ -40,14 +40,17 @@ git clone https://github.com/oFAILIXo/morpheus-pc-checkup.git
 
 **Voraussetzungen:** Windows 11 (Windows 10 funktioniert weitgehend), Windows PowerShell 5.1 (vorinstalliert), Microsoft Edge. Adminrechte werden empfohlen. winget (App-Installer) ist optional für die Update-Prüfung. Nicht aus einer Store-App heraus starten (siehe [Start aus einer Store-App](#start-aus-einer-store-app)).
 
-### Neu in 2.7
+### Neu in 2.10
 
-- **Ansicht „Einfach“ oder „Experte“:** Der Schalter oben rechts wechselt die Ansicht. „Einfach“ ist Standard und zeigt nur, was zu tun ist.
-- **Knopf „KI fragen“** an jedem Befund, jeder Anpassung und jedem Werkzeug. Er kopiert eine fertige Frage für ChatGPT, Gemini, Copilot, Claude oder eine andere KI in die Zwischenablage, persönliche Angaben ersetzt.
-- **Farbpaletten:** Solarized, Gruvbox, Oblivion und Sandstone, jeweils dunkel, hell oder wie Windows.
-- **Neue Prüfungen:** NVIDIA-Treibereinstellungen im Gaming-Teil und eine neue Kategorie „Audio“, beide nur lesend.
-- **Einfacher bedienen:** eine Hauptaktion je Befund, Klartext im Journal („aus → an“), „Neustart ausstehend“ an der Karte, Rückgängig auch bei aktiver 24-Stunden-Sperre, ruhigere Übersicht.
-- **Lizenz:** ab 2.7.0 PolyForm Noncommercial 1.0.0 (siehe [Lizenz](#lizenz--license)).
+- **Fortschritt überall sichtbar:** Scan, Anpassungen, Wartung, winget-Suche und -Updates, Speicheranalyse und Sysinternals zeigen einen Balken mit Schritt bzw. „Prüfung i von n“; das Rohprotokoll steht unter „Details“. Auch die Konsole zeigt einen Fortschrittsbalken.
+- **Aktivitätsanzeige in der Kopfzeile:** zeigt, was gerade läuft, und öffnet das Fenster dazu wieder. Nach F5 hängt sich die Seite wieder an laufende Aufgaben.
+- **„Zurücknehmen“ direkt an der Karte**, wenn Morpheus die Anpassung selbst gesetzt hat.
+- **Bestätigungsdialog gehärtet:** „Ja“ ist 2 Sekunden gesperrt und nur per Maus erreichbar, Enter und Esc wählen „Nein“, nach 120 Sekunden ohne Antwort gilt „Nein“. Nach mehreren Ablehnungen in Folge pausiert Morpheus die Nachfragen. Der Verlauf steht unter „Änderungen“.
+- **Vorschau vor „Für KI kopieren“:** Du siehst und änderst den anonymisierten Text, bevor er in die Zwischenablage kommt.
+- **Datenträger prüfen und Speichertest:** chkdsk-Ergebnis mit drei klaren Ergebnissen und Anleitung; der Scan wertet die Windows-Speicherdiagnose aus.
+- **winget-Übersicht** mit vier Gruppen und Fehlergrund je Paket; **fester Port** 41417, damit Ansicht und Farben einen Neustart überleben; **Warnung beim Schließen**, solange etwas läuft.
+
+Die vollständige Liste steht unter [Versionen](#versionen).
 
 Die vollständige Liste steht unter [Versionen](#versionen).
 
@@ -66,7 +69,7 @@ Die vollständige Liste steht unter [Versionen](#versionen).
   </tr>
   <tr>
     <td align="center"><img src="docs/screenshots/07-gaming.png" alt="Bereich Gaming" width="400"><br><sub>Gaming</sub></td>
-    <td></td>
+    <td align="center"><img src="docs/screenshots/09-scan-fortschritt.png" alt="Laufender Scan mit Fortschrittsbalken" width="400"><br><sub>Neuer Scan mit Fortschrittsbalken</sub></td>
   </tr>
 </table>
 
@@ -83,12 +86,12 @@ Die vollständige Liste steht unter [Versionen](#versionen).
 - **Zustandswert 0–100:** wie gut der PC dasteht. 100 minus 20 je kritischem Befund und minus 5 je Warnung. Tipps senken den Wert nicht (ab 2.7).
 - **Erklärungen und Klickwege:** Jede Prüfung hat ein i-Symbol mit Erklärung. „So geht's“ zeigt den Klickweg oder einen Befehl zum Kopieren. Verweise auf Windows-Einstellungen (`ms-settings:…`) sind direkt anklickbar.
 - **„KI fragen“ (ab 2.7):** kopiert zu einem Befund, einer Anpassung oder einem Werkzeug eine fertige Frage samt Ergebnis dieses PCs für eine KI deiner Wahl. Persönliches wird ersetzt. Details unter [„KI fragen“](#ki-fragen).
-- **„Für KI kopieren“:** kopiert alle Befunde **anonymisiert** (ohne PC-Name, Benutzer, IP- und MAC-Adressen, SIDs und E-Mail-Adressen) in die Zwischenablage. Den Text vor dem Einfügen trotzdem kurz durchlesen.
+- **„Für KI kopieren“:** zeigt zuerst eine **Vorschau** aller Befunde **anonymisiert** (ersetzt werden PC-Name, Benutzer- und Anzeigename, weitere lokale Konten, WLAN-Namen, IP- und MAC-Adressen, SIDs, E-Mail-Adressen, Profilordner und Seriennummern nach Stichwort). Kopiert wird erst auf „Kopieren“, genau der Text im Feld; du kannst ihn dort ändern. Namen in freiem Text und Geräte-IDs ohne Stichwort werden **nicht** erkannt: Vorschau lesen. Mehr unter „Was wird ersetzt – und was nicht?“ im Vorschaufenster.
 
 **Verbessern**
 - **17 Anpassungen per Klick:** jede mit Bestätigungsdialog, Befehl zum Nachlesen und Erklärung.
 - **Checkliste:** Punkte als „erledigt“ oder „später“ markieren. Der nächste Lauf zeigt, was wirklich behoben ist.
-- **Wartung & Reparatur:** DISM, SFC, Komponentenspeicher, chkdsk, DNS leeren, ReTrim, Zeit abgleichen, Energieberichte und Zuverlässigkeitsverlauf, mit festen Befehlen, Windows-Bestätigung und verständlicher Zusammenfassung.
+- **Wartung & Reparatur:** DISM, SFC, Komponentenspeicher, chkdsk, DNS leeren, ReTrim, Zeit abgleichen, Energieberichte, Zuverlässigkeitsverlauf und Speichertest, mit festen Befehlen, Windows-Bestätigung und verständlicher Zusammenfassung.
 - **Programme aktualisieren:** winget-Updates mit Auswahl, Fortschritt und Ergebnis. winget läuft ohne Adminrechte; Installer mit Adminbedarf fragen selbst über Windows nach.
 
 **Absichern**
@@ -115,7 +118,7 @@ Die vollständige Liste steht unter [Versionen](#versionen).
 | Sicherheit | Befunde der Kategorien 1–10, je Befund mit passender Anpassung |
 | Leistung | Hardware, Laufwerke und Speicherplatz, Energie, Auslastung, Audio. Ein Klick auf ein Laufwerk zeigt die zehn größten Ordner, Dateien und Spiele |
 | Gaming | Gaming-Check und Gaming & Grafik, inkl. NVIDIA-Treibereinstellungen |
-| Stabilität | Abstürze, Hardwarefehler, Startdauer |
+| Stabilität | Abstürze, Hardwarefehler, Speichertest, Startdauer |
 | Alle Prüfungen | alle Prüfungen nach Bereich und Kategorie (nur „Experte“) |
 | Checkliste | Punkte als „erledigt“ oder „später“ markieren (nur „Experte“) |
 | Änderungen | Journal mit „↶ Rückgängig“ und Liste der Wiederherstellungspunkte |
@@ -158,11 +161,11 @@ Morpheus gibt es auf Deutsch und Englisch: Oberfläche, Befunde, Erklärungen, B
 
 #### Typische Abläufe
 
-**Anpassung ausführen:** Die Karte bei einem Befund zeigt die Anpassung. „▸ Befehl zeigen und erklären“ zeigt den PowerShell-Befehl samt Erklärung. Dann „Ausführen“, im Dialog bestätigen und zum Schluss im Windows-Fenster „Morpheus – Änderung bestätigen“ auf „Ja“ klicken. Im Modus „Experte“ lassen sich mehrere Anpassungen gemeinsam ausführen. Ist das Ziel schon erreicht, steht dort „Schon umgesetzt“. Braucht die Anpassung einen Neustart, zeigt die Karte bis dahin „Ausgeführt – Neustart ausstehend“.
+**Anpassung ausführen:** Die Karte bei einem Befund zeigt die Anpassung. „▸ Befehl zeigen und erklären“ zeigt den PowerShell-Befehl samt Erklärung. Dann „Ausführen“, im Dialog bestätigen und zum Schluss im Windows-Fenster „Morpheus – Änderung bestätigen“ mit der Maus auf „Ja“ klicken (2 Sekunden nach dem Öffnen). Im Modus „Experte“ lassen sich mehrere Anpassungen gemeinsam ausführen. Ist das Ziel schon erreicht, steht dort „Schon umgesetzt“. Braucht die Anpassung einen Neustart, zeigt die Karte bis dahin „Ausgeführt – Neustart ausstehend“.
 
 **Befund-Karte:** Jeder Befund hat eine Hauptaktion. Erledigt, Später, Akzeptieren und „Daten ansehen“ stehen in der Fußzeile; „Daten ansehen“ springt zur passenden Detailtabelle.
 
-**Anpassung zurücknehmen:** Im Bereich **Änderungen** den Eintrag mit „↶ Rückgängig“ wählen. Das Journal zeigt die Werte in Klartext, z. B. „aus → an“. Hat sich der Zustand inzwischen anders geändert, fragt die GUI nach.
+**Anpassung zurücknehmen:** Im Bereich **Änderungen** den Eintrag mit „↶ Rückgängig“ wählen. Das Journal zeigt die Werte in Klartext, z. B. „aus → an“. Hat sich der Zustand inzwischen anders geändert, fragt die GUI nach. Hat Morpheus eine Anpassung selbst gesetzt, steht an ihrer Karte („Schon umgesetzt“) zusätzlich „Zurücknehmen“.
 
 **Berichte vergleichen:** Im Bereich **Berichte** zwei Zeilen ankreuzen und „Vergleichen“ wählen. Mit „Original-HTML“ öffnest du den unveränderten Bericht.
 
@@ -170,7 +173,9 @@ Morpheus gibt es auf Deutsch und Englisch: Oberfläche, Befunde, Erklärungen, B
 
 **Defender-Werkzeuge:** Unter **Werkzeuge** aktualisierst du die Defender-Signaturen, startest einen Schnellscan oder einen Offline-Scan. Der Offline-Scan braucht eine doppelte Bestätigung und einen 15-Sekunden-Countdown, danach startet der PC neu. Zusätzlich gibt es einen Knopf direkt am Defender-Befund.
 
-**Neuer Scan:** Im Bereich **Neuer Scan** die Optionen wählen und starten. Das Live-Protokoll zeigt den Fortschritt. Danach öffnet sich der neue Bericht.
+**Neuer Scan:** Im Bereich **Neuer Scan** die Optionen wählen und starten. Ein Balken zeigt „Prüfung i von n“, das Live-Protokoll steht unter „Details“. Danach öffnet sich der neue Bericht.
+
+**Aktivitätsanzeige:** Läuft ein Scan, ein Werkzeug oder ein Update, zeigt die Kopfzeile das an (z. B. „1 läuft“). „Anzeigen“ öffnet das Fenster dazu wieder. Schließt du Morpheus, während etwas läuft, warnt der Browser vorher; die Aufgabe selbst läuft weiter, bis sie fertig ist.
 
 **Den Bericht lesen:** Status je Prüfung: **Kritisch**, **Warnung**, **Tipp**, **Akzeptiert**, **Hinweis**, **OK**, **Nicht geprüft**. Ein Klick auf eine Zahl bei der Ampel filtert nach diesem Status. Tipps sind nach Nutzen im Verhältnis zu Aufwand und Risiko sortiert. Reine Informationen bleiben „Hinweis“.
 
@@ -197,7 +202,7 @@ Die Karten mit einer Anpassung erscheinen direkt beim passenden Befund.
 | Gaming | Spielmodus an | Nein |
 | Gaming | Hardwarebeschleunigte GPU-Planung an | Ja |
 | Gaming | Hintergrundaufnahme (Game DVR) aus | Nein |
-| Gaming | Mausbeschleunigung aus (wirkt nach Ab- und Anmelden) | Nein |
+| Gaming | Mausbeschleunigung aus (wirkt sofort) | Nein |
 | Gaming | Energiesparfunktionen der Netzwerkkarte aus (Verbindung ist kurz weg) | Nein |
 
 Neu gestartet wird nie automatisch. Bei Anpassungen mit Neustart zeigt die GUI einen Hinweis.
@@ -243,11 +248,22 @@ Die GUI ändert diese Einstellung bewusst nicht selbst. Unter Werkzeuge › Wart
 
 **Ausnahme:** „Computerschutz einschalten“ läuft ohne Wiederherstellungspunkt, weil vorher keiner entstehen kann. Achtung: Dessen Rückgängig schaltet den Schutz aus und löscht alle Wiederherstellungspunkte.
 
+### Download prüfen
+
+Jedes Release enthält neben dem ZIP die Datei `SHA256SUMS`. Sie enthält die Prüfsumme (SHA256) des ZIP. So erkennst du, ob der Download vollständig und unverändert ist. Die Prüfsumme steht beim selben Release wie das ZIP; sie schützt vor Übertragungsfehlern und verändertem Download, nicht vor einem gekaperten GitHub-Konto.
+
+```powershell
+(Get-FileHash .\morpheus-pc-checkup-X.Y.Z.zip -Algorithm SHA256).Hash
+```
+
+Das Ergebnis muss mit dem Eintrag für das ZIP in `SHA256SUMS` übereinstimmen (Groß-/Kleinschreibung egal). `X.Y.Z` durch die Versionsnummer ersetzen. Morpheus ist **nicht code-signiert** und wird mit `-ExecutionPolicy Bypass` gestartet (gilt nur für diesen Aufruf). Sicherheitslücken melden: `SECURITY.md`.
+
 ### Sicherheit der GUI
 
 Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
 
-- Der Server hört nur auf `127.0.0.1`.
+- Der Server hört nur auf `127.0.0.1`, standardmäßig auf Port 41417. Ist der belegt, weicht er auf einen freien Port aus.
+- Mit Adminrechten startet Morpheus Edge nicht selbst, sondern über den Desktop (Explorer) **ohne** Adminrechte. Läuft das Morpheus-Fenster trotzdem mit Adminrechten, beendet Morpheus es und schaltet in den Nur-Lesen-Modus.
 - Edge bekommt nur einen Einmal-Code. Die Oberfläche tauscht ihn gegen das zufällige Sitzungstoken. Das Token steht nie in einer Befehlszeile, Adresse oder einem Protokoll.
 - Host und Herkunft jeder Anfrage werden geprüft. Änderungen sind nur per POST mit JSON möglich.
 - Die Oberfläche kann nur feste Aktionen aus dem Katalog auslösen, keine beliebigen Befehle.
@@ -255,7 +271,8 @@ Die GUI läuft mit Adminrechten. Deshalb gelten strenge Regeln:
 - Der Code liegt unter `C:\Program Files\Morpheus`, die Daten unter `C:\ProgramData\Morpheus`. Beides können nur Administratoren ändern.
 - Auch was Morpheus nachlädt, kommt nur aus Ordnern, die nur Administratoren ändern können: PowerShell-Module nur aus `C:\Windows\System32` und `C:\Program Files`, Windows-Programme mit vollem Pfad, winget nur aus dem signierten App-Installationsprogramm, temporäre Dateien unter `C:\ProgramData\Morpheus\temp`.
 - Wartungswerkzeuge und Programm-Updates laufen nur aus einem festen Katalog mit festen Programmpfaden. Die Oberfläche schickt nur eine Werkzeug-Id, ein Laufwerk aus der vom Server ermittelten Liste oder Paket-Ids aus der zuletzt vom Server gesuchten Liste.
-- **Jede Änderung und jedes Rückgängig bestätigt zusätzlich ein Windows-Dialog** („Morpheus – Änderung bestätigen“). Er gehört zum Prozess mit Adminrechten; Windows verhindert, dass Programme ohne Adminrechte darin klicken oder tippen. So kann auch ein Schadprogramm, das das Morpheus-Fenster fernsteuert, nichts ändern. „Nein“ ist vorbelegt.
+- **Jede Änderung und jedes Rückgängig bestätigt zusätzlich ein Windows-Dialog** („Morpheus – Änderung bestätigen“). Er gehört zum Prozess mit Adminrechten; Windows verhindert, dass Programme ohne Adminrechte darin klicken oder tippen. So kann auch ein Schadprogramm, das das Morpheus-Fenster fernsteuert, nichts ändern. „Nein“ ist vorbelegt; Enter und Esc wählen „Nein“. „Ja“ wird erst nach 2 Sekunden frei, hat kein Tastenkürzel und ist per Tab- oder Pfeiltaste nicht erreichbar, nur per Maus. So bestätigt kein Tippen, das zufällig in den Dialog fällt. Ohne Antwort gilt nach 120 Sekunden „Nein“. Nach 3 Ablehnungen in Folge fragt Morpheus 60 Sekunden lang nicht nach (bei weiteren Ablehnungen länger, bis 15 Minuten). Alle Nachfragen dieser Sitzung stehen unter „Änderungen“.
+- **Grenze des Schutzes:** Das Sitzungstoken liegt im Speicher des Browsers und des Servers. Ein Prozess deines angemeldeten Benutzers, der es erlangt, kann über die GUI-Schnittstelle Berichte und Änderungsjournal aus dem Datenordner lesen. Ohne Windows-Dialog kann er außerdem auslösen: Scan, Speicher-Aktualisierung, Update-Suche, Checkliste, Spiele-Ordner, Sprache, Beenden, Abbrechen einer Wartung, Zuverlässigkeitsverlauf öffnen, Speicherdiagnose-Dialog von Windows öffnen und den Countdown des Offline-Scans abbrechen. Alles, was am System etwas ändert, braucht weiterhin die Bestätigung im Windows-Dialog.
 - Links aus Befunden öffnen nur Windows-Einstellungen (`ms-settings:…`) nach festem Muster, keine anderen Adressen.
 - Die Daten unter `C:\ProgramData\Morpheus` können nur Administratoren lesen und ändern. Berichte enthalten Programme, Konten und Netzwerkdetails; auch andere Benutzerkonten des PCs sehen sie nicht. Ansehen kannst du sie in Morpheus unter „Berichte“.
 - **Den Ordner `C:\ProgramData\Morpheus` nicht im Explorer über „Fortsetzen“ öffnen.** Der Explorer trägt dabei dauerhaft Vollzugriff für dein Konto ein. Dann könnte jedes Programm, das unter deinem Konto läuft, Journal, Akzeptanzliste und Zwischendateien ändern. Morpheus erkennt das beim nächsten Start und bietet an, die Rechte zu reparieren (Banner „Die Rechte des Datenordners wurden geändert“, Knopf „Rechte reparieren …“, nach Windows-Bestätigung). Danach Morpheus neu starten und unter „Änderungen“ sowie „Einstellungen › Akzeptanzliste“ prüfen, ob alle Einträge von dir stammen. Zum Ansehen eine PowerShell als Administrator öffnen, z. B. `Get-ChildItem C:\ProgramData\Morpheus\reports`. Von Hand reparieren in einer Admin-PowerShell:
@@ -368,18 +385,20 @@ Unter **Werkzeuge › Wartung & Reparatur** (Modus „Experte“) startet Morphe
 
 | Klasse | Bedeutung | Werkzeuge |
 |---|---|---|
-| liest nur | ändert nichts | DISM `/CheckHealth`, `/ScanHealth`, `/AnalyzeComponentStore`; `chkdsk C: /scan` (Laufwerk wählbar); `powercfg /energy`, `/batteryreport`, `/sleepstudy` |
+| liest nur | ändert nichts | DISM `/CheckHealth`, `/ScanHealth`, `/AnalyzeComponentStore`; `powercfg /energy`, `/batteryreport`, `/sleepstudy` |
 | harmlos | kleine Wartung ohne Risiko | Wiederherstellungspunkt anlegen; `ipconfig /flushdns`; ReTrim für SSDs (`defrag C: /L`, dasselbe wie `Optimize-Volume -ReTrim`); `w32tm /resync` |
 | nicht umkehrbar | Reparatur bzw. Bereinigung | DISM `/RestoreHealth` (braucht Internet), `sfc /scannow`, DISM `/StartComponentCleanup` |
 
 - **Nicht umkehrbar heißt:** Unter „Änderungen“ gibt es dafür kein „Rückgängig“. Vorher legt Morpheus automatisch einen Wiederherstellungspunkt an und prüft ihn. Klappt das nicht (z. B. 24-Stunden-Sperre), startet nichts. Erst nach einer ausdrücklichen Zusatzbestätigung geht es ohne Punkt weiter; der Windows-Dialog sagt das dann deutlich.
 - **Reihenfolge bei Systemdateien:** 1. CheckHealth, 2. ScanHealth, 3. RestoreHealth, 4. `sfc /scannow`. SFC repariert aus dem Komponentenspeicher, den DISM vorher in Ordnung bringt.
+- **Datenträger prüfen** (`chkdsk C: /scan`, Laufwerk wählbar, nur NTFS) läuft im laufenden Betrieb. Kleine Fehler behebt Windows dabei sofort; Morpheus meldet das als „online behoben“. Fehler, die nur ohne laufendes Windows behebbar sind, meldet Morpheus mit der Anleitung `chkdsk <Laufwerk>: /spotfix`, die du selbst als Administrator ausführst. Morpheus führt diese Reparatur nicht aus.
 - **Komponentenspeicher:** Morpheus verwendet kein `/ResetBase` (das macht installierte Updates dauerhaft). Den Ordner `WinSxS` nie von Hand löschen.
 - **Abbrechen** geht bei lesenden Werkzeugen, chkdsk, ReTrim und dem Energiebericht. DISM-Reparatur, Bereinigung und SFC sollte man nicht unterbrechen; dort gibt es keinen Abbruch-Knopf.
 - **Ergebnis:** Morpheus fasst die Ausgabe verständlich zusammen (deutsche und englische Windows-Ausgaben) und schreibt ein Protokoll mit Befehl, Dauer, Exit-Code und Kurzfassung ins Änderungsjournal.
 - **Energieberichte** landen in `C:\ProgramData\Morpheus\reports` und öffnen sich in Morpheus im abgeschotteten Rahmen.
 - **Zuverlässigkeitsverlauf** (`perfmon /rel`) öffnet sich ohne Adminrechte. Klappt das nicht: `Win + R`, `perfmon /rel`.
-- Bewusst nicht dabei (erst später bzw. nur als Anleitung): `chkdsk /f`, Speichertest, Windows Update zurücksetzen, alte Treiber entfernen, Netzwerk-Reset.
+- **Speichertest** öffnet die Windows-Speicherdiagnose (`MdSched.exe`, ohne Argumente). Morpheus ändert dabei nichts: Windows fragt selbst, ob sofort neu gestartet oder beim nächsten Start geprüft wird. Das Ergebnis zeigt der nächste Scan unter Stabilität. Klappt das Öffnen nicht: `Win + R`, `mdsched`.
+- Bewusst nicht dabei (erst später bzw. nur als Anleitung): `chkdsk /f`, Windows Update zurücksetzen, alte Treiber entfernen, Netzwerk-Reset.
 
 ### Programme aktualisieren
 
@@ -414,14 +433,14 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 
 - Alles läuft **lokal**. Es werden keine Daten an den Autor oder Dritte geschickt.
 - Netzwerkzugriffe gibt es nur für die Windows-Update-Suche, winget und die UPnP-Abfrage am eigenen Router, sowie auf deinen Klick für Sysinternals, DISM `/RestoreHealth` (Windows Update) und den Zeitabgleich (`w32tm /resync`).
-- „KI fragen“ und „Für KI kopieren“ legen nur Text in die Zwischenablage. Persönliches wird ersetzt. Den Text vor dem Einfügen trotzdem kurz durchlesen.
+- „KI fragen“ und „Für KI kopieren“ legen nur Text in die Zwischenablage; „Für KI kopieren“ zeigt ihn vorher in einer Vorschau. Persönliches wird ersetzt, aber nicht alles wird erkannt (Namen in freiem Text, Seriennummern und Geräte-IDs ohne Stichwort, Firmen- und Domänennamen). Den Text vor dem Einfügen trotzdem lesen.
 - Der Bericht enthält viele Details deines PCs (Programme, Konten, Netzwerk, Treiber). Er bleibt lokal und ist per `.gitignore` ausgeschlossen. **Nicht unbedacht weitergeben oder hochladen.**
 
 ### Was geprüft wird
 
 **Sicherheit:** Windows-Version und Updates, Defender (Status, Einstellungen, ASR-Regeln, Ausnahmen, Funde), Firewall und offene Ports, UPnP-Weiterleitungen am Router, SMB/Freigaben, Konten und Kennwortrichtlinie, UAC, Kernisolierung/Speicherintegrität, LSA-Schutz, Treiber-Sperrliste, Exploit-Schutz, Spectre-Tweaks, Secure Boot (inkl. 2023er-Zertifikate), TPM, BitLocker, BIOS, Datensicherung (Dateiversionsverlauf, OneDrive-Ordnersicherung, Systemabbild), Wiederherstellungspunkte, Fernzugriff (RDP, Fernwartungstools), Drittanbieter-Dienste und -Treiber (inkl. bekannt anfälliger Treiber), Dienstpfade, Autostart (mit Sysinternals Autoruns zusätzlich alle Autostart-Orte, Signaturen und beschreibbare Pfade), unsignierte Systemdateien (Sysinternals Sigcheck), geplante Aufgaben, WMI-Persistenz, Browser-Erweiterungen, veraltete Software, sicherheitsrelevante Ereignisse.
 
-**Performance:** CPU, RAM (XMP, Dual-Channel), GPU-Treiber, Bildwiederholrate der Monitore, Laufwerke (Typ, Zustand, Platz, TRIM), größte Speicherverbraucher je Laufwerk, Auslagerungsdatei, Energieplan, Gaming-Einstellungen (Spielmodus, HAGS, Game DVR, Overlays), NVIDIA-Treibereinstellungen (Shader-Cache, Energieverwaltung, V-Sync, max. Bildrate, G-SYNC), Resizable BAR und PCIe-Anbindung (NVIDIA), Spielebibliotheken, installierte Spiele (Steam, Epic, GOG, EA, Ubisoft, Xbox), Energiesparfunktionen der Netzwerkkarte, Audio (Treiberfehler, Dienste, Standardgeräte, USB-Energiesparen, Ducking), Grundlast, Autostart-Umfang, Netzwerk, Stabilität (Hardwarefehler, Bluescreens, Grafiktreiber-Abstürze, Drosselung, Programmabstürze, Startdauer).
+**Performance:** CPU, RAM (XMP, Dual-Channel), GPU-Treiber, Bildwiederholrate der Monitore, Laufwerke (Typ, Zustand, Platz, TRIM), größte Speicherverbraucher je Laufwerk, Auslagerungsdatei, Energieplan, Gaming-Einstellungen (Spielmodus, HAGS, Game DVR, Overlays), NVIDIA-Treibereinstellungen (Shader-Cache, Energieverwaltung, V-Sync, max. Bildrate, G-SYNC), Resizable BAR und PCIe-Anbindung (NVIDIA), Spielebibliotheken, installierte Spiele (Steam, Epic, GOG, EA, Ubisoft, Xbox), Energiesparfunktionen der Netzwerkkarte, Audio (Treiberfehler, Dienste, Standardgeräte, USB-Energiesparen, Ducking), Grundlast, Autostart-Umfang, Netzwerk, Stabilität (Hardwarefehler, Bluescreens, Speichertest, Grafiktreiber-Abstürze, Drosselung, Programmabstürze, Startdauer).
 
 ### Nebenwirkungen (nicht am System)
 
@@ -441,6 +460,16 @@ Store-Apps (MSIX) virtualisieren Teile der Registry (`HKCU`) für alle Prozesse,
 
 ### Versionen
 
+- **2.10.0 (15.11.2026):**
+  - **Fortschrittsbalken:** Scan („Prüfung i von n“, ohne ausgelassene Prüfungen), Anpassungen, Wartung, winget-Suche und -Updates, Speicheranalyse, Spiele-Ordner und Sysinternals; Rohprotokoll unter „Details“; `Write-Progress` in Konsole, Installer und Selbst-Update.
+  - **Aktivitätsanzeige** in der Kopfzeile; „Anzeigen“ öffnet Wartung, winget-Update und Update-Suche wieder im Fenster. Nach F5 hängt sich die Seite an einen laufenden Scan an.
+  - **winget:** Übersicht in vier Gruppen, Fehlergrund je Paket unter „Details“, Link vom Befund „Software-Updates“ zur Update-Karte.
+  - **„Zurücknehmen“** an Karten mit „Schon umgesetzt“, wenn Morpheus die Anpassung gesetzt hat.
+  - **Wartung:** „Datenträger prüfen“ meldet drei klare Ergebnisse mit Anleitung; neue Scan-Prüfung „Speichertest“ wertet die Windows-Speicherdiagnose aus; Knopf „Speichertest öffnen“.
+  - **Vorschau vor „Für KI kopieren“** mit erweiterter Anonymisierung (Anzeigename, weitere lokale Konten, WLAN-Namen, IPv6). Die KI-Kopiervorlage im HTML-Bericht trennt Anweisung und Daten.
+  - **Rohdaten:** Pfad-Spalten lesbar breit, Spaltenköpfe übersetzt.
+  - **Sicherheit:** Bestätigungsdialog gehärtet („Ja“ 2 s gesperrt und nur per Maus, Enter/Esc = Nein, Zeitlimit, Pause nach Ablehnungen, Verlauf unter „Änderungen“); Edge startet bei Adminrechten ohne Adminrechte; Rücknahme liest Pfad, Name und Typ nur aus dem festen Katalog; Testschalter `-SafetyLib` entfernt; strengere Content-Security-Policy; `SECURITY.md` und `SHA256SUMS` je Release.
+  - **Komfort:** fester Port 41417 (Ansicht, Farben und Menüzustand bleiben nach Neustart), Warnung beim Schließen während laufender Aufgaben, Mausbeschleunigung wirkt sofort.
 - **2.7.0 (08.11.2026):**
   - **Ansicht „Einfach | Experte“** mit Schalter in der Kopfleiste; „Einfach“ ist Standard und zeigt Zustand, nächste Schritte und nur offene Befunde.
   - **Knopf „KI fragen“** an Befunden, Anpassungen und Werkzeugen: kopiert eine Frage samt Ergebnis dieses PCs, Persönliches ersetzt, Schutz gegen untergeschobene Anweisungen; in den Einstellungen ausblendbar.
@@ -505,7 +534,7 @@ Morpheus checks about 110 security and performance items on a Windows 11 PC: upd
 
 > **Note:** The scan does not change anything on your system. The GUI only changes settings after a click and a confirmation. A restore point is created before every change.
 
-**Contents:** [Quick start](#quick-start-in-3-steps) · [New in 2.7](#new-in-27) · [Features](#features-1) · [Using Morpheus](#using-morpheus) · [One-click tweaks](#one-click-tweaks) · [Safeguards](#safeguards-for-changes) · [GUI security](#gui-security) · [Data](#where-is-my-data) · [Scan only](#scan-only-without-gui) · [Accepted findings](#intentional-findings-acceptedpsd1) · [Maintenance](#maintenance--repair) · [Updating programs](#updating-programs) · [Sysinternals](#sysinternals-tools) · [Privacy](#privacy) · [What is checked](#what-is-checked) · [Versions](#versions-1) · [Uninstall](#uninstall)
+**Contents:** [Quick start](#quick-start-in-3-steps) · [New in 2.10](#new-in-210) · [Features](#features-1) · [Using Morpheus](#using-morpheus) · [One-click tweaks](#one-click-tweaks) · [Safeguards](#safeguards-for-changes) · [GUI security](#gui-security) · [Data](#where-is-my-data) · [Scan only](#scan-only-without-gui) · [Accepted findings](#intentional-findings-acceptedpsd1) · [Maintenance](#maintenance--repair) · [Updating programs](#updating-programs) · [Sysinternals](#sysinternals-tools) · [Privacy](#privacy) · [What is checked](#what-is-checked) · [Versions](#versions-1) · [Uninstall](#uninstall)
 
 ### Quick start in 3 steps
 
@@ -525,14 +554,15 @@ git clone https://github.com/oFAILIXo/morpheus-pc-checkup.git
 
 **Requirements:** Windows 11 (Windows 10 mostly works), Windows PowerShell 5.1 (preinstalled), Microsoft Edge. Admin rights are recommended. winget (App Installer) is optional for the update check. Do not start Morpheus from inside a Store app (see [Starting from a Store app](#starting-from-a-store-app)).
 
-### New in 2.7
+### New in 2.10
 
-- **“Simple” or “Expert” view:** the switch at the top right changes the view. “Simple” is the default and only shows what needs doing.
-- **“Ask AI” button** on every finding, tweak and tool. It copies a ready-made question for ChatGPT, Gemini, Copilot, Claude or any other AI to the clipboard, with personal details replaced.
-- **Colour palettes:** Solarized, Gruvbox, Oblivion and Sandstone, each dark, light or following Windows.
-- **New checks:** NVIDIA driver settings in the gaming section and a new “Audio” category, both read-only.
-- **Easier to use:** one main action per finding, plain language in the journal (“off → on”), “restart pending” on the card, undo even while the 24-hour limit is active, a calmer overview.
-- **License:** from 2.7.0 on PolyForm Noncommercial 1.0.0 (see [License](#lizenz--license)).
+- **Progress everywhere:** scan, tweaks, maintenance, winget search and updates, storage analysis and Sysinternals show a bar with the step or “check i of n”; the raw log is under “Details”. The console shows a progress bar too.
+- **Activity indicator in the header:** shows what is running and reopens its window. After F5 the page reattaches to running tasks.
+- **“Revert” right on the card** when Morpheus applied the tweak itself.
+- **Hardened confirmation dialog:** “Yes” is locked for 2 seconds and only reachable with the mouse, Enter and Esc choose “No”, no answer within 120 seconds counts as “No”. After several refusals in a row Morpheus pauses its requests. The history is under “Changes”.
+- **Preview before “Copy for AI”:** you see and can edit the anonymised text before it goes to the clipboard.
+- **Check disk and memory test:** chkdsk result with three clear outcomes and instructions; the scan evaluates the Windows Memory Diagnostic.
+- **winget overview** in four groups with the failure reason per package; **fixed port** 41417, so view and colours survive a restart; **warning on close** while something is running.
 
 The full list is under [Versions](#versions-1).
 
@@ -553,6 +583,10 @@ The full list is under [Versions](#versions-1).
     <td align="center"><img src="docs/screenshots/en-01-overview-simple.png" alt="Overview in Simple mode" width="400"><br><sub>Overview in “Simple” mode</sub></td>
     <td align="center"><img src="docs/screenshots/en-07-gaming.png" alt="Gaming area" width="400"><br><sub>Gaming</sub></td>
   </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/en-09-scan-progress.png" alt="Running scan with progress bar" width="400"><br><sub>New scan with progress bar</sub></td>
+    <td></td>
+  </tr>
 </table>
 
 ### Features
@@ -568,12 +602,12 @@ The full list is under [Versions](#versions-1).
 - **Health score 0–100:** how well the PC is doing. 100 minus 20 per critical finding and minus 5 per warning. Tips do not lower the score (from 2.7).
 - **Explanations and click paths:** every check has an i icon with an explanation. “How to” shows the click path or a command to copy. References to Windows settings (`ms-settings:…`) can be clicked directly.
 - **“Ask AI” (from 2.7):** copies a ready-made question about a finding, tweak or tool, including this PC's result, for an AI of your choice. Personal details are replaced. See [“Ask AI”](#ask-ai).
-- **“Copy for AI”:** copies all findings **anonymised** (without PC name, user, IP and MAC addresses, SIDs and e-mail addresses) to the clipboard. Still read the text briefly before pasting.
+- **“Copy for AI”:** first shows a **preview** of all findings **anonymised** (replaced: PC name, user and display name, other local accounts, Wi-Fi names, IP and MAC addresses, SIDs, e-mail addresses, profile folders and serial numbers after a keyword). Nothing is copied until you click “Copy”, and exactly the text in the box is copied; you can edit it there. Names in free text and device IDs without a keyword are **not** recognised: read the preview. More under “What is replaced, and what is not?” in the preview window.
 
 **Improve**
 - **17 one-click tweaks:** each with a confirmation dialog, the command to review and an explanation.
 - **Checklist:** mark items as “done” or “later”. The next run shows what is really fixed.
-- **Maintenance & repair:** DISM, SFC, component store, chkdsk, flush DNS, ReTrim, time sync, power reports and reliability history, with fixed commands, Windows confirmation and an easy-to-read summary.
+- **Maintenance & repair:** DISM, SFC, component store, chkdsk, flush DNS, ReTrim, time sync, power reports, reliability history and memory test, with fixed commands, Windows confirmation and an easy-to-read summary.
 - **Update programs:** winget updates with selection, progress and result. winget runs without admin rights; installers that need them ask via Windows themselves.
 
 **Protect**
@@ -600,7 +634,7 @@ The full list is under [Versions](#versions-1).
 | Security | Findings of categories 1–10, each with a matching tweak |
 | Performance | Hardware, drives and storage, power, load, audio. Clicking a drive shows its ten largest folders, files and games |
 | Gaming | Gaming check and gaming & graphics, including NVIDIA driver settings |
-| Stability | Crashes, hardware errors, boot time |
+| Stability | Crashes, hardware errors, memory test, boot time |
 | All checks | All checks by area and category (“Expert” only) |
 | Checklist | Mark items as “done” or “later” (“Expert” only) |
 | Changes | Journal with “↶ Undo” and list of restore points |
@@ -643,11 +677,11 @@ Morpheus is available in German and English: interface, findings, explanations, 
 
 #### Common tasks
 
-**Apply a tweak:** the card at a finding shows the tweak. “▸ Show and explain the command” shows the PowerShell command with an explanation. Then click “Run”, confirm the dialog and finally click “Yes” in the Windows window “Morpheus – Confirm change”. In “Expert” mode several tweaks can be run together. If the target state is already reached, the card says “Already applied”. If the tweak needs a restart, the card shows “Done – restart pending” until then.
+**Apply a tweak:** the card at a finding shows the tweak. “▸ Show and explain the command” shows the PowerShell command with an explanation. Then click “Run”, confirm the dialog and finally click “Yes” with the mouse in the Windows window “Morpheus – Confirm change” (2 seconds after it opens). In “Expert” mode several tweaks can be run together. If the target state is already reached, the card says “Already applied”. If the tweak needs a restart, the card shows “Done – restart pending” until then.
 
 **Finding card:** every finding has one main action. Done, Later, Accept and “View data” are in the footer; “View data” jumps to the matching detail table.
 
-**Undo a tweak:** in **Changes** pick the entry and click “↶ Undo”. The journal shows values in plain language, e.g. “off → on”. If the state has changed in another way since, the GUI asks first.
+**Undo a tweak:** in **Changes** pick the entry and click “↶ Undo”. The journal shows values in plain language, e.g. “off → on”. If the state has changed in another way since, the GUI asks first. If Morpheus applied a tweak itself, its card (“Already applied”) also shows “Revert”.
 
 **Compare reports:** in **Reports** tick two rows and click “Compare”. “Original HTML” opens the unchanged report.
 
@@ -655,7 +689,9 @@ Morpheus is available in German and English: interface, findings, explanations, 
 
 **Defender tools:** under **Tools** you update Defender signatures, start a quick scan or an offline scan. The offline scan needs a double confirmation and a 15-second countdown, then the PC restarts. There is also a button directly on the Defender finding.
 
-**New scan:** in **New scan** choose the options and start. The live log shows progress. Afterwards the new report opens.
+**New scan:** in **New scan** choose the options and start. A bar shows “check i of n”, the live log is under “Details”. Afterwards the new report opens.
+
+**Activity indicator:** while a scan, tool or update is running, the header shows it (e.g. “1 running”). “Show” reopens its window. If you close Morpheus while something is running, the browser warns first; the task itself keeps running until it is done.
 
 **Reading the report:** status per check: **Critical**, **Warning**, **Tip**, **Accepted**, **Info**, **OK**, **Not checked**. Clicking a number next to the traffic light filters by that status. Tips are sorted by benefit relative to effort and risk. Pure information stays “Info”.
 
@@ -682,7 +718,7 @@ Cards with a tweak appear right at the matching finding.
 | Gaming | Game Mode on | No |
 | Gaming | Hardware-accelerated GPU scheduling on | Yes |
 | Gaming | Background recording (Game DVR) off | No |
-| Gaming | Mouse acceleration off (takes effect after signing out and in) | No |
+| Gaming | Mouse acceleration off (takes effect immediately) | No |
 | Gaming | Network adapter power saving off (connection drops briefly) | No |
 
 Morpheus never restarts the PC automatically. For tweaks that need a restart the GUI shows a note.
@@ -728,11 +764,22 @@ The GUI deliberately does not change this setting itself. Under Tools › Mainte
 
 **Exception:** “Turn on System Protection” runs without a restore point because none can be created before. Caution: its undo turns protection off and deletes all restore points.
 
+### Verify the download
+
+Every release contains the file `SHA256SUMS` next to the ZIP. It holds the checksum (SHA256) of the ZIP, so you can tell whether the download is complete and unchanged. The checksum sits on the same release as the ZIP; it protects against transfer errors and a modified download, not against a hijacked GitHub account.
+
+```powershell
+(Get-FileHash .\morpheus-pc-checkup-X.Y.Z.zip -Algorithm SHA256).Hash
+```
+
+The result must match the entry for the ZIP in `SHA256SUMS` (case does not matter). Replace `X.Y.Z` with the version number. Morpheus is **not code-signed** and is started with `-ExecutionPolicy Bypass` (applies to that call only). To report vulnerabilities see `SECURITY.md`.
+
 ### GUI security
 
 The GUI runs with admin rights. That is why strict rules apply:
 
-- The server only listens on `127.0.0.1`.
+- The server only listens on `127.0.0.1`, by default on port 41417. If that port is taken, it falls back to a free one.
+- With admin rights Morpheus does not start Edge itself but via the desktop (Explorer) **without** admin rights. If the Morpheus window still runs with admin rights, Morpheus closes it and switches to read-only mode.
 - Edge only receives a one-time code. The GUI exchanges it for the random session token. The token never appears in a command line, address or log.
 - Host and origin of every request are checked. Changes are only possible via POST with JSON.
 - The GUI can only trigger fixed actions from the catalogue, never arbitrary commands.
@@ -740,7 +787,8 @@ The GUI runs with admin rights. That is why strict rules apply:
 - The code lives in `C:\Program Files\Morpheus`, the data in `C:\ProgramData\Morpheus`. Only administrators can change either.
 - Everything Morpheus loads also comes only from folders that only administrators can change: PowerShell modules only from `C:\Windows\System32` and `C:\Program Files`, Windows programs with full paths, winget only from the signed App Installer, temporary files under `C:\ProgramData\Morpheus\temp`.
 - Maintenance tools and program updates only run from a fixed catalogue with fixed program paths. The GUI only sends a tool id, a drive from the list determined by the server, or package ids from the list the server searched last.
-- **Every change and every undo is additionally confirmed in a Windows dialog** (“Morpheus – Confirm change”). It belongs to the process with admin rights; Windows prevents programs without admin rights from clicking or typing in it. So even malware remote-controlling the Morpheus window cannot change anything. “No” is the default.
+- **Every change and every undo is additionally confirmed in a Windows dialog** (“Morpheus – Confirm change”). It belongs to the process with admin rights; Windows prevents programs without admin rights from clicking or typing in it. So even malware remote-controlling the Morpheus window cannot change anything. “No” is the default; Enter and Esc choose “No”. “Yes” only becomes available after 2 seconds, has no keyboard shortcut and cannot be reached with Tab or arrow keys, only with the mouse. So typing that accidentally lands in the dialog never confirms. Without an answer, “No” applies after 120 seconds. After 3 refusals in a row Morpheus stops asking for 60 seconds (longer after further refusals, up to 15 minutes). All requests of this session are listed under “Changes”.
+- **Limit of the protection:** The session token lives in the memory of the browser and the server. A process of your signed-in user that obtains it can read reports and the change journal from the data folder through the GUI interface. Without a Windows dialog it can also trigger: scan, storage refresh, update search, checklist, games folder, language, shutdown, cancelling a maintenance run, opening the reliability history, opening the Windows memory diagnostic dialog, and cancelling the offline scan countdown. Everything that changes something on the system still needs the confirmation in the Windows dialog.
 - Links in findings only open Windows settings (`ms-settings:…`) matching a fixed pattern, no other addresses.
 - Only administrators can read and change the data in `C:\ProgramData\Morpheus`. Reports contain programs, accounts and network details; other user accounts on the PC cannot see them either. You view them in Morpheus under “Reports”.
 - **Do not open `C:\ProgramData\Morpheus` in Explorer via “Continue”.** Explorer then permanently grants your account full access. Any program running under your account could then change the journal, accept list and temporary files. Morpheus detects this on the next start and offers to repair the permissions (banner “The data folder's permissions were changed”, button “Repair permissions …”, after Windows confirmation). Afterwards restart Morpheus and check under “Changes” and “Settings › Accept list” that all entries are yours. To look at the folder, open PowerShell as administrator, e.g. `Get-ChildItem C:\ProgramData\Morpheus\reports`. To repair manually in an admin PowerShell:
@@ -853,18 +901,20 @@ Under **Tools › Maintenance & repair** (“Expert” mode) Morpheus starts Win
 
 | Class | Meaning | Tools |
 |---|---|---|
-| read only | changes nothing | DISM `/CheckHealth`, `/ScanHealth`, `/AnalyzeComponentStore`; `chkdsk C: /scan` (drive selectable); `powercfg /energy`, `/batteryreport`, `/sleepstudy` |
+| read only | changes nothing | DISM `/CheckHealth`, `/ScanHealth`, `/AnalyzeComponentStore`; `powercfg /energy`, `/batteryreport`, `/sleepstudy` |
 | harmless | small maintenance without risk | Create restore point; `ipconfig /flushdns`; ReTrim for SSDs (`defrag C: /L`, the same as `Optimize-Volume -ReTrim`); `w32tm /resync` |
 | irreversible | repair or cleanup | DISM `/RestoreHealth` (needs internet), `sfc /scannow`, DISM `/StartComponentCleanup` |
 
 - **Irreversible means:** there is no “Undo” for it under “Changes”. Morpheus first creates and verifies a restore point automatically. If that fails (e.g. 24-hour limit), nothing starts. Only after an explicit extra confirmation does it continue without a point; the Windows dialog then says so clearly.
 - **Order for system files:** 1. CheckHealth, 2. ScanHealth, 3. RestoreHealth, 4. `sfc /scannow`. SFC repairs from the component store that DISM fixes first.
+- **Check drive** (`chkdsk C: /scan`, drive selectable, NTFS only) runs while Windows is running. Windows fixes small errors immediately; Morpheus reports this as “fixed online”. Errors that can only be fixed while Windows is not running are reported with the instructions `chkdsk <drive>: /spotfix`, which you run yourself as administrator. Morpheus does not run this repair.
 - **Component store:** Morpheus does not use `/ResetBase` (it makes installed updates permanent). Never delete the `WinSxS` folder by hand.
 - **Cancel** works for read-only tools, chkdsk, ReTrim and the power report. DISM repair, cleanup and SFC should not be interrupted; there is no cancel button for them.
 - **Result:** Morpheus summarises the output in plain language (German and English Windows output) and writes a log with command, duration, exit code and summary to the change journal.
 - **Power reports** are saved to `C:\ProgramData\Morpheus\reports` and open in Morpheus in the isolated frame.
 - **Reliability history** (`perfmon /rel`) opens without admin rights. If that fails: `Win + R`, `perfmon /rel`.
-- Deliberately not included (later or instructions only): `chkdsk /f`, memory test, resetting Windows Update, removing old drivers, network reset.
+- **Memory test** opens the Windows Memory Diagnostic (`MdSched.exe`, no arguments). Morpheus changes nothing here: Windows itself asks whether to restart now or test at the next start. The next scan shows the result under Stability. If opening fails: `Win + R`, `mdsched`.
+- Deliberately not included (later or instructions only): `chkdsk /f`, resetting Windows Update, removing old drivers, network reset.
 
 ### Updating programs
 
@@ -899,14 +949,14 @@ Store apps (MSIX) virtualise parts of the registry (`HKCU`) for all processes th
 
 - Everything runs **locally**. No data is sent to the author or third parties.
 - Network access only happens for the Windows Update search, winget and the UPnP query to your own router, and on your click for Sysinternals, DISM `/RestoreHealth` (Windows Update) and time sync (`w32tm /resync`).
-- “Ask AI” and “Copy for AI” only put text on the clipboard. Personal details are replaced. Still read the text briefly before pasting.
+- “Ask AI” and “Copy for AI” only put text on the clipboard; “Copy for AI” shows it in a preview first. Personal details are replaced, but not everything is recognised (names in free text, serial numbers and device IDs without a keyword, company and domain names). Still read the text before pasting.
 - The report contains many details of your PC (programs, accounts, network, drivers). It stays local and is excluded via `.gitignore`. **Do not share or upload it carelessly.**
 
 ### What is checked
 
 **Security:** Windows version and updates, Defender (status, settings, ASR rules, exclusions, detections), firewall and open ports, UPnP port forwards on the router, SMB/shares, accounts and password policy, UAC, core isolation/memory integrity, LSA protection, driver blocklist, exploit protection, Spectre tweaks, Secure Boot (including 2023 certificates), TPM, BitLocker, BIOS, backup (File History, OneDrive folder backup, system image), restore points, remote access (RDP, remote support tools), third-party services and drivers (including known vulnerable drivers), service paths, autostart (with Sysinternals Autoruns also all autostart locations, signatures and writable paths), unsigned system files (Sysinternals Sigcheck), scheduled tasks, WMI persistence, browser extensions, outdated software, security-relevant events.
 
-**Performance:** CPU, RAM (XMP, dual channel), GPU driver, monitor refresh rate, drives (type, health, space, TRIM), largest storage consumers per drive, page file, power plan, gaming settings (Game Mode, HAGS, Game DVR, overlays), NVIDIA driver settings (shader cache, power management, V-Sync, max frame rate, G-SYNC), Resizable BAR and PCIe link (NVIDIA), game libraries, installed games (Steam, Epic, GOG, EA, Ubisoft, Xbox), network adapter power saving, background load, number of autostarts, network, audio (driver errors, services, default devices, USB power saving, ducking), stability (hardware errors, blue screens, graphics driver crashes, throttling, application crashes, boot time).
+**Performance:** CPU, RAM (XMP, dual channel), GPU driver, monitor refresh rate, drives (type, health, space, TRIM), largest storage consumers per drive, page file, power plan, gaming settings (Game Mode, HAGS, Game DVR, overlays), NVIDIA driver settings (shader cache, power management, V-Sync, max frame rate, G-SYNC), Resizable BAR and PCIe link (NVIDIA), game libraries, installed games (Steam, Epic, GOG, EA, Ubisoft, Xbox), network adapter power saving, background load, number of autostarts, network, audio (driver errors, services, default devices, USB power saving, ducking), stability (hardware errors, blue screens, memory test, graphics driver crashes, throttling, application crashes, boot time).
 
 ### Side effects (not on the system)
 
@@ -926,6 +976,16 @@ Store apps (MSIX) virtualise parts of the registry (`HKCU`) for all processes th
 
 ### Versions
 
+- **2.10.0 (2026-11-15):**
+  - **Progress bars:** scan (“check i of n”, without skipped checks), tweaks, maintenance, winget search and updates, storage analysis, game folders and Sysinternals; raw log under “Details”; `Write-Progress` in console, installer and self-update.
+  - **Activity indicator** in the header; “Show” reopens maintenance, winget update and update search in their window. After F5 the page reattaches to a running scan.
+  - **winget:** overview in four groups, failure reason per package under “Details”, link from the “Software updates” finding to the update card.
+  - **“Revert”** on cards marked “Already applied” when Morpheus applied the tweak.
+  - **Maintenance:** “Check disk” reports three clear outcomes with instructions; new scan check “Memory test” evaluates the Windows Memory Diagnostic; button “Open memory test”.
+  - **Preview before “Copy for AI”** with extended anonymisation (display name, other local accounts, Wi-Fi names, IPv6). The AI prompt template in the HTML report separates instructions from data.
+  - **Raw data:** path columns readably wide, column headers translated.
+  - **Security:** hardened confirmation dialog (“Yes” locked for 2 s and mouse-only, Enter/Esc = No, time limit, pause after refusals, history under “Changes”); with admin rights Edge starts without admin rights; undo takes path, name and type only from the fixed catalogue; test switch `-SafetyLib` removed; stricter Content Security Policy; `SECURITY.md` and `SHA256SUMS` with every release.
+  - **Convenience:** fixed port 41417 (view, colours and menu state survive a restart), warning on close while tasks are running, mouse acceleration takes effect immediately.
 - **2.7.0 (2026-11-08):**
   - **“Simple | Expert” view** with a switch in the header; “Simple” is the default and shows the state, next steps and only open findings.
   - **“Ask AI” button** on findings, tweaks and tools: copies a question including this PC's result, personal details replaced, protected against injected instructions; can be hidden in Settings.

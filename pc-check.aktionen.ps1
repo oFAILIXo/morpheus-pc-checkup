@@ -159,7 +159,15 @@
             param($Vorher)
             if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             $namen = @{ 0 = 'Disabled'; 1 = 'Enabled'; 2 = 'AuditMode'; 5 = 'NotConfigured'; 6 = 'Warn' }
-            foreach ($r in @($Vorher.Regeln)) {
+            # Regel-Ids stehen fest im Code (#114); aus dem Journal kommt nur die frühere Aktion. Erst alles prüfen, dann schreiben.
+            $regelIds = @('56a863a9-875e-4185-98a7-b882c64b5ce5', '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2')
+            $liste = @($Vorher.Regeln)
+            if ($liste.Count -ne $regelIds.Count) { throw (T 'katalog.ruecknahme.zielAbweichend' $regelIds.Count $liste.Count) }
+            for ($i = 0; $i -lt $regelIds.Count; $i++) {
+                if (([string]$liste[$i].Id).ToLower() -cne $regelIds[$i]) { throw (T 'katalog.ruecknahme.zielAbweichend' $regelIds[$i] ([string]$liste[$i].Id)) }
+                if (($null -ne $liste[$i].Aktion) -and (-not $namen.ContainsKey([int]$liste[$i].Aktion))) { throw (T 'katalog.asr.modusUnbekannt' $liste[$i].Aktion) }
+            }
+            foreach ($r in $liste) {
                 $id = ([string]$r.Id).ToLower()
                 $p = Get-MpPreference -ErrorAction Stop
                 $vid = @($p.AttackSurfaceReductionRules_Ids | ForEach-Object { ([string]$_).ToLower() })
@@ -234,10 +242,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -294,10 +299,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -346,10 +348,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -397,8 +396,9 @@
             if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             # War der Schutz schon vorher an, gab es nichts zurückzunehmen; ausgeschaltet wird nur, was diese Aktion eingeschaltet hat
             if ($Vorher.Eingeschaltet -eq $true) { return }
-            $laufwerk = [string]$Vorher.Laufwerk
-            if (-not $laufwerk) { $laufwerk = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\')) + '\' }
+            # Das Laufwerk kommt aus dem Code (#114): nur das Systemlaufwerk, auf dem Ausführen den Schutz eingeschaltet hat
+            $laufwerk = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\')) + '\'
+            if (([string]$Vorher.Laufwerk) -ine $laufwerk) { throw (T 'katalog.speicher.laufwerkUngueltig' ([string]$Vorher.Laufwerk)) }
             Disable-ComputerRestore -Drive $laufwerk -ErrorAction Stop | Out-Null
         }
     },
@@ -462,8 +462,10 @@
             param($Vorher)
             if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
             if ($null -eq $Vorher.Max) { throw (T 'katalog.speicher.keinVorher') }
-            $lw = [string]$Vorher.Laufwerk
-            if ($lw -notmatch '^[A-Za-z]:$') { throw (T 'katalog.speicher.laufwerkUngueltig' $lw) }
+            # Das Laufwerk kommt aus dem Code (#114): nur das Systemlaufwerk, wie in Lesen und Ausfuehren
+            $lw = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
+            if (-not $lw) { $lw = 'C:' }
+            if (([string]$Vorher.Laufwerk) -ine $lw) { throw (T 'katalog.speicher.laufwerkUngueltig' ([string]$Vorher.Laufwerk)) }
             $max = [string]$Vorher.Max
             if ($max -ne 'UNBOUNDED') {
                 if ($max -notmatch '^(\d{1,12})MB$') { throw (T 'katalog.speicher.grenzeUngueltig' $max) }
@@ -522,10 +524,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -575,10 +574,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -628,10 +624,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -696,6 +689,12 @@
             $teil = '501a4d13-42af-4429-9fd1-a8218c268e20'; $einst = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
             $plan = ([string]$Vorher.Plan).ToLower()
             if ($plan -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw (T 'katalog.aspm.planUngueltig' $plan) }
+            # Erlaubnisliste (#114): AC/DC nur 0 bis 2, der Plan muss einer der vorhandenen Energiepläne sein
+            foreach ($w in @($Vorher.AC, $Vorher.DC)) {
+                if (([string]$w) -notmatch '^[0-2]$') { throw (T 'katalog.ruecknahme.wertUngueltig' 'ASPM' ([string]$w)) }
+            }
+            $plaene = (& (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /list) -join "`n"
+            if ($plaene.ToLower() -notlike "*$plan*") { throw (T 'katalog.aspm.planUngueltig' $plan) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setacvalueindex $plan $teil $einst ([int]$Vorher.AC) | Out-Null
             if ($LASTEXITCODE -ne 0) { throw (T 'katalog.aspm.powercfg' '/setacvalueindex' $LASTEXITCODE) }
             & (Join-Path ([Environment]::SystemDirectory) 'powercfg.exe') /setdcvalueindex $plan $teil $einst ([int]$Vorher.DC) | Out-Null
@@ -757,10 +756,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -813,10 +809,7 @@
                     }
                 }
             } else {
-                if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                $wert = $Vorher.Wert
-                if ($Vorher.Typ -eq 'DWord') { $wert = [int]$wert }
-                New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $Vorher.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
+                Set-PcCheckRegDWordRuecknahme -Pfad $pfad -Name $name -Vorher $Vorher   # #114: nur der Wert kommt aus dem Journal
             }
         }
     },
@@ -874,23 +867,13 @@
         Rueckgaengig = {
             param($Vorher)
             if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
-            foreach ($v in @($Vorher.Werte)) {
-                $pfad = [string]$v.Pfad; $name = [string]$v.Name
-                if ($null -eq $v.Wert) {
-                    if (Test-Path -LiteralPath $pfad) {
-                        if ((Get-Item -LiteralPath $pfad -ErrorAction Stop).GetValueNames() -contains $name) { Remove-ItemProperty -LiteralPath $pfad -Name $name -ErrorAction Stop }
-                        if ($v.SchluesselVorhanden -eq $false) {
-                            $k = Get-Item -LiteralPath $pfad -ErrorAction Stop
-                            if ($k.ValueCount -eq 0 -and $k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $pfad -ErrorAction Stop }
-                        }
-                    }
-                } else {
-                    if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                    $wert = $v.Wert
-                    if ($v.Typ -eq 'DWord') { $wert = [int]$wert }
-                    New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $v.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
-                }
-            }
+            $ziele = @(
+                @{ Pfad = 'HKCU:\System\GameConfigStore'; Name = 'GameDVR_Enabled' },
+                @{ Pfad = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'; Name = 'AppCaptureEnabled' },
+                @{ Pfad = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'; Name = 'HistoricalCaptureEnabled' }
+            )
+            # #114: Pfad, Name und Typ aus dem Code, aus dem Journal nur der Wert; erst alles prüfen, dann schreiben.
+            Restore-PcCheckRegWerte -Ziele $ziele -Typ 'DWord' -Vorher $Vorher
         }
     },
 
@@ -936,26 +919,32 @@
             foreach ($n in @('MouseSpeed', 'MouseThreshold1', 'MouseThreshold2')) {
                 New-ItemProperty -LiteralPath $pfad -Name $n -PropertyType String -Value '0' -Force -ErrorAction Stop | Out-Null
             }
+            # Windows sofort benachrichtigen wie 'OK' in der Systemsteuerung (SPI_SETMOUSE + SPIF_SENDCHANGE); sonst wirkt es erst nach der Abmeldung.
+            # P/Invoke im Speicher per Reflection.Emit statt Add-Type: Add-Type kompiliert über %TEMP%, dort könnte ein Benutzerprogramm die DLL tauschen.
+            $t = Get-PcCheckMausSpi   # Safety.ps1
+            if (-not $t::SystemParametersInfo(4, 0, [int[]]@(0, 0, 0), 2)) { throw (T 'katalog.maus.spi') }
         }
         Rueckgaengig = {
             param($Vorher)
             if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
-            foreach ($v in @($Vorher.Werte)) {
-                $pfad = [string]$v.Pfad; $name = [string]$v.Name
-                if ($null -eq $v.Wert) {
-                    if (Test-Path -LiteralPath $pfad) {
-                        if ((Get-Item -LiteralPath $pfad -ErrorAction Stop).GetValueNames() -contains $name) { Remove-ItemProperty -LiteralPath $pfad -Name $name -ErrorAction Stop }
-                        if ($v.SchluesselVorhanden -eq $false) {
-                            $k = Get-Item -LiteralPath $pfad -ErrorAction Stop
-                            if ($k.ValueCount -eq 0 -and $k.SubKeyCount -eq 0) { Remove-Item -LiteralPath $pfad -ErrorAction Stop }
-                        }
-                    }
-                } else {
-                    if (-not (Test-Path -LiteralPath $pfad)) { New-Item -Path $pfad -Force -ErrorAction Stop | Out-Null }
-                    $wert = $v.Wert
-                    if ($v.Typ -eq 'DWord') { $wert = [int]$wert }
-                    New-ItemProperty -LiteralPath $pfad -Name $name -PropertyType $v.Typ -Value $wert -Force -ErrorAction Stop | Out-Null
-                }
+            $mpfad = 'HKCU:\Control Panel\Mouse'
+            $ziele = @(
+                @{ Pfad = $mpfad; Name = 'MouseSpeed' },
+                @{ Pfad = $mpfad; Name = 'MouseThreshold1' },
+                @{ Pfad = $mpfad; Name = 'MouseThreshold2' }
+            )
+            # #114: Pfad, Name und Typ aus dem Code, aus dem Journal nur der Wert; erst alles prüfen, dann schreiben.
+            Restore-PcCheckRegWerte -Ziele $ziele -Typ 'String' -Vorher $Vorher
+            # Windows sofort benachrichtigen (wie in Ausfuehren). Fehlt ein Wert, übernimmt Windows ihn erst bei der nächsten Anmeldung.
+            $neu = @(foreach ($n in @('MouseThreshold1', 'MouseThreshold2', 'MouseSpeed')) {
+                    $s = $null
+                    if (Test-Path -LiteralPath $mpfad) { $s = (Get-Item -LiteralPath $mpfad -ErrorAction Stop).GetValue($n) }
+                    $z = 0
+                    if (($null -ne $s) -and [int]::TryParse([string]$s, [ref]$z)) { $z }
+                })
+            if ($neu.Count -eq 3) {
+                $t = Get-PcCheckMausSpi
+                if (-not $t::SystemParametersInfo(4, 0, [int[]]$neu, 2)) { throw (T 'katalog.maus.spi') }
             }
         }
     },
@@ -1021,6 +1010,15 @@
         Rueckgaengig = {
             param($Vorher)
             if ($null -eq $Vorher) { throw (T 'katalog.zustand.fehlt') }
+            # Erlaubnisliste (#114): Schlüsselwörter fest im Code, Adapter nur vorhandene physische Adapter, Wert nur eine kleine Zahl.
+            # Erst alles prüfen, dann schreiben.
+            $erlaubt = @('*EEE', 'EEELinkAdvertisement', '*GreenEthernet', 'EnableGreenEthernet', 'AdvancedEEE', 'ULPMode', 'PowerSavingMode')
+            $bekannt = @(Get-NetAdapter -Physical -ErrorAction Stop | ForEach-Object { [string]$_.Name })
+            foreach ($e in @($Vorher.Eintraege)) {
+                if ($erlaubt -cnotcontains [string]$e.Schluessel) { throw (T 'katalog.ruecknahme.zielAbweichend' ($erlaubt -join ', ') ([string]$e.Schluessel)) }
+                if ($bekannt -cnotcontains [string]$e.Adapter) { throw (T 'katalog.ruecknahme.adapterUnbekannt' ([string]$e.Adapter)) }
+                if (([string]$e.Wert) -notmatch '^[0-9]{1,4}$') { throw (T 'katalog.ruecknahme.wertUngueltig' ([string]$e.Schluessel) ([string]$e.Wert)) }
+            }
             $geaendert = New-Object System.Collections.ArrayList
             foreach ($e in @($Vorher.Eintraege)) {
                 $aktuell = Get-NetAdapterAdvancedProperty -Name ([string]$e.Adapter) -RegistryKeyword ([string]$e.Schluessel) -ErrorAction Stop

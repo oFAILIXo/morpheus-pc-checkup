@@ -157,8 +157,12 @@ Describe 'Get-MorpheusWartungZusammenfassung Fixtures' {
         @('chkdsk.scan.de.ok', 'ok', 'keine Probleme', $null),
         @('chkdsk.scan.en.ok-neu', 'ok', 'keine Probleme', $null),
         @('chkdsk.scan.de.ok-neu', 'ok', 'keine Probleme', $null),
-        @('chkdsk.scan.en.probleme', 'problem', 'Probleme am Dateisystem', 'Datensicherung'),
-        @('chkdsk.scan.de.probleme', 'problem', 'Probleme am Dateisystem', 'Datensicherung'),
+        @('chkdsk.scan.en.probleme', 'problem', 'ohne laufendes Windows', 'spotfix'),
+        @('chkdsk.scan.de.probleme', 'problem', 'ohne laufendes Windows', 'spotfix'),
+        @('chkdsk.scan.en.online-behoben', 'repariert', 'sofort behoben', 'Kein weiterer Schritt'),
+        @('chkdsk.scan.de.online-behoben', 'repariert', 'sofort behoben', 'Kein weiterer Schritt'),
+        @('chkdsk.scan.en.offline-noetig', 'problem', 'ohne laufendes Windows', 'spotfix'),
+        @('chkdsk.scan.de.offline-noetig', 'problem', 'ohne laufendes Windows', 'spotfix'),
         @('dns.flush.en.ok', 'ok', 'DNS', $null),
         @('dns.flush.de.ok', 'ok', 'DNS', $null),
         @('zeit.resync.en.ok', 'ok', 'Uhrzeit', $null),
@@ -328,6 +332,7 @@ Describe 'Get-MorpheusWartungZusammenfassung Exit-Code-Rueckfall' {
     It 'unbekannte Id wirft' {
         { Get-MorpheusWartungZusammenfassung -Werkzeug 'format.c' -Text 'x' -ExitCode 0 } | Should Throw
         { Get-MorpheusWartungZusammenfassung -Werkzeug 'perfmon.rel' -Text 'x' -ExitCode 0 } | Should Throw
+        { Get-MorpheusWartungZusammenfassung -Werkzeug 'speichertest' -Text 'x' -ExitCode 0 } | Should Throw
         { Get-MorpheusWartungZusammenfassung -Werkzeug 'SFC.SCANNOW' -Text 'x' -ExitCode 0 } | Should Throw
     }
 }

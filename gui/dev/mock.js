@@ -19,6 +19,7 @@
   const F = (Area, Category, Check, Status, Value, Recommendation = '', x = {}) => ({ Area, Category, Check, Status, Value, Recommendation, OriginalStatus: '', Note: '', Effort: '', Benefit: '', Risk: '', Steps: [], Command: '', ...x });
   const base = [
     F('Sicherheit', 'System & Updates', 'Windows-Version', 'OK', 'Windows 11 Pro 24H2 (Demo)'),
+    F('Sicherheit', 'System & Updates', 'Demo: Persönliche Angaben', 'INFO', 'Demo-Werte zum Testen der Anonymisierung: PC DEMO-PC, Konto Erika Beispiel (demo), Netzwerk HeimNetz-5G, IPv6 2a02:8109::1, IPv4 192.168.178.20, Version 10.0.26100.1, Seriennummer: ABC12345, Profil C:\\Users\\demo\\AppData', 'Hinweis nur im Mock.'),
     F('Sicherheit', 'System & Updates', 'Windows Update: ausstehend', 'INFO', 'Nur optional bzw. automatisch: Treiber', 'Defender lädt Signaturen selbst; optionale Treiber nur bei Problemen installieren, Grafiktreiber besser direkt vom Hersteller.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering', Steps: ['Einstellungen > Windows Update > „Nach Updates suchen“.', 'Danach neu starten.'] }),
     F('Sicherheit', 'Virenschutz', 'Microsoft Defender: Status', 'OK', 'Echtzeit-, Verhaltens- und Download-Schutz aktiv'),
     F('Sicherheit', 'Virenschutz', 'Defender: Einstellungen', 'TIPP', 'Netzwerkschutz aus; PUA-Schutz an', 'Netzwerkschutz einschalten.', { Effort: 'gering', Benefit: 'mittel', Risk: 'gering', Steps: ['Rechtsklick auf Start > „Terminal (Administrator)“.', 'Befehl einfügen.'], Command: 'Set-MpPreference -EnableNetworkProtection Enabled' }),
@@ -38,6 +39,7 @@
     F('Sicherheit', 'Autostart & Persistenz', 'Autostarts: beschreibbare Pfade (Autoruns)', 'INFO', 'Autostarts in beschreibbaren Ordnern (1): DemoTool', 'Üblich bei Programmen in AppData; kein Rechtegewinn.'),
     F('Sicherheit', 'Systemhärtung', 'Systemdateien: Signaturen (Sigcheck)', 'WARN', 'Unsignierte Dateien in System32 und drivers (2): demoaudio.sys (Demo Audio Ltd.), oldprint.dll; 1 akzeptiert', 'Herkunft der Dateien klären; unbekannte Dateien mit Defender prüfen oder den Hash bei VirusTotal nachschlagen.', { Effort: 'mittel', Benefit: 'mittel', Risk: 'gering' }),
     F('Sicherheit', 'Software', 'Software-Updates', 'WARN', 'Beispielprogramm 1.2 verfügbar (C:\\Users\\Demo\\Apps)', 'Programm aktualisieren.', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering' }),
+    F('Sicherheit', 'Software', 'Software-Updates (winget)', 'WARN', 'Programme mit verfügbarem Update (3): Demo Player, Demo Editor, Demo Tools', 'In Morpheus unter Werkzeuge > Programme aktualisieren auswählen und installieren.', { Effort: 'gering', Benefit: 'hoch', Risk: 'gering' }),
     F('Performance', 'Hardware', 'Arbeitsspeicher', 'OK', '32 GB DDR5'),
     F('Performance', 'Laufwerke & Speicherplatz', 'Speicherplatz', 'INFO', 'C: 32 % frei, F: 13 % frei'),
     F('Performance', 'Laufwerke & Speicherplatz', 'Größte Speicherverbraucher', 'INFO', 'C: C:\\Users\\Demo\\AppData (41 GB); F: F:\\SteamLibrary\\steamapps\\common\\Starfall Odyssey (142 GB); D: D:\\Videos (612 GB)'),
@@ -52,6 +54,7 @@
     F('Performance', 'Gaming & Grafik', 'Bildschirme und Bildwiederholrate', 'OK', '165 Hz'),
     F('Performance', 'Stabilität', 'Zuverlässigkeitsindex', 'OK', '9,2 von 10'),
     F('Performance', 'Stabilität', 'Abstürze und unerwartete Neustarts', 'OK', '0 unerwartete Neustarts, 0 Bluescreens in 14 Tagen; 0 Minidumps insgesamt'),
+    F('Performance', 'Stabilität', 'Speichertest', 'OK', 'Der Speichertest vom 2026-11-08 20:42 hat keine Fehler im Arbeitsspeicher gefunden.'),
     F('Performance', 'Stabilität', 'Programmabstürze', 'INFO', '2 Abstürze, 0 Hänger: demo-app.exe (2)'),
     F('Performance', 'Stabilität', 'Startdauer', 'OK', 'Ø 26 s bis zum Desktop'),
   ];
@@ -143,6 +146,7 @@
     { Kategorie: 'Drivers', Eintrag: 'DemoAudioDrv', Aktiv: true, Signierer: 'Demo Audio GmbH', Verifiziert: true, Beschreibbar: null, Erhoeht: true, Pfad: 'C:\\Windows\\System32\\drivers\\demoaudio.sys', Ort: 'HKLM\\System\\CurrentControlSet\\Services', Befehl: '' },
     { Kategorie: 'ScheduledTasks', Eintrag: '\\DemoVendor\\Update-Check', Aktiv: true, Signierer: 'DemoVendor Inc.', Verifiziert: true, Beschreibbar: false, Erhoeht: true, Pfad: 'C:\\Program Files\\DemoVendor\\check.exe', Ort: 'Task Scheduler', Befehl: '"C:\\Program Files\\DemoVendor\\check.exe" /silent' },
   ];
+  const SPALTEN = { de: { Verifiziert: 'Verifiziert', Beschreibbar: 'Beschreibbar', Erhoeht: 'Erhöht', Ort: 'Ort', Befehl: 'Befehl', Pfad: 'Pfad', Signierer: 'Signierer', Aktiv: 'Aktiv', Kategorie: 'Kategorie', Eintrag: 'Eintrag' }, en: { Verifiziert: 'Verified', Beschreibbar: 'Writable', Erhoeht: 'Elevated', Ort: 'Location', Befehl: 'Command', Pfad: 'Path', Signierer: 'Signer', Aktiv: 'Active', Kategorie: 'Category', Eintrag: 'Entry' } };
   const mkReport = (i, opt = {}) => {   // i = 0 neuester; opt: { d, skip } (skip = -SkipSpeicher)
     const d = opt.d || new Date(2026, 9, 25 - i, 13, 21);
     const sp = opt.skip ? null : speicherFuer(iso(d));
@@ -154,6 +158,8 @@
       Changes: i < 11 ? { VerglichenMit: 'vorher.json', Erstellt: iso(new Date(2026, 9, 24 - i, 13, 21)), AdminVorher: true, Status: [{ 'Prüfung': 'Offene Ports', Vorher: 'Kritisch', Jetzt: 'Warnung', Befund: '3 Ports' }], Bestand: { 'Autostart-Einträge': { Neu: ['Demo-Tool <b>fett</b>'], Entfernt: ['Altes Tool'] } } } : null,
       Speicher: sp,
       Data: { System: [{ Computer: 'DEMO-PC', Edition: 'Windows 11 Pro', Version: '24H2' }],
+        'Netzwerkprofile': [{ Netzwerk: 'HeimNetz-5G', Adapter: 'WLAN', Kategorie: 'Private', IPv4: 'Internet' }],
+        'Lokale Benutzerkonten': [{ Name: 'demo', Aktiv: true, SID: 'S-1-5-21-1-2-3-1001' }, { Name: 'Administrator', Aktiv: false, SID: 'S-1-5-21-1-2-3-500' }],
         'Startdauer (letzte Messungen)': [{ Zeit: 'x', GesamtSek: 40, HauptpfadSek: 22 + (i % 5) * 3, NachAnmeldungSek: 5 }, { Zeit: 'y', GesamtSek: 41, HauptpfadSek: 24 + (i % 4) * 2, NachAnmeldungSek: 6 }],
         'Laufwerke (Volumes)': [{ Laufwerk: 'C:', Name: '', Dateisystem: 'NTFS', Groesse: '238 GB', Frei: '76 GB', FreiProzent: 30 + ((11 - i) % 7) * 2 }, { Laufwerk: 'F:', Name: 'Spiele', Dateisystem: 'NTFS', Groesse: '1 TB', Frei: '130 GB', FreiProzent: 13 }],
         'Offene Netzwerkports (nicht nur lokal)': [
@@ -170,7 +176,9 @@
       DataChecks: { System: 'Windows-Version', 'Startdauer (letzte Messungen)': 'Startdauer', 'Laufwerke (Volumes)': 'Speicherplatz', 'Offene Netzwerkports (nicht nur lokal)': 'Offene Ports',
         ...(i < 3 ? { 'Autostarts (Autoruns, ohne Microsoft)': 'Autostarts: Signaturen (Autoruns)' } : {}),
         ...(i < 3 ? { 'Unsignierte Systemdateien (Sigcheck)': 'Systemdateien: Signaturen (Sigcheck)' } : {}),
-        ...(sp ? speicherChecks : {}), Datensicherung: 'Datensicherung' } } };
+        ...(sp ? speicherChecks : {}), Datensicherung: 'Datensicherung' },
+      // Spaltenköpfe wie im echten Bericht in der Sprache des Mocks (scannamen.psd1)
+      get DataNamen() { return { Tabellen: {}, Spalten: SPALTEN[mockSprache] }; } } };
   };
   const reps = Array.from({ length: 12 }, (_, i) => mkReport(i));
   const cnt = js => { const c = { CRIT: 0, WARN: 0, TIPP: 0, ACK: 0, INFO: 0, OK: 0, SKIP: 0 }; js.Findings.forEach(f => { c[f.Status]++; }); return c; };
@@ -196,9 +204,12 @@
     { id: '20261025-191502-01', zeit: '2026-10-25T19:15:02', art: 'update', aktion: 'Demo.Editor', titel: 'Update: Demo Editor 3.1.0 → 3.2.1', variante: 'Demo.Editor', vorher: null, nachher: null, wiederherstellungspunkt: { seq: 58, zeit: '2026-10-25T19:14:40' }, status: 'erledigt', bezug: null, meldung: 'Erfolgreich installiert.', benutzer: 'demo', befehl: 'winget upgrade --id Demo.Editor --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity', dauerSek: 41, exitCode: 0, umkehrbar: false, ohnePunkt: false },
     { id: '20261025-183011-01', zeit: '2026-10-25T18:30:11', art: 'wartung', aktion: 'dism.checkhealth', titel: 'Komponentenspeicher schnell prüfen', variante: null, vorher: null, nachher: null, wiederherstellungspunkt: null, status: 'erledigt', bezug: null, meldung: 'Keine Beschädigung im Komponentenspeicher gefunden.', benutzer: 'demo', befehl: 'C:\\WINDOWS\\system32\\Dism.exe /Online /Cleanup-Image /CheckHealth', dauerSek: 74, exitCode: 0, umkehrbar: false, ohnePunkt: false },
     { id: '20261024-190211-01', zeit: '2026-10-24T19:02:11', art: 'ausfuehren', aktion: 'netz.eee', titel: 'Energiesparfunktionen Netzwerkkarte aus', variante: null, vorher: 'an', nachher: 'aus', wiederherstellungspunkt: { seq: 56, zeit: '2026-10-24T19:02:00' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
+    { id: '20261024-120000-01', zeit: '2026-10-24T12:00:00', art: 'ausfuehren', aktion: 'gaming.spielmodus', titel: 'Spielmodus einschalten', variante: null, vorher: 'aus', nachher: 'an', wiederherstellungspunkt: { seq: 55, zeit: '2026-10-24T11:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
     { id: '20261024-110000-01', zeit: '2026-10-24T11:00:00', art: 'ausfuehren', aktion: 'gaming.gamedvr', titel: 'Game DVR aus (Zustand wurde danach geändert)', variante: null, vorher: 1, nachher: 0, wiederherstellungspunkt: { seq: 55, zeit: '2026-10-24T10:59:50' }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' },
   ];
-  const session = { datenordner: null, version: '2.7.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo',
+  // #113: Verlauf der Bestaetigungsdialoge (Demo)
+  const mockDialoge = [{ zeit: '2026-10-25T12:02:09', ergebnis: 'pause', was: 'Das Folgende mit Administratorrechten ausf\u00FChren?', anzahl: 4 }, { zeit: '2026-10-25T12:00:41', ergebnis: 'zeit', was: 'Das Folgende mit Administratorrechten ausf\u00FChren? \u00B7 \u2022 Game DVR aus', anzahl: 1 }, { zeit: '2026-10-25T11:58:03', ergebnis: 'nein', was: 'Diese \u00C4nderung r\u00FCckg\u00E4ngig machen?', anzahl: 1 }, { zeit: '2026-10-25T11:51:20', ergebnis: 'ja', was: 'Das Folgende mit Administratorrechten ausf\u00FChren? \u00B7 \u2022 Energiesparfunktionen Netzwerkkarte aus', anzahl: 1 }];
+  const session = { datenordner: null, version: '2.10.0', pc: 'DEMO-PC', admin: true, profil: 'Gaming', benutzer: 'demo', anzeigename: 'Erika Beispiel',
     safety: { schutzAn: true, laufwerk: 'C:', sperre24h: true, seitStart: [], letzterPunkt: /punktHeute/.test(location.search) ? new Date(Date.now() - 36e5).toISOString() : '2026-10-25T12:02:11', befehl: "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -PropertyType DWord -Value 0 -Force" } };
   // v2.4 (#63): Demo-Schalter ?datenordner=1 (reparierbar, Nur-Lesen) bzw. ?datenordner=repariert (normal, Reparatur heute)
   const dMode = new URLSearchParams(location.search).get('datenordner');
@@ -262,17 +273,56 @@
   // ---- Jobs: jede Zeile erscheint 700 ms nach der vorigen
   const jobs = {}; let jobSeq = 0;
   const clock = () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `[${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}]`; };
-  function newJob(art, lines, finish) {
+  // ?fsfehler=1: der nächste vom Nutzer gestartete Job endet mit status 'failed' (2.8, #138);
+  // Hintergrund-Jobs beim Laden (Zustände lesen, Speicher, Update-Suche) zählen nicht
+  let fsFehler = new URLSearchParams(location.search).get('fsfehler') === '1';
+  const FS_HINTERGRUND = ['lesen', 'speicher', 'updatesuche'];
+  // fortschritt (optional): Funktion (Zahl ausgegebener Zeilen, fertig) => Feld fortschritt wie vom Server, sonst null
+  function newJob(art, lines, finish, fortschritt) {
     const id = 'job' + (++jobSeq);
-    jobs[id] = { art, t0: Date.now(), lines: lines.map(l => clock() + ' ' + l), step: 700, finish, done: false, ergebnis: null };
+    const fail = fsFehler && !FS_HINTERGRUND.includes(art);
+    if (fail) fsFehler = false;
+    jobs[id] = { art, t0: Date.now(), lines: lines.map(l => clock() + ' ' + l), step: 700, finish, fortschritt: fortschritt || null, fail, done: false, ergebnis: null };
     return id;
   }
+  // Zähler wie Safety.ps1: i = erledigte Aktionen von n; prozent rechnet der Server selbst
+  const fsZaehler = (i, n, phase, text) => ({ modus: 'zaehler', prozent: Math.floor(100 * i / n), i, n, phase, text: text || null, elemente: null });
+  // Ablauf einer Änderung: Zeile 0 Zustand, 1-2 Punkt, 3 Journal, ab 4 je Aktion eine Zeile, zuletzt Prüfen
+  const fsAendern = titel => (n, fertig) => {
+    const k = titel.length, idx = n - 1;
+    if (idx < 0) return null;
+    if (fertig || idx >= 4 + k) return fsZaehler(k, k, 'pruefen', null);
+    if (idx === 0) return fsZaehler(0, k, 'zustand', titel[0]);
+    if (idx <= 2) return fsZaehler(0, k, 'punkt', null);
+    if (idx === 3) return fsZaehler(0, k, 'journal', titel[0]);
+    return fsZaehler(idx - 4, k, 'ausfuehren', titel[idx - 4]);
+  };
+  // Wartung: Prozent über die Zeilen des Werkzeugs (von Zeile a, Anzahl z), wie Get-MorpheusWartungFortschritt
+  const fsProzent = (a, z) => (n, fertig) => {
+    const idx = n - 1;
+    if (idx < a || !z) return null;
+    const p = fertig ? 100 : Math.min(100, Math.round(100 * (idx - a + 1) / (z + 1)));
+    return { modus: 'prozent', prozent: p, i: null, n: null, phase: 'ausfuehren', text: null, elemente: null };
+  };
   function jobState(id, from) {
     const j = jobs[id]; if (!j) return [404, { error: 'Job unbekannt' }];
     const n = Math.min(j.lines.length, Math.floor((Date.now() - j.t0) / j.step));
     const finished = n >= j.lines.length;
-    if (finished && !j.done) { j.done = true; j.ergebnis = j.finish(); }
-    return [200, { id, art: j.art, status: finished ? 'done' : 'running', log: j.lines.slice(from, n), next: n, ergebnis: finished ? j.ergebnis : null }];
+    if (finished && !j.done) { j.done = true; j.ergebnis = j.fail ? { error: 'Simulierter Fehler (?fsfehler=1).' } : j.finish(); }
+    const fortschritt = j.fortschritt ? j.fortschritt(n, finished) : null;
+    return [200, { id, art: j.art, status: finished ? (j.fail ? 'failed' : 'done') : 'running', log: j.lines.slice(from, n), next: n, ergebnis: finished ? j.ergebnis : null, fortschritt }];
+  }
+  // Aktivitätsanzeige (2.9, #141): wie der Server nur id, art, werkzeug, status, gestartet; laufend oder vor höchstens
+  // 30 Minuten beendet, neueste zuerst, höchstens 20. Mock-Art 'aendern' heißt beim Server 'run'; 'lesen' (refresh) fehlt.
+  function sessionJobs() {
+    const jetzt = Date.now();
+    return Object.keys(jobs).map(id => {
+      const j = jobs[id], ende = j.t0 + j.lines.length * j.step, fertig = jetzt >= ende;
+      return { id, art: j.art === 'aendern' ? 'run' : j.art, werkzeug: j.werkzeug || null, status: fertig ? (j.fail ? 'failed' : 'done') : 'running',
+        gestartet: new Date(j.t0).toISOString().slice(0, 19), _ende: ende, _t0: j.t0 };
+    }).filter(x => x.art !== 'lesen' && (x.status === 'running' || jetzt - x._ende <= 30 * 60000))
+      .sort((a, b) => b._t0 - a._t0).slice(0, 20)
+      .map(({ _ende, _t0, ...x }) => x);
   }
   // Job mit dieser Art, der noch läuft (zeitbasiert, unabhängig davon, ob schon abgefragt wurde)
   const laufend = art => Object.keys(jobs).find(id => jobs[id].art === art && Date.now() - jobs[id].t0 < jobs[id].lines.length * jobs[id].step) || null;
@@ -286,8 +336,16 @@
       journal.unshift({ id: 'e' + Date.now() + a.id, zeit: iso(new Date()), art: 'ausfuehren', aktion: a.id, titel: a.titel, variante: variante || null, vorher, nachher: a.zustand.wert, wiederherstellungspunkt: { seq: 57, zeit: iso(new Date()) }, status: 'erledigt', bezug: null, meldung: '', benutzer: 'demo' });
       session.safety.seitStart = [...new Set([...(session.safety.seitStart || []), a.id])];
       return { id: a.id, status: 'erledigt', vorher, nachher: a.zustand.wert, neustart: !!a.neustart, meldung: '' };
-    }));
+    }), fsAendern(sel.map(a => a.titel)));
     return [200, { jobId: id }];
+  }
+  // #166: wie der Server (Get-PcCheckKartenRueckgaengig): Knopf „Zurücknehmen“ nur, wenn Morpheus die Anpassung selbst gesetzt hat
+  // (Journal ausfuehren/erledigt, Zustand noch wie danach); von Windows gesetzte Anpassungen (z. B. Remoteunterstützung) bekommen keinen
+  function zuruecknehmenEintrag(a) {
+    if (!a.zustand || a.zustand.aktiv !== true) return null;
+    const e = journal.find(x => x.aktion === a.id && x.art === 'ausfuehren' && x.status === 'erledigt');
+    if (!e || e.titel.includes('geändert')) return null;
+    return { ...e, vorher: { aktiv: false, wert: e.vorher }, nachher: { aktiv: true, wert: e.nachher } };
   }
   function undo(entryId, force, vorRep) {
     const e = journal.find(x => x.id === entryId);
@@ -302,14 +360,31 @@
       const a = actions.find(x => x.id === e.aktion); if (a) a.zustand = { aktiv: false, wert: String(e.vorher), stand: iso(new Date()) };
       journal.unshift({ id: 'u' + Date.now(), zeit: iso(new Date()), art: 'rueckgaengig', aktion: e.aktion, titel: e.titel, variante: null, vorher: e.nachher, nachher: e.vorher, wiederherstellungspunkt: { seq: 58, zeit: iso(new Date()) }, status: 'erledigt', bezug: e.id, meldung: '', benutzer: 'demo' });
       return { id: e.aktion, status: 'erledigt', vorher: e.nachher, nachher: e.vorher, neustart: false, meldung: '' };
-    });
+    }, fsAendern([e.titel]));
     return [200, { jobId: id }];
   }
   function scan(body) {
     if (laufend('sysinternals')) return [409, { error: 'Die Sysinternals-Werkzeuge werden gerade eingerichtet. Bitte warten, bis das fertig ist, und den Scan dann starten.' }];
     if (!(body.eventDays >= 1 && body.eventDays <= 90)) return [400, { error: 'Zeitraum ungültig' }];
-    const speicherZeilen = body.skipSpeicher ? [] : ['[Performance] Laufwerke & Speicherplatz', '  - Größte Speicherverbraucher', 'C: wird gezählt …', 'F: wird gezählt …', 'D: wird gezählt …'];
-    const lines = ['[Sicherheit] System & Updates', '  - Windows-Version', '  - Windows Update: ausstehend', '[Sicherheit] Virenschutz', '  - Defender: Einstellungen', '[Performance] Gaming & Grafik', '  - Resizable BAR und PCIe-Anbindung', ...speicherZeilen, `Profil: ${body.profil}, Zeitraum ${body.eventDays} Tage`, 'Schreibe Bericht …'];
+    // Scan-Fortschritt (2.8, #139): 12 Beispiel-Prüfungen in 4 Bereichen; der Server liefert zaehler mit 'Kategorie › Prüfung'
+    const bereiche = [['[Sicherheit] System & Updates', 'System & Updates', ['Windows-Version', 'Windows Update: ausstehend', 'Secure Boot']],
+      ['[Sicherheit] Virenschutz', 'Virenschutz', ['Defender: Einstellungen', 'Defender: Scans', 'Firewall']],
+      ['[Performance] Gaming & Grafik', 'Gaming & Grafik', ['Resizable BAR und PCIe-Anbindung', 'Grafiktreiber', 'Spielmodus']],
+      ['[Performance] Laufwerke & Speicherplatz', 'Laufwerke & Speicherplatz', ['Freier Speicher', 'TRIM', 'Größte Speicherverbraucher']]];
+    // Ausgelassene Prüfungen zählen nicht mit (2.9, #150): Zeile bleibt im Log, Balken endet bei n von n
+    const aus = new Set([body.skipUpdateSearch && 'Windows Update: ausstehend', body.skipSpeicher && 'Größte Speicherverbraucher']);
+    const nP = bereiche.reduce((a, b) => a + b[2].filter(x => !aus.has(x)).length, 0);
+    const lines = [], fsJe = [];   // fsJe[k]: Fortschritt, sobald Zeile k ausgegeben ist (Markerzeilen stehen nicht im Log)
+    let iP = 0, letzte = null;
+    for (const [kopf, kat, pr] of bereiche) {
+      lines.push(kopf); fsJe.push(letzte);
+      for (const name of pr) {
+        if (!aus.has(name)) letzte = fsZaehler(++iP, nP, 'scan', kat + ' › ' + name);
+        lines.push('  - ' + name); fsJe.push(letzte);
+        if (name === 'Größte Speicherverbraucher' && !body.skipSpeicher) for (const lw of ['C:', 'F:', 'D:']) { lines.push(lw + ' wird gezählt …'); fsJe.push(letzte); }
+      }
+    }
+    lines.push(`Profil: ${body.profil}, Zeitraum ${body.eventDays} Tage`, 'Schreibe Bericht …'); fsJe.push(letzte, letzte);
     const id = newJob('scan', lines, () => {
       const d = new Date(), p = n => String(n).padStart(2, '0');
       const r = mkReport(0, { d, skip: !!body.skipSpeicher });
@@ -320,7 +395,7 @@
         delete r.json.Data['Autostarts (Autoruns, ohne Microsoft)']; delete r.json.DataChecks['Autostarts (Autoruns, ohne Microsoft)'];
       }
       reps.unshift(r); return { name: r.name };
-    });
+    }, n => (n > 0 ? fsJe[Math.min(n, fsJe.length) - 1] : null));
     return [200, { jobId: id }];
   }
 
@@ -432,8 +507,9 @@
     wartungEintrag({ id: 'sfc.scannow', gruppe: 'Systemdateien', schritt: 4, klasse: 'reparatur', titel: 'Systemdateien prüfen und reparieren (SFC)', erklaerung: 'Prüft geschützte Systemdateien und repariert sie aus dem Komponentenspeicher.', befehl: 'sfc.exe /scannow', dauer: '10–20 Minuten', abbruch: 'nein', hinweis: 'Am besten nach DISM RestoreHealth ausführen.' }),
     wartungEintrag({ id: 'dism.analyze', gruppe: 'Komponentenspeicher', schritt: 1, klasse: 'diagnose', titel: 'Größe des Komponentenspeichers ansehen', erklaerung: 'Zeigt, wie groß WinSxS ist und ob eine Bereinigung sinnvoll wäre. Ändert nichts.', befehl: 'DISM.exe /Online /Cleanup-Image /AnalyzeComponentStore', dauer: '2–10 Minuten', abbruch: 'sofort' }),
     wartungEintrag({ id: 'dism.cleanup', gruppe: 'Komponentenspeicher', schritt: 2, klasse: 'reparatur', titel: 'Komponentenspeicher aufräumen', erklaerung: 'Entfernt überholte Komponentenversionen. Morpheus verwendet kein /ResetBase.', befehl: 'DISM.exe /Online /Cleanup-Image /StartComponentCleanup', dauer: '5–30 Minuten', abbruch: 'nein', hinweis: 'WinSxS nie von Hand löschen.' }),
-    wartungEintrag({ id: 'chkdsk.scan', gruppe: 'Diagnose', schritt: 1, klasse: 'diagnose', titel: 'Laufwerk auf Fehler prüfen (nur lesen)', erklaerung: 'Prüft das gewählte Laufwerk, ohne etwas zu reparieren.', befehl: 'chkdsk.exe <LW> /scan', dauer: '5–60 Minuten', abbruch: 'sofort', parameter: 'laufwerk' }),
+    wartungEintrag({ id: 'chkdsk.scan', gruppe: 'Diagnose', schritt: 1, klasse: 'diagnose', titel: 'Datenträger prüfen', erklaerung: 'Sucht auf dem gewählten Laufwerk im laufenden Betrieb nach Dateisystemfehlern (nur NTFS). Kleine Fehler behebt Windows dabei sofort; alles andere wird nur gemeldet.', befehl: 'chkdsk.exe <LW> /scan', dauer: '5–60 Minuten', abbruch: 'sofort', parameter: 'laufwerk', behebt: true }),
     wartungEintrag({ id: 'perfmon.rel', gruppe: 'Diagnose', schritt: 2, klasse: 'diagnose', titel: 'Zuverlässigkeitsverlauf öffnen', erklaerung: 'Zeigt Abstürze, Fehler und Updates der letzten Wochen als Verlauf.', befehl: 'perfmon /rel', dauer: 'sofort', abbruch: 'nein', hinweis: 'Öffnet sich ohne Adminrechte. Klappt das nicht: Win + R, perfmon /rel.' }),
+    wartungEintrag({ id: 'speichertest', gruppe: 'Diagnose', schritt: 3, klasse: 'diagnose', titel: 'Speichertest öffnen', erklaerung: 'Öffnet die Windows-Speicherdiagnose. Sie prüft den Arbeitsspeicher beim nächsten Neustart, das dauert meist 10 bis 30 Minuten.', befehl: 'MdSched.exe', dauer: 'sofort', abbruch: 'nein', hinweis: 'Vorher alle Programme schließen und Arbeit speichern. Windows fragt selbst, ob sofort oder beim nächsten Start geprüft wird.' }),
     wartungEintrag({ id: 'dns.flush', gruppe: 'Wartung', schritt: 1, klasse: 'wartung', titel: 'DNS-Cache leeren', erklaerung: 'Leert den lokalen Namens-Cache. Hilft bei Verbindungsproblemen zu Webseiten.', befehl: 'ipconfig.exe /flushdns', dauer: 'wenige Sekunden', abbruch: 'nein' }),
     wartungEintrag({ id: 'trim', gruppe: 'Wartung', schritt: 2, klasse: 'wartung', titel: 'SSD optimieren (ReTrim)', erklaerung: 'Gibt auf SSDs nicht mehr benötigte Blöcke frei. Angeboten werden nur SSDs.', befehl: 'defrag.exe <LW> /L', dauer: '1–10 Minuten', abbruch: 'sofort', parameter: 'ssd' }),
     wartungEintrag({ id: 'zeit.resync', gruppe: 'Wartung', schritt: 3, klasse: 'wartung', titel: 'Systemzeit abgleichen', erklaerung: 'Gleicht die Uhr mit dem Zeitserver ab, damit Anmeldungen und Zertifikate stimmen.', befehl: 'w32tm.exe /resync', dauer: 'etwa 1 Minute', abbruch: 'nein' }),
@@ -442,7 +518,7 @@
     wartungEintrag({ id: 'powercfg.schlaf', gruppe: 'Energieberichte', schritt: 3, klasse: 'diagnose', titel: 'Schlafstudie erstellen', erklaerung: 'Zeigt, wie der PC geschlafen hat. Gibt es nur mit Modern Standby.', befehl: 'powercfg.exe /sleepstudy /output <Bericht>', dauer: 'etwa 2 Minuten', abbruch: 'nein' }),
     wartungEintrag({ id: 'winget.upgrade', gruppe: 'Programme', schritt: 1, klasse: 'reparatur', titel: 'Programme aktualisieren (winget)', erklaerung: 'Aktualisiert ausgewählte Programme über winget. Startet über den Dialog „Programme aktualisieren“. winget läuft ohne Adminrechte; braucht ein Programm Adminrechte, fragt Windows selbst nach.', befehl: 'winget upgrade --id <Paket-Id> --exact --source winget --silent --accept-package-agreements --accept-source-agreements --disable-interactivity', dauer: '1–10 Minuten je Programm', abbruch: 'nach-paket', parameter: 'ids', internet: true, hinweis: 'Programme vorher schließen. Fragt Windows nach Adminrechten, den angezeigten Herausgeber prüfen.' }),
   ];
-  const WART_LAUFWERKE = [{ laufwerk: 'C:', bezeichnung: 'System', ssd: true }, { laufwerk: 'F:', bezeichnung: 'Spiele', ssd: true }, { laufwerk: 'D:', bezeichnung: 'Daten', ssd: false }];
+  const WART_LAUFWERKE = [{ laufwerk: 'C:', bezeichnung: 'System', ssd: true, dateisystem: 'NTFS' }, { laufwerk: 'F:', bezeichnung: 'Spiele', ssd: true, dateisystem: 'NTFS' }, { laufwerk: 'D:', bezeichnung: 'Daten', ssd: false, dateisystem: 'NTFS' }, { laufwerk: 'H:', bezeichnung: 'Dev', ssd: true, dateisystem: 'ReFS' }];
   const WART_PFAD = 'C:\\WINDOWS\\system32\\';
   const WART_DISM = WART_PFAD + 'Dism.exe /Online /Cleanup-Image';
   const WART_BERICHT_ART = { 'powercfg.energy': 'energy', 'powercfg.akku': 'akku', 'powercfg.schlaf': 'schlaf' };
@@ -506,6 +582,7 @@
     if (!w) return [400, { error: 'Unbekanntes Werkzeug.' }];
     if (w.id === 'winget.upgrade') return [400, { error: 'Programme werden über „Programme aktualisieren“ gestartet.' }];
     if (w.id === 'perfmon.rel') return [400, { error: 'Der Zuverlässigkeitsverlauf öffnet sich über seinen eigenen Knopf.' }];
+    if (w.id === 'speichertest') return [400, { error: 'Der Speichertest wird über seinen eigenen Knopf geöffnet.' }];
     let lw = null;
     if (w.parameter) {
       const l = WART_LAUFWERKE.find(x => x.laufwerk === body.laufwerk);
@@ -538,7 +615,7 @@
       const ergebnis = { werkzeug: w.id, titel: w.titel, klasse: w.klasse, status, befehl: lauf.start, laufwerk: lw, exitCode: lauf.exit, dauerSek, zusammenfassung: lauf.z, punkt: punktObj, ohnePunkt: ohne, meldung: lauf.z.text, bericht, journal: null };
       ergebnis.journal = wartungJournal({ art: 'wartung', aktion: w.id, titel: w.titel, zeit: iso(new Date()), status, meldung: lauf.z.text, variante: lw, punkt: punktObj, ohne, befehl: lauf.start, dauer: dauerSek, exit: lauf.exit });
       return ergebnis;
-    });
+    }, fsProzent(zeilen.length - lauf.zeilen.length - 1, lauf.zeilen.length));
     Object.assign(jobs[jid], { werkzeug: w.id, abbruch: w.abbruch, laufwerk: lw, punkt: punktObj, ohne });
     return [200, { jobId: jid }];
   }
@@ -552,6 +629,7 @@
     const plan = j.paketPlan || [];
     const m = j.abbruch === 'nach-paket' ? (plan.map(x => x.ende).find(e => e >= n) ?? j.lines.length) : n;
     j.lines = j.lines.slice(0, m);
+    j.abbruchZeile = m;
     j.finish = () => {
       const dauerSek = Math.round((Date.now() - j.t0) / 1000);
       if (!plan.length) {
@@ -577,10 +655,13 @@
   function updatesSuchen() {
     const alt = laufend('updatesuche');
     if (alt) return [200, { jobId: alt }];
-    const jid = newJob('updatesuche', ['winget sucht nach Updates …', '5 Updates gefunden'], () => {
+    const jid = newJob('updatesuche', ['winget sucht nach Updates …', '7 Updates gefunden'], () => {
       updates = { stand: iso(new Date()), fehler: null, liste: [
         { id: 'Demo.Editor', name: 'Demo Editor', installiert: '3.1.0', verfuegbar: '3.2.1', kategorie: 'Programm' },
         { id: 'Demo.Player', name: 'Demo Player', installiert: '1.0.4', verfuegbar: '1.1.0', kategorie: 'Programm' },
+        // Demo.Viewer: langer Installer; mit Editor, Player und Tools zeigt die Paketliste alle vier Gruppen (2.9, #140)
+        { id: 'Demo.Viewer', name: 'Demo Viewer', installiert: '7.0', verfuegbar: '7.2', kategorie: 'Programm' },
+        { id: 'Demo.Tools', name: 'Demo Tools', installiert: '0.9', verfuegbar: '1.0', kategorie: 'Programm' },
         { id: 'Valve.Steam', name: 'Steam', installiert: '2.10', verfuegbar: '2.11', kategorie: 'Spiel/Launcher' },
         { id: 'Contoso.LangerName.Install…', name: 'Contoso Langer Name', installiert: '4.0', verfuegbar: '4.1', kategorie: 'Id gekürzt' },
         { id: 'Microsoft.Edge', name: 'Microsoft Edge', installiert: '130.0', verfuegbar: '131.0', kategorie: 'aktualisiert sich selbst' }] };
@@ -623,25 +704,48 @@
     const plan = [];
     gewaehlt.forEach((u, i) => {
       const paket = { id: u.id, name: u.name, von: u.installiert, auf: u.verfuegbar };
+      const start = zeilen.length;
       zeilen.push(`Paket ${i + 1}/${gewaehlt.length}: ${u.name} (${u.installiert} → ${u.verfuegbar})`, `Starte: ${WINGET_BEFEHL(u.id)}`);
-      if (u.id === 'Demo.Player') Object.assign(paket, { status: 'laeuft-noch', exitCode: 1, dauerSek: 6, text: 'Das Programm läuft noch. Bitte schließen und erneut versuchen.' });
-      else Object.assign(paket, { status: 'aktualisiert', exitCode: 0, dauerSek: 41, text: 'Erfolgreich installiert.' });
+      // Demo: ein Paket mit langem Installer (Balken bleibt bei i von n, der Eintrag steht auf „läuft“)
+      if (u.id === 'Demo.Viewer') for (let k = 0; k < 12; k++) zeilen.push('  Installer läuft …');
+      // Demo (2.9, #154): fehlgeschlagenes Paket mit Exit-Code und den letzten winget-Zeilen (Feld ausgabe wie der Server)
+      if (u.id === 'Demo.Player') {
+        Object.assign(paket, { status: 'fehlgeschlagen', exitCode: -1978335226, dauerSek: 6, text: 'winget meldete einen Fehler (Code -1978335226).',
+          ausgabe: 'Gefunden Demo Player [Demo.Player] Version 4.1\nDiese Anwendung wird von ihrem Besitzer an Sie lizenziert.\nInstallationsprogramm wird heruntergeladen …\nDer Installer-Hash wurde erfolgreich überprüft\nPaketinstallation wird gestartet...\nFehler beim Installieren. Installer-Exitcode: 1603\nDas Installationsprogramm hat einen schwerwiegenden Fehler gemeldet.' });
+        zeilen.push(...paket.ausgabe.split('\n'));
+      } else Object.assign(paket, { status: 'aktualisiert', exitCode: 0, dauerSek: 41, text: 'Erfolgreich installiert.', ausgabe: '' });
       zeilen.push(paket.status === 'aktualisiert' ? 'Erfolgreich installiert' : paket.text, `Ergebnis: ${u.name}: ${paket.status === 'aktualisiert' ? 'aktualisiert' : paket.text}`);
-      plan.push({ paket, ende: zeilen.length });
+      plan.push({ paket, start, ende: zeilen.length });
     });
+    // Fortschritt wie der Server (2.9, #140): zaehler i/n + elemente mit Namen aus der Paketliste; vor dem ersten Paket nichts.
+    // Nach einem Abbruch (abbruchZeile) gelten nicht gestartete Pakete als abgebrochen.
+    let jid = null;
+    const fsWinget = (n, fertig) => {
+      if (!plan.length || n <= plan[0].start) return null;
+      const m = jid && jobs[jid].abbruchZeile != null ? jobs[jid].abbruchZeile : Infinity;
+      let i = 0;
+      const elemente = plan.map(x => {
+        let status = 'offen';
+        if (x.ende > m) { if (fertig || n >= m) status = 'abgebrochen'; else if (n > x.start) status = 'laeuft'; }
+        else if (fertig || n >= x.ende) { status = x.paket.status === 'aktualisiert' ? 'fertig' : 'fehler'; i++; }
+        else if (n > x.start) status = 'laeuft';
+        return { id: x.paket.id, name: x.paket.name, von: x.paket.von, auf: x.paket.auf, status };
+      });
+      return { ...fsZaehler(i, plan.length, 'ausfuehren', null), elemente };
+    };
     const alleOk = plan.every(x => x.paket.status === 'aktualisiert');
     const anzOk = plan.filter(x => x.paket.status === 'aktualisiert').length;
     zeilen.push(`Ergebnis: ${anzOk} von ${plan.length} Programmen erledigt, ${plan.length - anzOk} nicht`);
     const dauerSek = Math.max(1, Math.round(zeilen.length * 0.7));
-    const jid = newJob('wartung', zeilen, () => {
+    jid = newJob('wartung', zeilen, () => {
       const pakete = plan.map(x => x.paket);
       plan.forEach(x => updateJournal(x.paket, punkt, ohne));
       updates.liste = updates.liste.filter(u => !pakete.some(p => p.id === u.id && p.status === 'aktualisiert'));
-      return { werkzeug: 'winget.upgrade', titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', status: 'erledigt', befehl: null, laufwerk: null, exitCode: null, dauerSek,
-        zusammenfassung: { ergebnis: alleOk ? 'ok' : 'problem', text: alleOk ? 'Alle Programme aktualisiert.' : 'Ein Programm läuft noch.', empfehlung: alleOk ? null : 'Programme schließen und erneut versuchen.', details: [] },
-        punkt, ohnePunkt: ohne, meldung: alleOk ? 'Alle Programme aktualisiert.' : 'Ein Programm läuft noch.', bericht: null, journal: null, pakete,
+      return { werkzeug: 'winget.upgrade', titel: 'Programme aktualisieren (winget)', klasse: 'reparatur', status: alleOk ? 'erledigt' : 'fehlgeschlagen', befehl: null, laufwerk: null, exitCode: null, dauerSek,
+        zusammenfassung: { ergebnis: alleOk ? 'ok' : 'problem', text: `${anzOk} von ${plan.length} Programmen erledigt, ${plan.length - anzOk} nicht aktualisiert.`, empfehlung: null, details: [] },
+        punkt, ohnePunkt: ohne, meldung: `${anzOk} von ${plan.length} Programmen erledigt, ${plan.length - anzOk} nicht aktualisiert.`, bericht: null, journal: null, pakete,
         benutzerkontext: true };
-    });
+    }, fsWinget);
     Object.assign(jobs[jid], { werkzeug: 'winget.upgrade', abbruch: 'nach-paket', punkt, ohne, paketPlan: plan });
     return [200, { jobId: jid }];
   }
@@ -674,6 +778,16 @@
       verlauf: { cpu: hist.cpu.slice(), ram: hist.ram.slice(), gpu: hist.gpu.slice() } };
   }
 
+  // mock.html?scanlaeuft=1 (2.9, #141): beim Laden läuft schon ein Scan (wie nach F5 während eines Scans in der echten GUI);
+  // die Seite kennt ihn nur aus /api/session.jobs. Der Job ist schon einige Zeilen weit.
+  if (new URLSearchParams(location.search).get('scanlaeuft') === '1') {
+    const r = scan({ profil: 'Auto', eventDays: 14 });
+    if (r[0] === 200) jobs[r[1].jobId].t0 -= 4 * jobs[r[1].jobId].step;
+  }
+  // mock.html?syslaeuft=1 (2.9, #149): beim Laden läuft schon eine Sysinternals-Einrichtung (wie nach F5 in der echten
+  // GUI); die Karte unter Werkzeuge › Sysinternals (Experte) zeigt Laufbalken und letzte Zeile.
+  if (new URLSearchParams(location.search).get('syslaeuft') === '1') sysInstall({ eulaAkzeptiert: true });
+
   const realFetch = window.fetch.bind(window);
   let mockSprache = new URLSearchParams(location.search).get('sprache') === 'en' ? 'en' : 'de';
   try { const s = sessionStorage.getItem('mockSprache'); if (s === 'de' || s === 'en') mockSprache = s; } catch { /* egal */ }
@@ -688,11 +802,11 @@
     // mock.html?latenz=1500 simuliert einen langsamen Server (z. B. /api/wartung mit Laufwerksabfrage)
     await new Promise(r => setTimeout(r, Number(new URLSearchParams(location.search).get('latenz')) || 80));
     let res = [404, { error: 'Unbekannter Pfad (Mock): ' + path }], m;
-    if (path === '/api/session') res = [200, session];
+    if (path === '/api/session') res = [200, { ...session, jobs: sessionJobs(), dialoge: mockDialoge }];
     else if (path === '/api/live') res = [200, live()];
     else if (path === '/api/reports') res = [200, reportList()];
     else if ((m = path.match(/^\/api\/reports\/(pc-check_[\d_-]+)\.json$/))) { const r = reps.find(x => x.name === m[1]); res = r ? [200, r.json] : [404, { error: 'Bericht nicht gefunden' }]; }
-    else if (path === '/api/actions') res = [200, actions];
+    else if (path === '/api/actions') res = [200, session.readOnly ? actions.map(a => ({ ...a, zuruecknehmen: null })) : actions.map(a => ({ ...a, zuruecknehmen: zuruecknehmenEintrag(a) }))];
     else if (path === '/api/actions/refresh') res = [200, { jobId: newJob('lesen', ['Lese Zustände …'], () => ({})) }];
     else if (path === '/api/actions/run') res = runActions(body.ids || [], body.variante);
     else if (path === '/api/journal') res = [200, journal];
@@ -764,6 +878,7 @@
     else if (path === '/api/wartung/start') res = method === 'POST' ? wartungStart(body) : [405, { error: 'Nur POST' }];
     else if (path === '/api/wartung/abbrechen') res = method === 'POST' ? wartungAbbrechen(body.jobId) : [405, { error: 'Nur POST' }];
     else if (path === '/api/wartung/zuverlaessigkeit') res = [200, { ok: true, meldung: 'Der Zuverlässigkeitsverlauf öffnet sich (Demo).' }];
+    else if (path === '/api/wartung/speichertest') res = method === 'POST' ? [200, { ok: true, meldung: 'Die Windows-Speicherdiagnose wird geöffnet (Demo).' }] : [405, { error: 'Nur POST' }];
     else if (path === '/api/updates') res = [200, { ...updates, suche: laufend('updatesuche'), laufend: wingetLaeuft(), wartungLaeuft: wartungLaeuftId(), punktFehlt: punktFehlt.has('winget.upgrade') }];
     else if (path === '/api/updates/suchen') res = updatesSuchen();
     else if (path === '/api/updates/installieren') res = method === 'POST' ? updatesInstallieren(body) : [405, { error: 'Nur POST' }];

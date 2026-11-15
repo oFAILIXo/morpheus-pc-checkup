@@ -17,7 +17,8 @@
     Festlegungen: Get-MorpheusSysEula liefert bei Dateien über 64 KB die ersten 64 KB plus Hinweiszeile
     (gekürzt statt $null). Invoke-MorpheusSysWerkzeug: ok = kein Zeitlimit und (Exitcode 0 oder Ausgabe vorhanden).
     Aufträge: autostarts = -a * -c -s * (alle Benutzerprofile, kein -h); system32/treiber = -c -u -e -r <Ordner>
-    (-r: keine Online-Sperrlistenprüfung, nichts geht ins Netz). Wurzelprüfung mit ExtraStore aus der eingebetteten
+    (-r: keine Online-Sperrlistenprüfung der Werkzeuge selbst). Die Zertifikatskette wird online auf Sperrung geprüft
+    (5 s Frist; offline/unbekannt zählt nicht, nur 'Revoked' lehnt ab). Wurzelprüfung mit ExtraStore aus der eingebetteten
     Signatur (Kette auch offline vollständig). Herkunftsprüfung: Firma oder Produkt der Versionsinfo muss
     "Sysinternals" enthalten (ein anderes, von Microsoft signiertes Programm darf nicht unter dem Werkzeugnamen laufen).
     ZIP-Einträge: Name ohne Groß-/Kleinschreibung gleich, ohne Pfadanteil, genau ein Treffer; entpackt wird unter dem
@@ -92,9 +93,13 @@ if (-not $script:MorpheusSysImpl) {
                     try { $extra.Import($Pfad) } catch { }
                     if ($extra.Count -gt 0) { $chain.ChainPolicy.ExtraStore.AddRange($extra) }
                 }
-                $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+                # Sperrprüfung online mit kurzer Frist (#123); offline/unbekannt bleibt folgenlos, nur ein echtes 'Revoked' lehnt ab
+                $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::Online
+                $chain.ChainPolicy.RevocationFlag = [System.Security.Cryptography.X509Certificates.X509RevocationFlag]::EntireChain
+                $chain.ChainPolicy.UrlRetrievalTimeout = New-TimeSpan -Seconds 5
                 $chain.ChainPolicy.VerificationFlags = [System.Security.Cryptography.X509Certificates.X509VerificationFlags]::IgnoreNotTimeValid
                 [void]$chain.Build($Zertifikat)
+                if (Test-MorpheusSysKetteWiderrufen -Status @($chain.ChainStatus | ForEach-Object { $_.Status })) { return $null }
                 if ($chain.ChainElements.Count -lt 1) { return $null }
                 $chain.ChainElements[$chain.ChainElements.Count - 1].Certificate.Thumbprint
             } finally { $chain.Reset() }
@@ -107,6 +112,14 @@ if (-not $script:MorpheusSysImpl) {
 }
 
 #region Hilfsfunktionen (privat)
+
+function Test-MorpheusSysKetteWiderrufen {
+    # $true nur bei echtem 'Revoked' in der Kettenprüfung. RevocationStatusUnknown und OfflineRevocation (kein Netz)
+    # zählen nicht: Wurzel- und Signaturprüfung bleiben die Hauptsicherung, ohne Netz soll das Werkzeug weiter laufen.
+    param($Status)
+    foreach ($s in @($Status)) { if ([string]$s -ceq 'Revoked') { return $true } }
+    return $false
+}
 
 function MorpheusSysLog {
     param([string]$Text)

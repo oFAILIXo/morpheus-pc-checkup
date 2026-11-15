@@ -13,6 +13,10 @@ $script:PsModPathVorher = $env:PSModulePath
 . $script:SpFile
 $script:PsModPathNachher = $env:PSModulePath
 
+# In einem erhöhten Prozess (z. B. GitHub-Runner, #119) gehören neu angelegte Dateien der Gruppe Administratoren.
+# Der Datenordner gilt dann als 'reparierbar' statt 'beiseite'; die Beiseitelegen-Tests (Teil F) laufen dort nicht.
+$script:Erhoeht = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 # ---------------------------------------------------------------- Hilfsfunktionen Teil A
 
 $script:AdminRel = @('pc-check.ps1', 'pc-check.aktionen.ps1', 'pc-check-gui.ps1', 'pc-check-start.ps1') +
@@ -791,7 +795,7 @@ Describe 'Initialize-MorpheusDataDir mit Temp-Resten eines frueheren Laufs' {
         (Test-MorpheusSecurePath -Path $script:Dd -Recurse).Sicher | Should Be $false
         (Test-MorpheusSecurePath -Path $script:Dd -Recurse -Ausnahmen 'temp').Sicher | Should Be $true
     }
-    It 'echte Luecke ausserhalb von temp wird weiter erkannt und beiseitegelegt' {
+    It 'echte Luecke ausserhalb von temp wird weiter erkannt und beiseitegelegt' -Skip:$script:Erhoeht {
         . Use-DdAttrappen
         $script:BoeseMuster = '\\reports\\pc-check_2026'
         $r = Initialize-MorpheusDataDir -Path $script:Dd 3>$null
@@ -799,7 +803,7 @@ Describe 'Initialize-MorpheusDataDir mit Temp-Resten eines frueheren Laufs' {
         @(Get-ChildItem -LiteralPath $script:DdRoot -Filter 'Morpheus.unsicher-*').Count | Should Be 1
         Test-Path -LiteralPath (Join-Path $script:Dd 'reports\pc-check_2026-10-27_0739.json') | Should Be $false
     }
-    It 'scheitert das Beiseitelegen, bleibt alles an seinem Ort und es gibt eine klare Meldung' {
+    It 'scheitert das Beiseitelegen, bleibt alles an seinem Ort und es gibt eine klare Meldung' -Skip:$script:Erhoeht {
         . Use-DdAttrappen
         $script:BoeseMuster = '\\reports\\pc-check_2026'
         $script:Sperre = New-Object IO.FileStream((Join-Path $script:Dd 'changes\journal.json'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)

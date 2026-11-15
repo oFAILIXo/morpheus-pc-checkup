@@ -56,6 +56,8 @@ function Set-FakeWartung {
     $script:Aufrufe = New-Object System.Collections.ArrayList
     $script:PunktAufrufe = New-Object System.Collections.ArrayList
     $script:OhneAufrufe = New-Object System.Collections.ArrayList
+    $script:StartAufrufe = New-Object System.Collections.ArrayList
+    $script:StartFehler = $null
     $script:PunktFehler = $null
     $script:ProzessZeilen = @('Zeile eins', 'Zeile zwei')
     $script:ProzessExit = 0
@@ -94,6 +96,7 @@ function Set-FakeWartung {
         }
         Laufwerke  = { , @() }
         Ohne       = { param($Datei, $Argumente) [void]$script:OhneAufrufe.Add(@($Datei, $Argumente)) }
+        Start      = { param($Datei) [void]$script:StartAufrufe.Add(@($Datei)); if ($script:StartFehler) { throw $script:StartFehler } }
         WingetPfad = { @{ pfad = $script:WingetPfad; grund = $script:WingetGrund } }
         Jetzt      = { Get-Date }
     }
@@ -112,10 +115,10 @@ function Invoke-Wartung {
 }
 
 Describe 'Katalog' {
-    $ids = @('wiederherstellung.punkt', 'dism.checkhealth', 'dism.scanhealth', 'dism.restorehealth', 'sfc.scannow', 'dism.analyze', 'dism.cleanup', 'chkdsk.scan', 'perfmon.rel', 'dns.flush', 'trim', 'zeit.resync', 'powercfg.energy', 'powercfg.akku', 'powercfg.schlaf', 'winget.upgrade')
+    $ids = @('wiederherstellung.punkt', 'dism.checkhealth', 'dism.scanhealth', 'dism.restorehealth', 'sfc.scannow', 'dism.analyze', 'dism.cleanup', 'chkdsk.scan', 'perfmon.rel', 'speichertest', 'dns.flush', 'trim', 'zeit.resync', 'powercfg.energy', 'powercfg.akku', 'powercfg.schlaf', 'winget.upgrade')
 
-    It 'enthält genau die 16 Ids in Tabellenreihenfolge' {
-        @($script:MorpheusWartungKatalog.Keys).Count | Should Be 16
+    It 'enthält genau die 17 Ids in Tabellenreihenfolge' {
+        @($script:MorpheusWartungKatalog.Keys).Count | Should Be 17
         (@($script:MorpheusWartungKatalog.Keys) -join ',') | Should Be ($ids -join ',')
     }
     It 'hat bei jedem Eintrag alle Felder' {
@@ -147,6 +150,8 @@ Describe 'Katalog' {
         $c = $script:MorpheusWartungKatalog['chkdsk.scan']
         $c.Argumente | Should Be '{LW} /scan'
         $c.Argumente | Should Not Match '/f\b'
+        $c.Argumente | Should Not Match '/spotfix|/offlinescanandfix|/forceofflinefix'
+        $script:MorpheusWartungKatalog['speichertest'].Argumente | Should Be ''
     }
     It 'Klasse reparatur entspricht Punkt' {
         foreach ($w in @((Get-MorpheusWartungWerkzeuge))) {
@@ -167,10 +172,18 @@ Describe 'Katalog' {
     }
     It 'Get-MorpheusWartungWerkzeuge liefert öffentliche Objekte' {
         $w = @(Get-MorpheusWartungWerkzeuge)
-        $w.Count | Should Be 16
+        $w.Count | Should Be 17
+        $s = $w | Where-Object { $_.id -ceq 'speichertest' }
+        $s.klasse | Should Be 'diagnose'
+        $s.punkt | Should Be $false
+        $s.befehl | Should Be 'MdSched.exe'
         $c = $w | Where-Object { $_.id -ceq 'chkdsk.scan' }
         $c.parameter | Should Be 'laufwerk'
         $c.befehl | Should Be 'chkdsk.exe <LW> /scan'
+        $c.klasse | Should Be 'diagnose'
+        $c.behebt | Should Be $true
+        @($w | Where-Object { $_.behebt }).Count | Should Be 1
+        $s.behebt | Should Be $false
         ($w | Where-Object { $_.id -ceq 'powercfg.energy' }).bericht | Should Be $true
         ($w | Where-Object { $_.id -ceq 'dns.flush' }).bericht | Should Be $false
     }
@@ -218,6 +231,20 @@ Describe 'Test-MorpheusWartungAuftrag' {
     It 'lehnt winget.upgrade und perfmon.rel ab' {
         Test-MorpheusWartungAuftrag -Werkzeug 'winget.upgrade' -Laufwerk '' -Laufwerke $lw | Should Not BeNullOrEmpty
         Test-MorpheusWartungAuftrag -Werkzeug 'perfmon.rel' -Laufwerk '' -Laufwerke $lw | Should Not BeNullOrEmpty
+    }
+    It 'lehnt speichertest ab (eigener Knopf)' {
+        Test-MorpheusWartungAuftrag -Werkzeug 'speichertest' -Laufwerk '' -Laufwerke $lw | Should Be (T 'server.wartung.memEigenerKnopf')
+    }
+    It 'lässt chkdsk nur auf NTFS zu (Dev Drive = ReFS)' {
+        $fs = @(
+            [pscustomobject]@{ laufwerk = 'C:'; bezeichnung = 'System'; ssd = $true; dateisystem = 'NTFS' },
+            [pscustomobject]@{ laufwerk = 'H:'; bezeichnung = 'Dev'; ssd = $true; dateisystem = 'ReFS' },
+            [pscustomobject]@{ laufwerk = 'E:'; bezeichnung = 'Unbekannt'; ssd = $null; dateisystem = '' }
+        )
+        Test-MorpheusWartungAuftrag -Werkzeug 'chkdsk.scan' -Laufwerk 'C:' -Laufwerke $fs | Should BeNullOrEmpty
+        Test-MorpheusWartungAuftrag -Werkzeug 'chkdsk.scan' -Laufwerk 'E:' -Laufwerke $fs | Should BeNullOrEmpty
+        Test-MorpheusWartungAuftrag -Werkzeug 'chkdsk.scan' -Laufwerk 'H:' -Laufwerke $fs | Should Be (T 'server.wartung.chkdskNurNtfs' 'H:' 'ReFS')
+        Test-MorpheusWartungAuftrag -Werkzeug 'trim' -Laufwerk 'H:' -Laufwerke $fs | Should BeNullOrEmpty
     }
     It 'prüft das Laufwerk' {
         Test-MorpheusWartungAuftrag -Werkzeug 'chkdsk.scan' -Laufwerk '' -Laufwerke $lw | Should Not BeNullOrEmpty
@@ -557,6 +584,29 @@ Describe 'Invoke-MorpheusWartung: winget' {
         $j[0].status | Should Be 'fehlgeschlagen'
         $j[1].status | Should Be 'erledigt'
     }
+    It 'fehlgeschlagenes Paket: Exit-Code und letzte winget-Zeilen im Ergebnis, erfolgreiches ohne Ausgabe (#154)' {
+        $script:ProzessZeilen = @('Gefunden OpenSCAD [OpenSCAD.OpenSCAD] Version 2021.01', '  -  ', '  ██████▒▒▒▒  1.2 MB / 3.4 MB', '42%', 'Installer-Hash stimmt nicht überein.')
+        $script:ProzessHook = { param($n, $argz) if ($n -eq 1) { $script:ProzessExit = 5 } else { $script:ProzessExit = 0 } }
+        $r = Invoke-Wartung @{ DataRoot = $script:dr; Werkzeug = 'winget.upgrade'; Pakete = $script:pak }
+        $r.pakete[0].exitCode | Should Be 5
+        $r.pakete[0].ausgabe | Should Be ("Gefunden OpenSCAD [OpenSCAD.OpenSCAD] Version 2021.01`nInstaller-Hash stimmt nicht überein.")
+        $r.pakete[1].ausgabe | Should Be ''
+    }
+    It 'Get-MorpheusWingetFehlertext: höchstens 20 Zeilen und 2000 Zeichen, die letzte Zeile bleibt (#154)' {
+        $viele = (1..50 | ForEach-Object { "Zeile $_" }) -join "`n"
+        $t = Get-MorpheusWingetFehlertext $viele
+        @($t -split "`n").Count | Should Be 21
+        $t | Should Match '^…\nZeile 31\n'
+        $t | Should Match 'Zeile 50$'
+        $lang = (1..20 | ForEach-Object { ('x' * 300) + $_ }) -join "`n"
+        $t2 = Get-MorpheusWingetFehlertext $lang
+        $t2.Length | Should Not BeGreaterThan 2000
+        $t2 | Should Match '20$'
+        $einzeln = Get-MorpheusWingetFehlertext ('y' * 5000) -MaxZeichen 2000
+        $einzeln.Length | Should Not BeGreaterThan 2000
+        Get-MorpheusWingetFehlertext '' | Should Be ''
+        Get-MorpheusWingetFehlertext "a`na`n b " | Should Be "a`nb"
+    }
     It 'Programm läuft noch: zählt als nicht aktualisiert, Journal fehlgeschlagen' {
         # 0x8A150101 = APPINSTALLER_CLI_ERROR_INSTALL_PACKAGE_IN_USE
         $script:ProzessHook = { param($n, $argz) if ($n -eq 1) { $script:ProzessExit = [int]0x8A150101 } else { $script:ProzessExit = 0 } }
@@ -594,6 +644,38 @@ Describe 'Start-MorpheusZuverlaessigkeit' {
     }
 }
 
+Describe 'Start-MorpheusSpeichertest' {
+    Context 'Pfad wird aufgelöst' {
+        BeforeEach { Set-FakeWartung }
+        Mock Get-MorpheusSystemProgramm { 'C:\Windows\System32\MdSched.exe' } -ParameterFilter { $Name -ceq 'MdSched.exe' }
+        It 'startet MdSched.exe aus System32 genau einmal ohne Argumente über Impl Start' {
+            $r = Start-MorpheusSpeichertest
+            $r.ok | Should Be $true
+            $script:StartAufrufe.Count | Should Be 1
+            $script:StartAufrufe[0].Count | Should Be 1
+            $script:StartAufrufe[0][0] | Should Be 'C:\Windows\System32\MdSched.exe'
+            $script:OhneAufrufe.Count | Should Be 0
+            $script:Aufrufe.Count | Should Be 0
+            Assert-MockCalled Get-MorpheusSystemProgramm -Exactly 1 -ParameterFilter { $Name -ceq 'MdSched.exe' }
+        }
+        It 'meldet einen Fehler ohne zu werfen, wenn Impl Start wirft' {
+            $script:StartFehler = 'kaputt'
+            $r = Start-MorpheusSpeichertest
+            $r.ok | Should Be $false
+            $r.meldung | Should Match 'mdsched'
+        }
+    }
+    Context 'Pfad ist nicht aufzulösen' {
+        BeforeEach { Set-FakeWartung }
+        Mock Get-MorpheusSystemProgramm { throw 'fehlt' }
+        It 'startet nichts und meldet den Fehler' {
+            $r = Start-MorpheusSpeichertest
+            $r.ok | Should Be $false
+            $r.meldung | Should Match 'mdsched'
+            $script:StartAufrufe.Count | Should Be 0
+        }
+    }
+}
 Describe 'Dekodierung im Runner (ohne Prozess)' {
     function New-TestStrom { param($Bytes, $Kod) $s = MorpheusWartungNeuerStrom $null $Kod; [Array]::Copy($Bytes, $s.Puffer, $Bytes.Length); $s }
     function New-TestZ { @{ Text = (New-Object System.Text.StringBuilder); KopfMax = 65536; KopfVoll = $false; Ring = (New-Object System.Collections.Queue); RingLen = 0; RingMax = 196608; Gekuerzt = $false; Zeile = $script:Sammler; HatFortschritt = $true } }
@@ -799,5 +881,75 @@ Describe 'Wartung.ps1 nutzt keine Option-(c)-Funktionen mehr' {
         $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\lib\Wartung.ps1'))
         $text | Should Not Match 'MorpheusWingetOrdner'
         $text | Should Not Match 'wingetOrdner'
+    }
+}
+
+Describe 'Zeilen-Logger meldet Fortschritt (2.8, #137)' {
+    It 'getaggter Record je neuem Prozentwert, gleicher Wert meldet nichts' {
+        . (Join-Path $PSScriptRoot '..\gui\lib\Fortschritt.ps1')
+        $l = MorpheusWartungNeuerZeilenLogger
+        $fort = { param($Items) @($Items | Where-Object { ($_ -is [System.Management.Automation.InformationRecord]) -and (Test-MorpheusFortschrittRecord $_) }) }
+        $a = & $fort @(& $l.Block 'Verification 45% complete.' 6>&1)
+        $a.Count | Should Be 1
+        $a[0].MessageData['prozent'] | Should Be 45
+        $a[0].MessageData['modus'] | Should Be 'prozent'
+        $b = & $fort @(& $l.Block '[====                       25.0%                           ]' 6>&1)
+        $b.Count | Should Be 1
+        $b[0].MessageData['prozent'] | Should Be 25
+        $c = & $fort @(& $l.Block '[====                       25.4%                           ]' 6>&1)
+        $c.Count | Should Be 0
+    }
+    It 'mit -OhneFortschritt (winget-Benutzer-Pipe) entsteht aus Text nie ein Fortschritts-Record' {
+        . (Join-Path $PSScriptRoot '..\gui\lib\Fortschritt.ps1')
+        $l = MorpheusWartungNeuerZeilenLogger -OhneFortschritt
+        $alle = @(& $l.Block '[====                       45.0%                           ]' 6>&1)
+        @($alle | Where-Object { ($_ -is [System.Management.Automation.InformationRecord]) -and (Test-MorpheusFortschrittRecord $_) }).Count | Should Be 0
+        # Die Zeile selbst bleibt im Log
+        @($alle | Where-Object { ($_ -is [System.Management.Automation.InformationRecord]) -and ($_.MessageData -is [string]) }).Count | Should Be 1
+    }
+    It 'der winget-Lauf erzeugt seinen Zeilen-Logger mit -OhneFortschritt' {
+        $src = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\gui\lib\Wartung.ps1') -Raw
+        $src | Should Match '(?s)MorpheusWartungNeuerZeilenLogger -OhneFortschritt\s+\$r = \$null\s+try \{\s+\$r = & \$script:MorpheusWartungImpl\.WingetBenutzer'
+    }
+}
+
+# winget-Übersichtsliste (2.9, #140): Paketschleife meldet vor und nach jedem Paket den Stand aller Pakete
+Describe 'winget-Schleife meldet Fortschritt mit elemente (2.9, #140)' {
+    BeforeEach {
+        Set-FakeWartung
+        . (Join-Path $PSScriptRoot '..\gui\lib\Fortschritt.ps1')
+        $script:dr = Join-Path $TestDrive ('d' + [guid]::NewGuid().ToString('N'))
+        $script:flag = Join-Path $TestDrive ('abbruch' + [guid]::NewGuid().ToString('N'))
+        $script:pak = @(
+            @{ id = 'A.Ok'; name = 'App Ok'; von = '1'; auf = '2' },
+            @{ id = 'B.Fehler'; name = 'App Fehler'; von = '1'; auf = '2' },
+            @{ id = 'C.Abbruch'; name = 'App Abbruch'; von = '1'; auf = '2' }
+        )
+    }
+    It 'drei Attrappen-Pakete (ok, fehlgeschlagen, abgebrochen): Meldungsfolge stimmt' {
+        # Paket 2 endet mit Code 1 und setzt den Abbruch; Paket 3 startet deshalb nicht
+        $script:ProzessHook = { param($n, $argz) if ($n -eq 2) { $script:ProzessExit = 1; [IO.File]::WriteAllText($script:flag, 'x') } }
+        $alle = @(Invoke-MorpheusWartung -DataRoot $script:dr -Werkzeug 'winget.upgrade' -Pakete $script:pak -AbbruchDatei $script:flag -InformationAction Continue 6>&1)
+        $fs = @($alle | Where-Object { ($_ -is [System.Management.Automation.InformationRecord]) -and (Test-MorpheusFortschrittRecord $_) } | ForEach-Object { $_.MessageData })
+        $erg = @($alle | Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] })[0]
+        $erg.status | Should Be 'abgebrochen'
+        $folge = @($fs | ForEach-Object { ('{0}/{1} ' -f $_['i'], $_['n']) + ((@($_['elemente']) | ForEach-Object { $_['status'] }) -join ',') })
+        $folge -join ' | ' | Should Be ('0/3 offen,offen,offen | 0/3 laeuft,offen,offen | 1/3 fertig,offen,offen | 1/3 fertig,laeuft,offen | ' +
+            '2/3 fertig,fehler,offen | 2/3 fertig,fehler,abgebrochen')
+        foreach ($f in $fs) {
+            $f['modus'] | Should Be 'zaehler'
+            $f['phase'] | Should Be 'ausfuehren'
+            (@($f['elemente']) | ForEach-Object { $_['id'] }) -join ',' | Should Be 'A.Ok,B.Fehler,C.Abbruch'
+            # Der Job schickt keine Namen; die setzt der Server aus seiner Liste
+            @(@($f['elemente']) | Where-Object { $_.Contains('name') }).Count | Should Be 0
+        }
+        # Fortschritts-Records landen nicht als Text im Log
+        @($alle | Where-Object { ($_ -is [System.Management.Automation.InformationRecord]) -and ($_.MessageData -is [string]) -and ($_.MessageData -like '*Hashtable*') }).Count | Should Be 0
+    }
+    It 'Get-MorpheusWingetFortschrittStand: laeuft-noch zählt als fehler, kein-update als fertig' {
+        $s = Get-MorpheusWingetFortschrittStand -Pakete $script:pak -Ergebnisse @(@{ status = 'laeuft-noch' }, @{ status = 'kein-update' })
+        $s.i | Should Be 2
+        $s.n | Should Be 3
+        (@($s.elemente) | ForEach-Object { $_.status }) -join ',' | Should Be 'fehler,fertig,offen'
     }
 }

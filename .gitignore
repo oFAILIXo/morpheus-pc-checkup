@@ -10,3 +10,6 @@ dist/
 # Laufzeitdaten der GUI (Änderungsjournal, Checkliste, Protokoll)
 changes/
 state/
+
+# Persönliche Befehlsnotizen (nie committen)
+GitBash_*_Command.txt

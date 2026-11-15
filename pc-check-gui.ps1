@@ -5,13 +5,11 @@
     Der Scan (pc-check.ps1) bleibt rein lesend. Änderungen am System kann nur die GUI auslösen, und nur mit Wiederherstellungspunkt.
     Architektur und Sicherheitsregeln: docs/gui-architektur.md
 .PARAMETER Port
-    Fester Port. Ohne Angabe wird ein freier Port gewählt.
+    Fester Port. Ohne Angabe versucht Morpheus den Standardport 41417 und weicht bei belegtem Port auf einen freien aus.
 .PARAMETER NoBrowser
     Kein Edge starten, stattdessen die URL samt Token in der Konsole ausgeben (für Tests).
 .PARAMETER NoElevate
     Sich nicht mit Adminrechten neu starten (für Tests).
-.PARAMETER SafetyLib
-    Nur für Tests: Pfad zu einer alternativen Safety.ps1 statt gui\lib\Safety.ps1.
 .PARAMETER ReadOnly
     Nur-Lesen-Modus erzwingen: Ändern, Rückgängig und Scan sind gesperrt.
 .PARAMETER NoInstallPrompt
@@ -27,7 +25,6 @@ param(
     [ValidateRange(0, 65535)][int]$Port = 0,
     [switch]$NoBrowser,
     [switch]$NoElevate,
-    [string]$SafetyLib,
     [switch]$ReadOnly,
     [switch]$NoInstallPrompt
 )
@@ -67,7 +64,6 @@ if ((-not $isAdmin) -and (-not $NoElevate)) {
     $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $target
     if ($Port -gt 0) { $argLine += " -Port $Port" }
     if ($NoBrowser) { $argLine += ' -NoBrowser' }
-    if ($SafetyLib) { $argLine += (' -SafetyLib "{0}"' -f $SafetyLib) }
     if ($ReadOnly) { $argLine += ' -ReadOnly' }
     if ($NoInstallPrompt) { $argLine += ' -NoInstallPrompt' }
     try { Start-Process -FilePath $psExe -Verb RunAs -ArgumentList $argLine }
@@ -94,7 +90,6 @@ try {
     . (Join-Path $Root 'gui\lib\Install.ps1')
     . (Join-Path $Root 'gui\lib\Server.ps1')
     $safetyPath = Join-Path $Root 'gui\lib\Safety.ps1'
-    if ($SafetyLib) { $safetyPath = (Resolve-Path -LiteralPath $SafetyLib).Path }
     if (Test-Path -LiteralPath $safetyPath -PathType Leaf) { . $safetyPath }
     else { Write-Host (T 'server.gui.safetyFehlt') -ForegroundColor Yellow }
     $defenderPath = Join-Path $Root 'gui\lib\Defender.ps1'
@@ -199,7 +194,13 @@ try {
                 $answer = Read-Host (T 'server.gui.installFrage')
                 if (($answer -eq '') -or ($answer -match '^\s*(j|ja|y|yes)\s*$')) {
                     try {
-                        if (Test-MorpheusInstallCurrent -Source $Root -Target $installTarget) {
+                        # Konsole (2.9, #142): Der Vergleich liest alle Codedateien; Anzeige endet vor der nächsten Ausgabe
+                        $fsInst = MorpheusInstallFortschrittAn
+                        if ($fsInst) { MorpheusInstallFortschritt -Status (T 'server.install.fsPruefen') }
+                        $instAktuell = $false
+                        try { $instAktuell = Test-MorpheusInstallCurrent -Source $Root -Target $installTarget }
+                        finally { if ($fsInst) { MorpheusInstallFortschritt -Fertig } }
+                        if ($instAktuell) {
                             Write-Host (T 'server.gui.installAktuell' $installTarget) -ForegroundColor Green
                         }
                         else {
@@ -231,17 +232,20 @@ try {
     if ($roMode) { Write-Host (T 'server.gui.readOnlyMeldung' $roReason) -ForegroundColor Yellow }
 
     # 4. Port und Token
-    if ($Port -eq 0) {
-        $tcp = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('127.0.0.1'), 0)
-        $tcp.Start(); $Port = $tcp.LocalEndpoint.Port; $tcp.Stop()
-    }
+    $portAuto = ($Port -eq 0)
+    # Standardport (#146): Der Browser speichert die Ansichtseinstellungen (Modus, Palette, Menü, Statusleiste) je Adresse
+    # samt Port; mit einem zufälligen Port wären sie nach jedem Neustart weg. Ist der Port belegt, wählt
+    # Open-GuiListener (PortAuto) einen freien. Die Sicherheit hängt nicht am Port: Token nur über den Einmal-Code.
+    if ($Port -eq 0) { $Port = 41417 }
     # Das Token verlässt den Server nur über /api/session/claim. In die Adresse (und damit in die
     # für alle Benutzerprozesse lesbare Befehlszeile von Edge) kommt nur ein Einmal-Code.
     $token = New-GuiSecret
     $boot = New-GuiSecret
 
     # 5. Server starten
-    Initialize-GuiServer -Root $Root -Port $Port -Token $token -BootCode $boot -SafetyPath $safetyPath -DefenderPath $defenderPath -SysinternalsPath $sysPath -WartungPath $wartungPath -WingetPath $wingetPath -DataRoot $dataRoot -ReadOnly:$roMode -ReadOnlyReason $roReason -DatenordnerZustand $datenordnerZustand -DatenordnerPfad $datenordnerPfad -TempSicher:$tempSicher
+    Initialize-GuiServer -Root $Root -Port $Port -Token $token -BootCode $boot -SafetyPath $safetyPath -DefenderPath $defenderPath -SysinternalsPath $sysPath -WartungPath $wartungPath -WingetPath $wingetPath -DataRoot $dataRoot -ReadOnly:$roMode -ReadOnlyReason $roReason -DatenordnerZustand $datenordnerZustand -DatenordnerPfad $datenordnerPfad -TempSicher:$tempSicher -PortAuto:$portAuto
+    # Bei Bind-Wiederholung (Port zwischenzeitlich belegt) hat der Server einen neuen Port gewählt
+    if ($script:Gui -and $script:Gui.Port) { $Port = [int]$script:Gui.Port }
     $url = "http://127.0.0.1:$Port/#b=$boot"
 
     # 6. Fenster: Edge als App-Fenster mit eigenem Profil, sonst Standardbrowser
@@ -259,11 +263,22 @@ try {
         if ($edgeExe) {
             $profile = Join-Path $env:LOCALAPPDATA 'pc-check\edge'
             [void](New-Item -ItemType Directory -Path $profile -Force)
-            # --start-maximized: bildschirmfüllend (ein App-Fenster merkt sich sonst die letzte Größe)
-            # Die drei --disable-*-Schalter verhindern, dass Edge das Fenster im Hintergrund drosselt (Heartbeat bliebe sonst aus)
-            Start-Process -FilePath $edgeExe -ArgumentList @("--app=$url", "--user-data-dir=`"$profile`"", '--start-maximized', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows')
-            $edge = $profile
-            Write-Host (T 'server.gui.laeuft') -ForegroundColor Green
+            # Mit Adminrechten nie selbst Edge starten (#115, N1): Das Profil ist vom Benutzer beschreibbar. Start über den Desktop von
+            # explorer.exe (nicht erhöht), danach prüft der Server die Integritätsstufe (Invoke-GuiEdgePruefung). Ohne Adminrechte direkt.
+            if ($isAdmin) { $gestartet = Start-MorpheusEdgeOhneAdmin -EdgeExe $edgeExe -Url $url -Profil $profile }
+            else {
+                Start-Process -FilePath $edgeExe -ArgumentList (Get-MorpheusEdgeArgumente -Url $url -Profil $profile)
+                $gestartet = $true
+            }
+            if ($gestartet) {
+                $edge = $profile
+                Write-Host (T 'server.gui.laeuft') -ForegroundColor Green
+            }
+            else {
+                Write-Host (T 'server.gui.edgeNichtOhneAdmin') -ForegroundColor Yellow
+                Write-Host $url -ForegroundColor Green
+                Write-Host (T 'server.gui.laeuftHeartbeat') -ForegroundColor Green
+            }
         }
         else {
             # Kein Standardbrowser aus dem Admin-Prozess: Sein Startbefehl steht in HKCU\Software\Classes und ist damit von
@@ -281,7 +296,13 @@ try {
 catch {
     $msg = $_.Exception.Message
     Write-Host (T 'server.gui.startFehler' $msg) -ForegroundColor Red
-    if ($msg -match 'Zugriff|denied|5\b') { Write-Host (T 'server.gui.tippAdmin') -ForegroundColor Yellow }
+    # Zugriff verweigert: Win32-Fehler 5 (HResult 0x80070005 bzw. NativeErrorCode/ErrorCode 5) oder UnauthorizedAccessException in der Kette
+    $zugriffVerweigert = $false
+    for ($ex = $_.Exception; $ex; $ex = $ex.InnerException) {
+        if (($ex -is [UnauthorizedAccessException]) -or ($ex.HResult -eq -2147024891) -or
+            (($ex -is [System.ComponentModel.Win32Exception]) -and ($ex.NativeErrorCode -eq 5))) { $zugriffVerweigert = $true; break }
+    }
+    if ($zugriffVerweigert) { Write-Host (T 'server.gui.tippAdmin') -ForegroundColor Yellow }
     if (-not $NoBrowser) { Read-Host (T 'server.start.enterSchliessen') | Out-Null }
 }
 finally {

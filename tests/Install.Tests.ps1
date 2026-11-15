@@ -10,6 +10,10 @@ $env:MORPHEUS_SPRACHE = 'de'
 $script:Root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $script:Root 'gui\lib\Install.ps1')
 
+# In einem erhöhten Prozess (z. B. GitHub-Runner, #119) gehören neu angelegte Dateien der Gruppe Administratoren,
+# also einem vertrauenswürdigen Besitzer. Tests, die einen Benutzer als Besitzer voraussetzen, laufen dort nicht.
+$script:Erhoeht = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 function New-FakeCodeTree {
     # Baut einen Quellordner nach: Code, aber auch Dinge, die nicht ausgeliefert werden dürfen
     param([string]$Base)
@@ -273,7 +277,7 @@ Describe 'Get-MorpheusDatenordnerZustand' {
         (Get-MorpheusDatenordnerZustand -Path $f).zustand | Should Be 'beiseite'
     }
 
-    It 'meldet beiseite bei einem nicht vertrauenswürdigen Besitzer' {
+    It 'meldet beiseite bei einem nicht vertrauenswürdigen Besitzer' -Skip:$script:Erhoeht {
         $d = New-TestDatenordner $TestDrive
         $script:MorpheusInstallImpl.ZusatzVertraut = @()   # Besitzer (Testbenutzer) gilt jetzt nicht mehr als vertrauenswürdig
         $z = Get-MorpheusDatenordnerZustand -Path $d

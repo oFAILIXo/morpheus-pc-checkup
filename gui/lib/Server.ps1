@@ -5,12 +5,18 @@
 $script:GuiReportRx = '^pc-check_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}\.(json|html|md)\z'
 # Wartungsberichte (Abschnitt 18.3): vom Job erzeugte HTML-Dateien in reports\, nur zum Anzeigen im iframe
 $script:GuiWartungReportRx = '^morpheus-(energy|akku|schlaf)_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}\.html\z'
-$script:GuiCsp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+$script:GuiCsp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
 $script:GuiReportCsp = "default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
 $script:GuiMaxBody = 262144
 $script:GuiJobKeepMinutes = 30
 # Texte (2.6, #66): T, Get-MorpheusSprache, Get-MorpheusHilfe, Get-MorpheusGuiTexte
 . (Join-Path $PSScriptRoot 'Sprache.ps1')
+# Fortschrittsvertrag der Jobs (2.8, #137): Test-MorpheusFortschrittRecord, ConvertTo-MorpheusFortschritt
+. (Join-Path $PSScriptRoot 'Fortschritt.ps1')
+# Edge ohne Adminrechte starten und Integritätsstufe prüfen (2.10, #115): Start-MorpheusEdgeOhneAdmin, Test-MorpheusEdgeIntegritaet
+. (Join-Path $PSScriptRoot 'EdgeStart.ps1')
+# Bestätigungsdialog mit Wartezeit, Bremse und Verlauf (2.10, #113): Invoke-GuiBestaetigung, Get-GuiDialogVerlauf
+. (Join-Path $PSScriptRoot 'Dialog.ps1')
 
 #region Hilfsfunktionen
 
@@ -466,6 +472,8 @@ $script:GuiJobScripts = @{
         # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
         $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $Safety
+        # Fortschritt an den Server (2.8, #137); ohne die Datei laufen die Bibliotheken wie bisher
+        $fsLib = Join-Path $Root 'gui\lib\Fortschritt.ps1'; if (Test-Path -LiteralPath $fsLib -PathType Leaf) { . $fsLib }
         if ($Variante) { Invoke-PcCheckChange -Root $Root -DataRoot $DataRoot -Ids $Ids -Variante $Variante }
         else { Invoke-PcCheckChange -Root $Root -DataRoot $DataRoot -Ids $Ids }
     }
@@ -474,6 +482,8 @@ $script:GuiJobScripts = @{
         # Modulpfad im Job-Prozess begrenzen (2.3.3, wie in pc-check-gui.ps1)
         $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $Safety
+        # Fortschritt an den Server (2.8, #137); ohne die Datei laufen die Bibliotheken wie bisher
+        $fsLib = Join-Path $Root 'gui\lib\Fortschritt.ps1'; if (Test-Path -LiteralPath $fsLib -PathType Leaf) { . $fsLib }
         $u = @{ Root = $Root; DataRoot = $DataRoot; EntryId = $EntryId }
         if ($Force) { $u['Force'] = $true }
         if ($VorReparatur -eq $true) { $u['VorReparaturBestaetigt'] = $true }
@@ -489,11 +499,23 @@ $script:GuiJobScripts = @{
         if (-not (Test-Path -LiteralPath $ps1)) { throw (T 'server.job.scanNichtGefunden') }
         Write-Information -MessageData ("[$(Get-Date -Format HH:mm:ss)] " + (T 'server.job.scanGestartet')) -InformationAction Continue
         $al = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ps1) + @($ScanArgs)
-        & ([Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\powershell.exe') @al 2>&1 | ForEach-Object {
-            $s = ("$_").TrimEnd()
-            if ($s.Trim()) { Write-Information -MessageData "[$(Get-Date -Format HH:mm:ss)] $s" -InformationAction Continue }
+        # Scan-Fortschritt (2.8, #139, Variante A): Einmal-Kennung je Lauf, per Umgebung vererbt (nicht in der Befehlszeile).
+        # Nur Markerzeilen mit genau dieser Kennung werden Fortschritt und fehlen im Log; die Kennung geht nie ins Log.
+        $fsKennung = $null
+        $fsLib = Join-Path $Root 'gui\lib\Fortschritt.ps1'
+        if (Test-Path -LiteralPath $fsLib -PathType Leaf) { . $fsLib; $fsKennung = [guid]::NewGuid().ToString('N'); $env:MORPHEUS_FS = $fsKennung }
+        try {
+            & ([Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\powershell.exe') @al 2>&1 | ForEach-Object {
+                $s = ("$_").TrimEnd()
+                if ($fsKennung) {
+                    $fd = Get-MorpheusScanMarkerDaten -Zeile $s -Kennung $fsKennung
+                    if ($null -ne $fd) { Write-MorpheusFortschritt -Modus zaehler -I $fd.i -N $fd.n -Phase scan -Text $fd.text; return }
+                }
+                if ($s.Trim()) { Write-Information -MessageData "[$(Get-Date -Format HH:mm:ss)] $s" -InformationAction Continue }
+            }
+            $code = $LASTEXITCODE
         }
-        $code = $LASTEXITCODE
+        finally { $env:MORPHEUS_FS = $null }
         if ($code -ne 0) { throw (T 'server.job.scanFehlercode' $code) }
         $neu = Get-ChildItem -LiteralPath (Join-Path $DataRoot 'reports') -Filter 'pc-check_*.json' -File -ErrorAction SilentlyContinue |
             Where-Object { $_.LastWriteTime -ge $t0.AddSeconds(-5) } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -535,6 +557,8 @@ $script:GuiJobScripts = @{
         $env:PSModulePath = [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0\Modules;' + [Environment]::GetFolderPath('ProgramFiles') + '\WindowsPowerShell\Modules'
         . $SafetyPath
         . $WartungPath
+        # Fortschritt an den Server (2.8, #137); ohne die Datei laufen die Bibliotheken wie bisher
+        $fsLib = Join-Path $Root 'gui\lib\Fortschritt.ps1'; if (Test-Path -LiteralPath $fsLib -PathType Leaf) { . $fsLib }
         $pakete = $null
         if ($PaketeJson) {
             $pakete = @(ConvertFrom-Json -InputObject ([string]$PaketeJson) | ForEach-Object { $_ } | ForEach-Object {
@@ -577,16 +601,14 @@ function Format-GuiDialogWert {
 }
 
 function Confirm-GuiElevated {
-    # Bestätigung durch ein Windows-Dialogfenster DIESES (Admin-)Prozesses. Windows verhindert per UIPI, dass Programme
-    # ohne Adminrechte in dieses Fenster klicken oder tippen. Ein Schadprogramm, das das Edge-Fenster fernsteuert oder das
-    # Token aus dessen Speicher liest, kann eine Änderung also anstoßen, aber nicht bestätigen.
+    # Bestätigung durch ein eigenes Dialogfenster DIESES (Admin-)Prozesses (gui/lib/Dialog.ps1). Windows verhindert per UIPI, dass
+    # Programme ohne Adminrechte in dieses Fenster klicken oder tippen. Ein Schadprogramm, das das Edge-Fenster fernsteuert oder
+    # das Token aus dessen Speicher liest, kann eine Änderung also anstoßen, aber nicht bestätigen. Seit #113: Ja-Knopf in den
+    # ersten Sekunden gesperrt, kein Tastenkürzel, Pause nach 3 Ablehnungen in Folge (dann 429 ohne Dialog), Verlauf in der GUI.
     param([string]$Text)
-    if (-not ('MorpheusUi.Native' -as [type])) {
-        Add-Type -Namespace MorpheusUi -Name Native -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);'
-    }
-    # MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 (Nein vorbelegt) | MB_SYSTEMMODAL | MB_SETFOREGROUND | MB_TOPMOST
-    $r = [MorpheusUi.Native]::MessageBoxW([IntPtr]::Zero, $Text, (T 'server.dialog.titel'), 0x00051124)
-    return ($r -eq 6)
+    $r = Invoke-GuiBestaetigung -Zustand $script:Gui.Dialog -Text $Text
+    if ($r.Ergebnis -ceq 'pause') { Stop-GuiRequest 429 (T 'server.dialog.pause' $r.PauseRest) }
+    return [bool]$r.Ok
 }
 
 function Start-GuiJob {
@@ -612,6 +634,8 @@ function Start-GuiJob {
         Log = (New-Object System.Collections.Generic.List[string])
         Seen = @{ Information = 0; Warning = 0; Error = 0 }
         Started = Get-Date; Finished = $null; Ergebnis = $null
+        # Letzter gültiger Fortschritt (2.8, #137); nur aus getaggten Records, nie aus Logtext
+        Fortschritt = $null
     }
     if ($Extra) { foreach ($k in $Extra.Keys) { $rec[[string]$k] = $Extra[$k] } }
     $script:Gui.Jobs[$id] = $rec
@@ -628,7 +652,20 @@ function Get-GuiJobStreamLines {
         $col = $cj.$stream
         for ($i = [int]$Rec.Seen[$stream]; $i -lt $col.Count; $i++) {
             $item = $col[$i]
-            if ($stream -eq 'Information') { $text = [string]$item.MessageData }
+            if ($stream -eq 'Information') {
+                # Fortschritts-Record (IDictionary + Tag): prüfen, nie ins Log. Ungültig -> verwerfen, alter Wert bleibt.
+                # Text kann nie ein IDictionary sein; ein IDictionary ohne Tag bleibt wie bisher eine Logzeile.
+                if (Test-MorpheusFortschrittRecord $item) {
+                    $f = $null
+                    # Paketliste (2.9, #140) hat der Server beim Start selbst an den Record gehängt; Namen kommen nur von dort
+                    $pk = $null
+                    if ($Rec.ContainsKey('Pakete')) { $pk = @($Rec.Pakete) }
+                    try { $f = ConvertTo-MorpheusFortschritt -Daten $item.MessageData -Art ([string]$Rec.Art) -Pakete $pk } catch { $f = $null }
+                    if ($null -ne $f) { $Rec.Fortschritt = $f }
+                    continue
+                }
+                $text = [string]$item.MessageData
+            }
             elseif ($stream -eq 'Warning') { $text = '[' + (Get-Date -Format HH:mm:ss) + '] ' + (T 'server.job.warnung') + [string]$item.Message }
             else { $text = '[' + (Get-Date -Format HH:mm:ss) + '] ' + (T 'server.job.fehler') + [string]$item }
             $Rec.Log.Add($text)
@@ -705,6 +742,46 @@ function Complete-GuiJob {
         }
     }
     catch { Write-GuiLog ("Job {0} Nacharbeit fehlgeschlagen: {1}" -f $Rec.Id, $_.Exception.Message) }
+}
+
+# Vollständiger Name des angemeldeten Benutzers (Anzeigename), nur für die Anonymisierung bei „Für KI kopieren“ (#118).
+# Einmal je Serverlauf; leer bei Domänen-/Microsoft-Konten ohne lokalen Namen oder wenn die Abfrage scheitert.
+function Get-GuiAnzeigename {
+    if ($null -eq $script:GuiAnzeigename) {
+        $script:GuiAnzeigename = ''
+        try { $script:GuiAnzeigename = [string](Get-LocalUser -Name $env:USERNAME -ErrorAction Stop).FullName } catch { }
+    }
+    return $script:GuiAnzeigename
+}
+
+function Get-GuiAktivitaetJobs {
+    # Aktivitätsanzeige (2.9, #141): laufende und vor höchstens 30 Minuten beendete Jobs, neueste zuerst, höchstens 20.
+    # Nur Kennung, Art, Werkzeug, Status und Startzeit – kein Log, kein Ergebnis, keine Paketliste.
+    # 'refresh' ist ein interner Hintergrundjob (Aktionszustände), den der Nutzer nicht gestartet hat: nicht anzeigen.
+    $jetzt = Get-Date
+    $liste = @()
+    foreach ($rec in @($script:Gui.Jobs.Values)) {
+        if ($null -eq $rec) { continue }
+        $art = [string]$rec.Art
+        if (($art -eq '') -or ($art -eq 'refresh')) { continue }
+        $status = [string]$rec.Status
+        if ($status -ne 'running') {
+            if (-not ($rec.Finished -is [datetime])) { continue }
+            if (($jetzt - $rec.Finished).TotalMinutes -gt 30) { continue }
+        }
+        $start = $null
+        if ($rec.Started -is [datetime]) { $start = $rec.Started }
+        $liste += , ([pscustomobject]@{ Rec = $rec; Start = $start })
+    }
+    $sortiert = @($liste | Sort-Object -Property @{ Expression = { if ($_.Start) { $_.Start.Ticks } else { 0 } } } -Descending | Select-Object -First 20)
+    foreach ($e in $sortiert) {
+        $rec = $e.Rec
+        $wz = $null
+        if (($rec -is [System.Collections.IDictionary]) -and $rec.Contains('Werkzeug') -and $rec.Werkzeug) { $wz = [string]$rec.Werkzeug }
+        $gest = $null
+        if ($e.Start) { $gest = $e.Start.ToString('yyyy-MM-ddTHH:mm:ss') }
+        [ordered]@{ id = [string]$rec.Id; art = [string]$rec.Art; werkzeug = $wz; status = [string]$rec.Status; gestartet = $gest }
+    }
 }
 
 function Update-GuiJobs {
@@ -887,7 +964,11 @@ function New-GuiWartungDialogText {
     $befehl = [string]$Werkzeug.befehl
     if ($Laufwerk) { $befehl = $befehl.Replace('<LW>', $Laufwerk) }
     $t = (T 'server.dialog.wartungFrage') + "`n`n" + (Format-GuiDialogWert $Werkzeug.titel 200) + "`n" + (T 'server.dialog.befehl') + (Format-GuiDialogWert $befehl 300)
-    if ($Werkzeug.klasse -ceq 'diagnose') { $t += "`n`n" + (T 'server.dialog.nurLesen') }
+    if ($Werkzeug.klasse -ceq 'diagnose') {
+        # behebt: Windows behebt kleine Fehler sofort (chkdsk /scan), 'liest nur' wäre falsch
+        if (Get-GuiErgebnisWert $Werkzeug 'behebt') { $t += "`n`n" + (T 'server.dialog.behebtKleines') }
+        else { $t += "`n`n" + (T 'server.dialog.nurLesen') }
+    }
     elseif ($Werkzeug.klasse -ceq 'wartung') { $t += "`n`n" + (T 'server.dialog.harmlos') + (Format-GuiDialogWert $Werkzeug.erklaerung 400) }
     else {
         $t += "`n`n" + (T 'server.dialog.nichtUmkehrbar')
@@ -916,7 +997,7 @@ function Invoke-GuiWartungStart {
     if (($null -ne $lw) -and (($lw -isnot [string]) -or ($lw.Length -gt 10))) { Stop-GuiRequest 400 (T 'server.laufwerkUngueltig') }
     $op = Get-GuiOhnePunkt $Body
     # Programm-Updates laufen nur über /api/updates/installieren, die Zuverlässigkeitsansicht hat eine eigene Route
-    if (@('winget.upgrade', 'perfmon.rel') -ccontains $wz) { Stop-GuiRequest 400 (T 'server.werkzeugNichtHier') }
+    if (@('winget.upgrade', 'perfmon.rel', 'speichertest') -ccontains $wz) { Stop-GuiRequest 400 (T 'server.werkzeugNichtHier') }
     $prm = @{ Werkzeug = $wz; Laufwerke = @(Get-GuiWartungLaufwerke) }
     if ($null -ne $lw) { $prm['Laufwerk'] = $lw }
     $fehler = Test-MorpheusWartungAuftrag @prm
@@ -981,7 +1062,8 @@ function Invoke-GuiUpdatesInstall {
     $pakete = @(foreach ($u in $gewaehlt) { [pscustomobject][ordered]@{ id = [string]$u.id; name = [string]$u.name; von = [string]$u.installiert; auf = [string]$u.verfuegbar } })
     $json = ConvertTo-Json -InputObject @($pakete) -Compress
     $flag = New-GuiAbbruchDatei
-    $extra = @{ Werkzeug = 'winget.upgrade'; Abbruch = $abbruch; AbbruchDatei = $flag; Ids = $idsSortiert }
+    # Pakete (2.9, #140): Grundlage für 'elemente' im Fortschritt; id/name/von/auf nur aus dieser Serverliste
+    $extra = @{ Werkzeug = 'winget.upgrade'; Abbruch = $abbruch; AbbruchDatei = $flag; Ids = $idsSortiert; Pakete = @($pakete) }
     $id = Start-GuiJob 'wartung' @($g.Root, $g.SafetyPath, $g.WartungPath, $g.DataRoot, 'winget.upgrade', $null, $json, $op, $flag) $true $text $extra
     if ($op -and $g.PunktFehlt) { $g.PunktFehlt.Remove('winget.upgrade') }
     return $id
@@ -1356,7 +1438,7 @@ function Invoke-GuiRoute {
         # Bilder: nur feste Namensform aus gui\assets\ (Regex + Präfix-Prüfung in Send-GuiStatic), ohne Token (keine Daten)
         if ($Path -cmatch '^/assets/([a-z0-9-]+\.(png|svg|jpg))\z') { Send-GuiStatic $Res ('assets\' + $Matches[1]); return }
         if ($Path -eq '/favicon.ico') { Send-GuiStatic $Res 'assets\morpheus-icon.png'; return }
-        if ($Path -cmatch '^/dev/[A-Za-z0-9._-]+\z') { Send-GuiStatic $Res $Path.TrimStart('/'); return }
+        # Keine /dev/*-Route (#123): der Mock läuft über python http.server, nicht über den GUI-Server.
         Stop-GuiRequest 404 (T 'server.nichtGefunden')
     }
 
@@ -1425,9 +1507,10 @@ function Invoke-GuiRoute {
         $repZeit = $null
         $ri = Get-GuiReparaturInfo
         if ($ri.Zeit -and ($ri.Zeit -gt (Get-Date).AddDays(-7))) { $repZeit = $ri.Zeit.ToString('yyyy-MM-ddTHH:mm:ss') }
-        Send-GuiJson $Res 200 ([ordered]@{ version = $g.Version; pc = $env:COMPUTERNAME; admin = $g.Admin; profil = $profil; safety = $safety
+        Send-GuiJson $Res 200 ([ordered]@{ version = $g.Version; pc = $env:COMPUTERNAME; benutzer = $env:USERNAME; anzeigename = (Get-GuiAnzeigename); admin = $g.Admin; profil = $profil; safety = $safety
                 readOnly = [bool]$g.ReadOnly; readOnlyReason = $(if ($g.ReadOnly) { [string]$g.ReadOnlyReason } else { $null }); dataRoot = $g.DataRoot
-                datenordner = $dn; reparaturZeit = $repZeit; sprache = (Get-MorpheusAktiveSprache) })
+                datenordner = $dn; reparaturZeit = $repZeit; sprache = (Get-MorpheusAktiveSprache); jobs = @(Get-GuiAktivitaetJobs)
+                dialoge = @(Get-GuiDialogVerlauf $g.Dialog) })
         return
     }
     if ($Path -eq '/api/report-ticket') {
@@ -1479,7 +1562,21 @@ function Invoke-GuiRoute {
         if (-not $isGet) { Stop-GuiRequest 405 (T 'server.methodeNichtErlaubt') }
         Assert-GuiFn 'Get-PcCheckCatalog', 'ConvertTo-PublicAction'
         $st = $g.ActionStates
-        $list = @(foreach ($a in $g.Catalog) { $s = $null; if ($st) { $s = $st[$a.Id] }; ConvertTo-PublicAction -Action $a -State $s })
+        # Ergebnis zwischenspeichern, solange Zustände, Katalog, Journal und Reparaturdatei unverändert sind (Journal nicht bei jedem Aufruf lesen)
+        $stempel = foreach ($p in 'changes\journal.json', 'state\datenordner-reparatur.json') {
+            $fi = New-Object IO.FileInfo (Join-Path ([string]$g.DataRoot) $p)
+            if ($fi.Exists) { [string]$fi.LastWriteTimeUtc.Ticks + '/' + $fi.Length } else { '-' }
+        }
+        $key = ([string]$g.ReadOnly) + '|' + ($stempel -join '|')
+        $c = $g.ActionsCache
+        if ($c -and [object]::ReferenceEquals($c.States, $st) -and [object]::ReferenceEquals($c.Catalog, $g.Catalog) -and ($c.Key -ceq $key)) {
+            Send-GuiJson $Res 200 $c.List
+            return
+        }
+        # Journal für „Zurücknehmen“ an der Karte (#166); ohne lesbares Journal bleibt der Knopf weg
+        $jr = @(); if ((-not $g.ReadOnly) -and (Test-GuiFn 'Get-PcCheckJournal')) { try { $jr = @(Get-PcCheckJournal -Root $g.Root -DataRoot $g.DataRoot) } catch { $jr = @() } }
+        $list = @(foreach ($a in $g.Catalog) { $s = $null; if ($st) { $s = $st[$a.Id] }; ConvertTo-PublicAction -Action $a -State $s -Journal $jr -DataRoot ([string]$g.DataRoot) })
+        $g.ActionsCache = @{ States = $st; Catalog = $g.Catalog; Key = $key; List = $list }
         Send-GuiJson $Res 200 $list
         return
     }
@@ -1565,7 +1662,7 @@ function Invoke-GuiRoute {
         if ($total -gt $from) { $lines = @($rec.Log.GetRange($from, $total - $from)) }
         $erg = $null
         if ($rec.Status -ne 'running') { $erg = $rec.Ergebnis }
-        Send-GuiJson $Res 200 ([ordered]@{ id = $rec.Id; art = $rec.Art; status = $rec.Status; log = $lines; next = $total; ergebnis = $erg })
+        Send-GuiJson $Res 200 ([ordered]@{ id = $rec.Id; art = $rec.Art; status = $rec.Status; log = $lines; next = $total; ergebnis = $erg; fortschritt = $rec.Fortschritt })
         return
     }
     if ($Path -eq '/api/checklist') {
@@ -1885,6 +1982,18 @@ function Invoke-GuiRoute {
         Send-GuiJson $Res 200 ([ordered]@{ ok = $zok; meldung = $zm })
         return
     }
+    if ($Path -eq '/api/wartung/speichertest') {
+        if ($Method -ne 'POST') { Stop-GuiRequest 405 (T 'server.methodeNichtErlaubt') }
+        # Öffnet nur den Windows-Dialog der Speicherdiagnose (MdSched.exe, voller System32-Pfad, keine Argumente, keine Parameter vom Client):
+        # kein Morpheus-Dialog, kein Job, kein Journal, kein Wiederherstellungspunkt (Abschnitt 18.3.2 und 18.13)
+        Assert-GuiFn 'Start-MorpheusSpeichertest'
+        try { $sr = Start-MorpheusSpeichertest }
+        catch { Stop-GuiRequest 500 (T 'server.speichertestFehler' $_.Exception.Message) }
+        $sok = $false; $sm = ''
+        if ($null -ne $sr) { $sok = [bool](Get-GuiErgebnisWert $sr 'ok'); $sm = [string](Get-GuiErgebnisWert $sr 'meldung') }
+        Send-GuiJson $Res 200 ([ordered]@{ ok = $sok; meldung = $sm })
+        return
+    }
     if ($Path -eq '/api/updates') {
         if (-not $isGet) { Stop-GuiRequest 405 (T 'server.methodeNichtErlaubt') }
         $u = $g.Updates
@@ -2009,8 +2118,8 @@ function Invoke-GuiRoute {
         if ($dd.Repariert) { Stop-GuiRequest 409 (T 'server.datenordner.schonRepariert') }
         if (-not $g.Admin) { Stop-GuiRequest 403 (T 'server.datenordner.nurAdmin') }
         if ($art -ceq 'reparieren') { Assert-GuiFn 'Repair-MorpheusDatenordner' } else { Assert-GuiFn 'Initialize-MorpheusDataDir' }
-        # Confirm-GuiElevated kompiliert beim ersten Aufruf C# per Add-Type (DLL in %TEMP%). Ohne gesicherten Temp-Ordner
-        # (pc-check-gui.ps1 legt ihn für den reparierbaren Zustand an) könnte ein Benutzerprogramm die DLL austauschen.
+        # Früher kompilierte Confirm-GuiElevated per Add-Type (DLL in %TEMP%); der Dialog nutzt jetzt nur noch System.Windows.Forms
+        # aus dem GAC. Die Temp-Prüfung bleibt als Vorsicht (pc-check-gui.ps1 legt den Ordner für den reparierbaren Zustand an).
         if (-not $g.TempSicher) { Stop-GuiRequest 409 (T 'server.datenordner.keinTemp') }
         # Restrisiko: Ein vor der Reparatur geöffnetes Ordner-Handle mit WRITE_DAC bleibt über die Reparatur hinaus gültig.
         # Erst der Neustart von Morpheus prüft den Datenordner erneut (deshalb "bitte neu starten" nach jeder Reparatur).
@@ -2121,12 +2230,29 @@ function Invoke-GuiRequest {
 
 #region Start und Hauptschleife
 
+function Open-GuiListener {
+    # Bindet 127.0.0.1:Port. Bei automatisch gewähltem Port (PortAuto) kann ein anderer Prozess den Port zwischen
+    # Ermitteln und Binden belegt haben (#123): dann bis zu $Versuche Mal mit neuem Port wiederholen.
+    # Bind/NeuerPort sind austauschbar (Tests). Gibt @{ Listener; Port } zurück, wirft nach dem letzten Fehlschlag.
+    param([int]$Port, [switch]$PortAuto, [int]$Versuche = 5,
+        [scriptblock]$Bind = { param($p) $l = New-Object System.Net.HttpListener; $l.Prefixes.Add("http://127.0.0.1:$p/"); $l.Start(); $l },
+        [scriptblock]$NeuerPort = { $t = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse('127.0.0.1'), 0); $t.Start(); $p = $t.LocalEndpoint.Port; $t.Stop(); $p })
+    for ($i = 1; $true; $i++) {
+        try { return @{ Listener = (& $Bind $Port); Port = $Port } }
+        catch {
+            if ((-not $PortAuto) -or ($i -ge $Versuche)) { throw }
+            Write-GuiLog ('Port ' + $Port + ' belegt, neuer Versuch ' + ($i + 1) + ': ' + $_.Exception.Message)
+            $Port = [int](& $NeuerPort)
+        }
+    }
+}
+
 function Initialize-GuiServer {
     # Root = Codeordner (Katalog, Hilfe, Oberfläche), DataRoot = Daten (reports, changes, state, accepted.psd1; Standard: Root).
     # ReadOnly: Ändern, Rückgängig und Scan sind gesperrt (403), weil der Codeordner nicht gesichert ist.
     param([string]$Root, [int]$Port, [string]$Token, [string]$BootCode, [string]$SafetyPath,
         [string]$DataRoot, [switch]$ReadOnly, [string]$ReadOnlyReason, [string]$DefenderPath, [string]$SysinternalsPath,
-        [string]$WartungPath, [string]$WingetPath, $DatenordnerZustand, [string]$DatenordnerPfad, [switch]$TempSicher)
+        [string]$WartungPath, [string]$WingetPath, $DatenordnerZustand, [string]$DatenordnerPfad, [switch]$TempSicher, [switch]$PortAuto)
     if (-not $DataRoot) { $DataRoot = $Root }
     Add-Type -AssemblyName System.Web.Extensions
     $version = ''
@@ -2148,6 +2274,7 @@ function Initialize-GuiServer {
         Datenordner = $(if ($DatenordnerZustand) { @{ Zustand = $DatenordnerZustand; Pfad = $DatenordnerPfad; Repariert = $false } } else { $null })
         Jobs = @{}; ReportCache = @{}; HelpCache = $null; ActionStates = @{}; Catalog = @()
         Stop = $false; Status = 0; LastHeartbeat = Get-Date; HeartbeatSeen = $false; Listener = $null; Live = $null
+        Dialog = (New-GuiDialogZustand)
     }
     # Sprache (2.6): gespeicherte Wahl, sonst Windows-Sprache. Ein geerbter Wert aus der Benutzerumgebung zählt nicht;
     # Jobs und der Scan erben den hier gesetzten Wert.
@@ -2159,9 +2286,13 @@ function Initialize-GuiServer {
         try { $script:Gui.Catalog = @(Get-PcCheckCatalog -Root $Root) }
         catch { Write-GuiLog ('Katalog nicht ladbar: ' + $_.Exception.Message) }
     }
-    $l = New-Object System.Net.HttpListener
-    $l.Prefixes.Add("http://127.0.0.1:$Port/")
-    $l.Start()
+    $bind = Open-GuiListener -Port $Port -PortAuto:$PortAuto
+    $l = $bind.Listener
+    if ($bind.Port -ne $Port) {
+        # anderer Port nötig gewesen: Token-/Herkunftsprüfung und Aufrufer (Adresse) folgen dem neuen Port
+        $Port = $bind.Port
+        $script:Gui.Port = $Port; $script:Gui.Origin = "http://127.0.0.1:$Port"; $script:Gui.HostHeader = "127.0.0.1:$Port"
+    }
     $script:Gui.Listener = $l
     Write-GuiLog "Server gestartet auf Port $Port (Admin: $($script:Gui.Admin), NurLesen: $($script:Gui.ReadOnly), Daten: $DataRoot, Katalog: $($script:Gui.Catalog.Count) Aktionen, Safety: $(Test-GuiFn 'Invoke-PcCheckChange'))"
 }
@@ -2190,6 +2321,26 @@ function Test-GuiServerEnde {
     }
     if ($HeartbeatGesehen -and (($Jetzt - $LetzterHeartbeat).TotalSeconds -gt $TimeoutSek)) { return 'Kein Heartbeat mehr' }
     return $null
+}
+
+function Invoke-GuiEdgePruefung {
+    # Belegt, dass die Edge-Prozesse mit unserem Profil nicht erhöht laufen (#115, N1). Hohe Integrität: Prozesse beenden,
+    # Nur-Lesen-Modus (gilt sofort für jede Anfrage) und melden. Nicht lesbare Prozesse werden nur einmal protokolliert.
+    param($Prozesse, [string]$Profil)
+    $g = $script:Gui
+    $r = Test-MorpheusEdgeIntegritaet -Prozesse $Prozesse -Profil $Profil
+    if (($r.Unbekannt -gt 0) -and (-not $g.EdgeUnbekanntGemeldet)) {
+        $g.EdgeUnbekanntGemeldet = $true
+        Write-GuiLog ('Edge-Integrität: {0} von {1} Prozessen nicht lesbar' -f $r.Unbekannt, $r.Geprueft)
+    }
+    if ($r.Erhoeht.Count -eq 0) { return }
+    foreach ($e in $r.Erhoeht) {
+        Write-GuiLog ('Edge-Prozess {0} läuft erhöht (Stufe 0x{1:X}), wird beendet' -f $e.ProcessId, $e.Rid)
+        try { & $script:MorpheusEdgeImpl.Beenden $e.ProcessId } catch { Write-GuiLog ('Edge beenden: ' + $_.Exception.Message) }
+    }
+    $g.ReadOnly = $true
+    $g.ReadOnlyReason = (T 'server.gui.edgeErhoeht' $r.Erhoeht[0].ProcessId)
+    Write-Host $g.ReadOnlyReason -ForegroundColor Red
 }
 
 function Start-GuiServerLoop {
@@ -2231,8 +2382,13 @@ function Start-GuiServerLoop {
         if ($EdgeProfile -and (((Get-Date) - $edgeCheck).TotalSeconds -ge $edgeInterval)) {
             $edgeCheck = Get-Date
             try {
-                $count = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction Stop |
-                        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($EdgeProfile, [StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count
+                $edgeProz = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" -ErrorAction Stop |
+                        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($EdgeProfile, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+                $count = $edgeProz.Count
+                # Mit Adminrechten bei jeder Zählung die Integritätsstufe der Edge-Prozesse prüfen (ohne Adminrechte gibt es nichts zu schützen)
+                if ($g.Admin -and ($count -gt 0)) {
+                    try { Invoke-GuiEdgePruefung -Prozesse $edgeProz -Profil $EdgeProfile } catch { Write-GuiLog ('Edge-Prüfung: ' + $_.Exception.Message) }
+                }
             } catch { }
             if ($count -ge 0) { $edgeLastOk = Get-Date }
             if ($count -gt 0) { $edgeSeen = $true }
