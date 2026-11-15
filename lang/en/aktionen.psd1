@@ -217,7 +217,7 @@ New-ItemProperty -Path ''HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR
     }
     'gaming.maus' = @{
         Titel      = 'Turn off mouse acceleration'
-        Erklaerung = 'The mouse then always moves the pointer in proportion to your hand movement ("Enhance pointer precision" off), which gives more consistent aiming, especially in shooters. The change needs a sign-out and sign-in and feels unfamiliar at first.'
+        Erklaerung = 'The mouse then always moves the pointer in proportion to your hand movement ("Enhance pointer precision" off), which gives more consistent aiming, especially in shooters. The change takes effect immediately and feels unfamiliar at first.'
         Befehle    = @{
             Ausfuehren   = 'New-ItemProperty -Path ''HKCU:\Control Panel\Mouse'' -Name ''MouseSpeed'' -PropertyType String -Value ''0'' -Force
 New-ItemProperty -Path ''HKCU:\Control Panel\Mouse'' -Name ''MouseThreshold1'' -PropertyType String -Value ''0'' -Force
@@ -227,7 +227,7 @@ New-ItemProperty -Path ''HKCU:\Control Panel\Mouse'' -Name ''MouseThreshold2'' -
                 'New-ItemProperty creates a registry value or overwrites it (-Force). HKCU applies only to the signed-in user.',
                 'MouseSpeed, MouseThreshold1 and MouseThreshold2 are the three values behind "Enhance pointer precision"; all three set to "0" means: no acceleration.',
                 '-PropertyType String: these values are text (REG_SZ), not numbers.',
-                'Windows reads the values only after the next sign-out/sign-in. Undo restores each of the three values individually.'
+                'Morpheus then passes the new values to Windows (SystemParametersInfo, like the OK button in Control Panel) so they apply immediately. Undo restores each of the three values individually and passes them on the same way.'
             )
         }
     }

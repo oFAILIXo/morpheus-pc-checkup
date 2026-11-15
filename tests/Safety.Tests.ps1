@@ -622,3 +622,104 @@ Describe 'Get-PcCheckSafetyStatus: seitStart (Neustart ausstehend, #95)' {
         @((Get-PcCheckSafetyStatus -Root $script:root).seitStart).Count | Should Be 0
     }
 }
+
+Describe 'Zurücknehmen an der Karte (#166): Get-PcCheckKartenRueckgaengig' {
+    BeforeEach {
+        $script:root = New-FakeRoot $TestDrive
+        Set-FakeRestorePoints $true
+    }
+
+    function Get-KartenPub {
+        param($Id, [string]$DataRoot)
+        $cat = @(Get-PcCheckCatalog -Root $script:root)
+        $st = Get-PcCheckActionStates -Root $script:root -Catalog $cat
+        $jr = @(Get-PcCheckJournal -Root $script:root)
+        $p = @{ Action = ($cat | Where-Object { $_.Id -eq $Id }); State = $st[$Id]; Journal = $jr }
+        if ($DataRoot) { $p['DataRoot'] = $DataRoot }
+        ConvertTo-PublicAction @p
+    }
+
+    It 'bietet Zurücknehmen an, wenn Morpheus die Anpassung gesetzt hat und der Zustand noch passt' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        $pub = Get-KartenPub 'fake.a'
+        $pub.zustand.aktiv | Should Be $true
+        $pub.zuruecknehmen.id | Should Be $entry.id
+        $pub.zuruecknehmen.art | Should Be 'ausfuehren'
+    }
+
+    It 'gibt den internen Zustandsschlüssel nicht an die Oberfläche' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $pub = Get-KartenPub 'fake.a'
+        ($pub.zustand.PSObject.Properties.Name -contains 'schluessel') | Should Be $false
+        (ConvertTo-Json -InputObject $pub -Depth 8) | Should Not Match 'schluessel'
+    }
+
+    It 'bietet nichts an, wenn die Anpassung nicht von Morpheus stammt (kein Journal-Eintrag)' {
+        Set-Content -LiteralPath (Get-FakeFile $script:root 'a') -Value 'an'
+        $pub = Get-KartenPub 'fake.a'
+        $pub.zustand.aktiv | Should Be $true
+        $pub.zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet nichts an, wenn der Zustand seit der Änderung anders ist' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        Set-Content -LiteralPath (Get-FakeFile $script:root 'a') -Value 'an-spaeter-geaendert'
+        $pub = Get-KartenPub 'fake.a'
+        $pub.zustand.aktiv | Should Be $true
+        $pub.zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet nichts an, wenn der Ursprungszustand schon angewendet war' {
+        Set-Content -LiteralPath (Get-FakeFile $script:root 'a') -Value 'an-alt'
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $pub = Get-KartenPub 'fake.a'
+        $pub.zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet nichts an, wenn die Änderung schon zurückgenommen wurde' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $entry = (Get-TestJournal $script:root)[0]
+        Undo-PcCheckChange -Root $script:root -EntryId $entry.id -InformationAction SilentlyContinue | Out-Null
+        $pub = Get-KartenPub 'fake.a'
+        $pub.zustand.aktiv | Should Be $false
+        $pub.zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet keinen älteren Eintrag an, wenn der neueste zurückgenommen wurde' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        Remove-Item -LiteralPath (Get-FakeFile $script:root 'a')
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        $neu = @(Get-TestJournal $script:root | ForEach-Object { $_ } | Where-Object { $_.art -eq 'ausfuehren' } | Sort-Object id -Descending)[0]
+        Undo-PcCheckChange -Root $script:root -EntryId $neu.id -InformationAction SilentlyContinue | Out-Null
+        Set-Content -LiteralPath (Get-FakeFile $script:root 'a') -Value 'an'
+        $pub = Get-KartenPub 'fake.a'
+        $pub.zustand.aktiv | Should Be $true
+        $pub.zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet nichts an bei fehlgeschlagener Änderung' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.fail' -InformationAction SilentlyContinue | Out-Null
+        (Get-KartenPub 'fake.fail').zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet nichts an für einen Eintrag aus der Zeit vor einer Datenordner-Reparatur' {
+        Invoke-PcCheckChange -Root $script:root -Ids 'fake.a' -InformationAction SilentlyContinue | Out-Null
+        (Get-KartenPub 'fake.a' $script:root).zuruecknehmen | Should Not BeNullOrEmpty
+        New-Item -ItemType Directory -Path (Join-Path $script:root 'state') -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $script:root 'state\datenordner-reparatur.json'), '{"journalUnlesbar": true}', (New-Object Text.UTF8Encoding($false)))
+        (Get-KartenPub 'fake.a' $script:root).zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'bietet nichts an, wenn der Zustand nicht gelesen wurde (kein State)' {
+        $cat = @(Get-PcCheckCatalog -Root $script:root)
+        $pub = ConvertTo-PublicAction -Action $cat[0] -Journal @()
+        $pub.zuruecknehmen | Should BeNullOrEmpty
+    }
+
+    It 'jede Katalog-Aktion hat ein Rückgängig' {
+        $kat = @(Get-PcCheckCatalog -Root (Split-Path $PSScriptRoot -Parent))
+        $kat.Count | Should BeGreaterThan 10
+        foreach ($a in $kat) { ($null -ne $a.Rueckgaengig) | Should Be $true }
+    }
+}

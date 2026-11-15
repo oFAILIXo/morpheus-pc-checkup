@@ -22,6 +22,7 @@ code{font:12px var(--mono);color:var(--fg)}
 .muted{color:var(--muted)}
 .ok,.add{color:var(--t-green)}.warn{color:var(--t-orange)}.rem{color:var(--t-red)}
 svg.i{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+svg.sprite{position:absolute}
 
 /* ---------------------------------------------------------------- Layout */
 .app{display:grid;grid-template-columns:248px minmax(0,1fr);min-height:100vh}
@@ -214,9 +215,9 @@ h3{color:var(--fg);font-size:14px;margin:14px 0 6px}
 .state i{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
 .state.off{color:var(--t-orange)}.state.on{color:var(--t-green)}
 details.cmd{margin-top:10px}
-details.cmd>summary,details.how>summary{cursor:pointer;color:var(--t-blue);font-size:12.5px;list-style:none;display:inline-block;border-radius:4px}
-details.cmd>summary::before,details.how>summary::before{content:"›";display:inline-block;margin-right:6px;transition:transform .15s}
-details.cmd[open]>summary::before,details.how[open]>summary::before{transform:rotate(90deg)}
+details.cmd>summary,details.how>summary,details.scandetails>summary{cursor:pointer;color:var(--t-blue);font-size:12.5px;list-style:none;display:inline-block;border-radius:4px}
+details.cmd>summary::before,details.how>summary::before,details.scandetails>summary::before{content:"›";display:inline-block;margin-right:6px;transition:transform .15s}
+details.cmd[open]>summary::before,details.how[open]>summary::before,details.scandetails[open]>summary::before{transform:rotate(90deg)}
 details>summary::-webkit-details-marker{display:none}
 details.how{margin-top:10px}
 details.how ol{margin:8px 0;padding-left:20px;font-size:13px;color:var(--fg)}
@@ -273,6 +274,7 @@ tr:last-child td{border-bottom:0}
 .tbl-scroll tbody tr:hover{background:var(--row-hover)}
 .tbl-scroll tbody tr:hover td{color:var(--fg-strong)}
 .tbl-scroll td.mono,.tbl-scroll th.mono,td.mono{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;overflow-wrap:anywhere;word-break:break-all}
+.tbl-scroll td.mono{min-width:24ch}
 
 /* Formulare */
 input,select,textarea{font:inherit;background:var(--well);color:var(--fg);border:1px solid var(--line2);border-radius:7px;padding:5px 9px;max-width:100%}
@@ -385,6 +387,33 @@ aside.status{display:none;background:var(--status-bg);border-left:1px solid var(
 .mrow svg.sp polyline{fill:none;stroke:var(--c,var(--cyan));stroke-width:1.5;stroke-linejoin:round}
 .meter{height:6px;border-radius:3px;background:color-mix(in srgb,var(--ink) 7.06%,transparent);overflow:hidden}
 .meter i{display:block;height:100%;border-radius:3px;background:var(--c,var(--cyan));transition:width .5s ease}
+/* Fortschritt laufender Jobs (2.8, #138): Farbe nur über --c an der Zustandsklasse, Text per textContent */
+.fs{margin:14px 0 0;--c:var(--cyan);--fs-t:var(--t-cyan)}
+.fs.fs-wait{--c:var(--yellow);--fs-t:var(--t-yellow)}.fs.fs-done{--c:var(--green);--fs-t:var(--t-green)}
+.fs.fs-fail{--c:var(--red);--fs-t:var(--t-red)}.fs.fs-stop{--c:var(--orange);--fs-t:var(--muted)}
+.fs .meter{position:relative}
+.fs .meter.offen i{position:absolute;left:0;top:0;width:35%!important;animation:fs-lauf 1.4s ease-in-out infinite}
+.fs.fs-done .meter.offen i,.fs.fs-fail .meter.offen i,.fs.fs-stop .meter.offen i{width:100%!important;animation:none}
+@keyframes fs-lauf{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
+.fs-zeile{display:flex;gap:10px;align-items:baseline;margin-top:6px;font-size:12.5px;min-width:0}
+.fs-st{color:var(--fs-t);font-weight:600;flex:none}.fs-val{color:var(--fg);font-variant-numeric:tabular-nums;flex:none}
+.fs-txt{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* winget-Paketliste (2.9, #140): vier Gruppen; läuft mit Spinner in --cyan */
+.pk-liste{margin:12px 0 0;max-height:280px;overflow:auto}
+.pk-grp+.pk-grp{margin-top:10px}
+.pk-grp h4{margin:0 0 4px;font-size:12.5px;font-weight:600;color:var(--muted)}
+.pk-grp ul{list-style:none;margin:0;padding:0}
+.pk-grp li{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px;min-width:0}
+.pk-grp li .chip{flex:none;min-width:84px;justify-content:center}
+.pk-grp li b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pk-grp li .muted{flex:none;font-size:12px;font-variant-numeric:tabular-nums}
+.pk-grp li:has(.pk-det){flex-wrap:wrap}
+.pk-det{flex:1 1 100%;margin:0 0 4px 92px;min-width:0}
+.pk-det summary{cursor:pointer;font-size:12.5px;color:var(--muted)}
+.pk-det pre.log{max-height:180px;margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.chip.pk-run{background:color-mix(in srgb,var(--cyan) 13.33%,transparent);color:var(--t-cyan)}
+.pk-spin{width:10px;height:10px;border-radius:50%;border:2px solid var(--cyan);border-top-color:transparent;animation:spin .8s linear infinite;flex:none}
+.upd-lauf{margin:4px 0 12px}
 .adot{width:9px;height:9px;border-radius:50%;background:var(--c,var(--grey));box-shadow:0 0 0 3px color-mix(in srgb,var(--c,var(--grey)) 22%,transparent);flex:none;display:inline-block}
 .g-green{--c:var(--green)}.g-yellow{--c:var(--yellow)}.g-orange{--c:var(--orange)}.g-red{--c:var(--red)}.g-grey{--c:var(--grey)}.g-cyan{--c:var(--cyan)}
 .drow{padding:5px 0}
@@ -474,6 +503,9 @@ button.srow[disabled]:hover{background:none;color:var(--fg)}
   /* Ohne Bewegung, aber der Statuswechsel der Schritte bleibt als Farbwechsel sichtbar */
   .steps li,.steps li .s{transition-duration:.2s!important}
   .steps li.done .s{animation:none}
+  /* Laufbalken steht still: volle, halb durchsichtige Füllung statt Bewegung */
+  .fs .meter.offen i{animation:none;width:100%!important;opacity:.5;transform:none}
+  .pk-spin{animation:none;border-top-color:var(--cyan)}
 }
 .lvwrap{margin-top:6px}.lvwrap .lv{margin-left:0}
 .chip.Y{background:color-mix(in srgb,var(--yellow) 14.9%,transparent);color:var(--t-yellow)}
@@ -525,6 +557,8 @@ button.sp-item:focus-visible{outline:2px solid var(--cyan)}
 pre.log.eula{max-height:340px;min-height:120px}
 /* Scan-Protokoll: nutzt die Fensterhöhe unter den Optionen (Tester-Feedback, 2.3.1), mindestens 320 px */
 pre.log.scanlog{height:calc(100vh - 340px);min-height:320px;max-height:none;font-size:13.5px}
+/* Scan-Ansicht (2.8, #139): Rohprotokoll hinter „Details“ */
+details.scandetails{margin-top:12px}details.scandetails>pre.log{margin-top:8px}
 
 /* Wartung & Reparatur, Programme aktualisieren (Abschnitt 18). Nur vorhandene Tokens; Text auf --surface mindestens --b1 (4.86:1) */
 .wt-legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:10px 0 4px;font-size:12.5px;color:var(--fg)}
@@ -549,6 +583,22 @@ pre.log.scanlog{height:calc(100vh - 340px);min-height:320px;max-height:none;font
 .wt-box{margin:12px 0;padding:10px 14px;border-radius:var(--r-sm);background:color-mix(in srgb,var(--orange) 13.33%,transparent);border:1px solid var(--line2);color:var(--fg-strong);font-size:13px}
 .wt-box b{color:var(--fg-max)}
 .wt-dur{font-size:12px;color:var(--fg)}
+/* Aktivitätsanzeige in der Kopfzeile (2.9, #141): Knopf mit Spinner und Zähler, Popover mit kleinen Balken. Nur Anzeige. */
+.akt{position:relative;flex:none}
+.akt-btn[hidden]{display:none}
+.akt-btn.laeuft{border-color:color-mix(in srgb,var(--cyan) 50.2%,transparent);color:var(--t-cyan)}
+.akt-pop{position:absolute;right:0;top:calc(100% + 8px);z-index:40;width:min(380px,calc(100vw - 24px));max-height:70vh;overflow:auto;padding:12px 14px;background:var(--surface);border:1px solid var(--line2);border-radius:var(--r);box-shadow:0 24px 60px -16px rgba(0,0,0,.45);color:var(--fg)}
+.akt-pop[hidden]{display:none}
+.akt-titel{margin:0;font-size:14px;color:var(--fg-strong)}
+.akt-kopf{margin:2px 0 8px;font-size:12.5px;color:var(--muted)}
+.akt-liste{list-style:none;margin:0;padding:0}
+.akt-zeile{padding:8px 0;border-top:1px solid var(--line)}
+.akt-z1{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.akt-name{color:var(--fg-strong);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.akt-link{font-size:12.5px;flex:none}
+.akt-fs{margin-top:6px}
+.akt-fs .meter{height:4px}
+.akt-fs .fs-zeile{margin-top:4px;font-size:12px}
 .wt-msg{white-space:pre-wrap;overflow-wrap:anywhere}
 .wt-res{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}
 .wt-pk{margin:6px 0;padding-left:20px}
@@ -598,3 +648,5 @@ pre.log.scanlog{height:calc(100vh - 340px);min-height:320px;max-height:none;font
 .ki-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px}
 .ki-head h2{margin:0}
 .ki-head .ki-ask{margin-left:auto}
+textarea.ki-vorschau{display:block;width:100%;min-height:260px;max-height:55vh;margin:10px 0;font:12.5px/1.45 var(--mono,Consolas,monospace);resize:vertical;white-space:pre-wrap}
+.ki-grenzen{margin-top:6px}.ki-grenzen summary{cursor:pointer;color:var(--muted)}.ki-grenzen p{margin:6px 0;font-size:13px}

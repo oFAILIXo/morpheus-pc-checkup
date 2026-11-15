@@ -2,6 +2,10 @@
 @{
     'katalog.voraus.admin' = 'Administratorrechte fehlen.'
     'katalog.zustand.fehlt' = 'Kein Vorher-Zustand vorhanden.'
+    'katalog.ruecknahme.typAbweichend' = 'Das Journal passt nicht zum Katalog: ''{0}'' hat den Typ ''{1}'', erwartet wird ''{2}''. Die Rücknahme wurde abgelehnt, es wurde nichts geändert.'
+    'katalog.ruecknahme.zielAbweichend' = 'Das Journal passt nicht zum Katalog (erwartet: {0}, gefunden: {1}). Die Rücknahme wurde abgelehnt, es wurde nichts geändert.'
+    'katalog.ruecknahme.wertUngueltig' = 'Das Journal enthält für ''{0}'' einen ungültigen Wert (''{1}''). Die Rücknahme wurde abgelehnt, es wurde nichts geändert.'
+    'katalog.ruecknahme.adapterUnbekannt' = 'Das Journal nennt einen unbekannten Netzwerkadapter (''{0}''). Die Rücknahme wurde abgelehnt, es wurde nichts geändert.'
     'katalog.wert.aus' = 'aus'
     'katalog.wert.an' = 'an'
     'katalog.wert.anStandard' = 'an (Windows-Standard)'
@@ -74,6 +78,7 @@
     'katalog.maus.aus' = 'Zeigerbeschleunigung aus'
     'katalog.maus.ausSchwellen' = 'Zeigerbeschleunigung aus (Schwellenwerte noch nicht 0)'
     'katalog.maus.an' = 'Zeigerbeschleunigung an (MouseSpeed = {0})'
+    'katalog.maus.spi' = 'Die Werte sind gespeichert, Windows hat die Änderung aber nicht sofort übernommen. Sie wirkt nach dem nächsten Ab- und Anmelden.'
     'katalog.eee.keineCmdlets' = 'Die Netzwerk-Cmdlets (NetAdapter) sind nicht verfügbar.'
     'katalog.eee.keinAdapter' = 'Es ist kein kabelgebundener Netzwerkadapter verbunden.'
     'katalog.eee.cmdletsLesen' = 'Netzwerk-Cmdlets nicht verfügbar'

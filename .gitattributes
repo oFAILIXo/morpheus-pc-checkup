@@ -1,0 +1,2 @@
+# .cmd-Dateien immer mit CRLF auschecken (auch auf dem CI-Runner und in git archive); alles andere unveraendert.
+*.cmd text eol=crlf

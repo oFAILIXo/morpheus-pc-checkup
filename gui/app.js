@@ -56,6 +56,7 @@ const S = {
   ui: { f: {}, reveal: null, focusSpOrdner: false }, sel: new Set(), variant: {}, cmp: [], origName: null, scan: null, multiBtns: [],
   points: null, live: { state: 'idle', data: null }, sbOn: true, einfach: true, rest: {},
   speicher: null, spSrc: '', spApi: null, spPop: null, spJob: null, spOrdner: null, spoMsg: null, spoJob: null,   // Speicherverbraucher (Abschnitt 14.7)
+  jobs: new Map(),   // Aktivitätsanzeige (2.9, #141): id -> { id, art, werkzeug, status, gestartet, fortschritt, view, row }
 };
 
 // ---------------------------------------------------------------- DOM-Helfer
@@ -75,6 +76,7 @@ function h(tag, attrs, ...kids) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v == null || v === false) continue;
       if (k === 'class') e.className = v;
+      else if (k === 'style') e.style.cssText = v;   // CSSOM statt Attribut: CSP ohne 'unsafe-inline' (#123)
       else if (k === 'text') e.textContent = v;
       else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2), v);
       else if (k === 'checked' || k === 'value' || k === 'selected') e[k] = v;
@@ -101,7 +103,7 @@ function settingsLinks(text) {
 const svgNS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs) {
   const e = document.createElementNS(svgNS, tag);
-  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  for (const [k, v] of Object.entries(attrs || {})) { if (k === 'style') e.style.cssText = v; else e.setAttribute(k, v); }
   return e;
 }
 function icon(id) { const s = svg('svg', { class: 'i', 'aria-hidden': 'true' }); s.append(svg('use', { href: '#i-' + id })); return s; }
@@ -253,20 +255,196 @@ function startHeartbeat() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') beat(true); });
   window.addEventListener('focus', () => beat(true));
 }
-/** Job abfragen, bis er fertig ist. onLines bekommt neue Logzeilen. */
-async function followJob(id, onLines) {
+/** Job abfragen, bis er fertig ist. onLines bekommt neue Logzeilen, onProgress (optional) bei jeder Antwort
+ *  das Feld fortschritt oder null (2.8, #138). */
+/*  Je Job-Id fragt nur ein Poller ab; weitere Verfolger hängen sich an und bekommen die bisherigen Zeilen nachgereicht. */
+const jobPoller = new Map();
+function followJob(id, onLines, onProgress) {
+  let p = jobPoller.get(id);
+  if (!p) {
+    p = { log: [], subs: new Set(), fs: undefined };
+    p.done = jobPoll(id, p).finally(() => jobPoller.delete(id));
+    jobPoller.set(id, p);
+  }
+  const sub = { onLines, onProgress };
+  if (p.log.length) onLines(p.log.slice());
+  if (onProgress && p.fs !== undefined) onProgress(p.fs);
+  p.subs.add(sub);
+  return p.done;
+}
+async function jobPoll(id, p) {
   let from = 0, errs = 0;
+  const jeder = (f, ...a) => { for (const s of p.subs) { try { f(s, ...a); } catch (e) { console.error(e); } } };
   for (;;) {
     let j;
     try { j = await api(`/api/jobs/${encodeURIComponent(id)}?from=${from}`); errs = 0; }
     catch (e) { if (e.status === 401 || ++errs > 5) throw e; await sleep(1000); continue; }
-    if (j.log && j.log.length) { onLines(j.log); }
+    aktMelden(id, j);   // Aktivitätsanzeige (2.9, #141): Start, Fortschritt, Ende – nur Anzeige
+    if (j.log && j.log.length) { p.log.push(...j.log); jeder((s, l) => s.onLines(l), j.log); }
+    p.fs = j.fortschritt && typeof j.fortschritt === 'object' ? j.fortschritt : null;
+    jeder(s => { if (s.onProgress) s.onProgress(p.fs); });
     if (typeof j.next === 'number') from = j.next; else from += (j.log || []).length;
     if (j.status !== 'running') return j;
     await sleep(1000);
   }
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- Aktivitätsanzeige (2.9, #141)
+// Zeigt laufende und in dieser Sitzung beendete Jobs an. NUR ANZEIGE: startet, stoppt und reiht nichts; einzige Anfragen
+// sind GET /api/session (Werkzeug, Startzeit) und GET /api/jobs/<id> über followJob. Fertige Einträge bleiben bis zum
+// Schließen der Seite. Alle Texte per textContent.
+const AKT_ART = { scan: 'scan', run: 'aendern', undo: 'aendern', aendern: 'aendern', wartung: 'wartung', updatesuche: 'suche', speicher: 'speicher', defender: 'defender', sysinternals: 'sysinternals' };
+const AKT_INTERN = ['refresh', 'lesen'];   // Hintergrund-Lesen der Aktionszustände (Server bzw. Mock): nicht anzeigen
+const AKT_STATUS = { running: 'run', done: 'done', failed: 'fail' };
+const AKT_MAX = 20;
+let aktSyncLauf = null;
+function aktName(e) {
+  const k = AKT_ART[e.art];
+  if (k === 'defender') return t('menu.unter.defender');
+  if (k === 'sysinternals') return t('menu.unter.sysinternals');
+  if (k === 'wartung' && e.werkzeug === 'winget.upgrade') return t('menu.unter.updates');
+  const AKT_TEXT = { scan: () => t('akt.art.scan'), aendern: () => t('akt.art.aendern'), wartung: () => t('akt.art.wartung'), suche: () => t('akt.art.suche'), speicher: () => t('akt.art.speicher') };
+  const basis = (AKT_TEXT[k] || AKT_TEXT.wartung)();
+  if (k === 'wartung' && e.werkzeug && MENU_TEXTE.werkzeuge) {
+    const w = MENU_TEXTE.werkzeuge.find(x => x[0] === e.werkzeug);
+    if (w) return basis + ' · ' + w[1];
+  }
+  return basis;
+}
+/** Ziel des Links „Anzeigen“: wie die Unterpunkte des Menüs (navGehe), nie eine Aktion. */
+function aktZiel(e) {
+  const k = AKT_ART[e.art];
+  if (k === 'scan') return { key: 'scan', view: 'scan', leer: true };
+  if (k === 'aendern') return { key: 'aenderungen', view: 'aenderungen', leer: true };
+  if (k === 'suche' || (k === 'wartung' && e.werkzeug === 'winget.upgrade')) return { key: 'werkzeuge/updates', view: 'werkzeuge', ziel: { sel: '#upd-card' } };
+  if (k === 'wartung') return e.werkzeug ? { key: 'werkzeuge/wt/' + e.werkzeug, view: 'werkzeuge', ziel: { wt: e.werkzeug } } : { key: 'werkzeuge/wartung', view: 'werkzeuge', ziel: { sel: '#wartung-card' } };
+  if (k === 'defender') return { key: 'werkzeuge/defender', view: 'werkzeuge', ziel: { sel: '#def-card' } };
+  if (k === 'sysinternals') return { key: 'werkzeuge/sysinternals', view: 'werkzeuge', ziel: { sel: '#sys-card' } };
+  // Speicher: dort, wo er gestartet wurde (Speicher-Fenster oder Karte „Spiele-Ordner“)
+  if (e.view && e.view !== 'werkzeuge') return { key: e.view, view: e.view, leer: true };
+  return { key: 'werkzeuge/spiele', view: 'werkzeuge', ziel: { sel: '#spo-card' } };
+}
+/** „Anzeigen“ (#160): Hat die GUI zum Job noch ihr Fenster (Wartung, winget-Update, Update-Suche), wieder öffnen
+ *  und true liefern; reine Anzeige über die vorhandenen Verfolger, keine neue Anfrage. Sonst false (Karte wie bisher). */
+function aktFenster(e) {
+  const k = AKT_ART[e.art];
+  if (k === 'wartung') { const c = WT.get(e.id) || WT_FERTIG.get(e.id); if (c) { wtShow(c); return true; } }
+  if (k === 'suche') { const c = WT_SEARCH.get(e.id); if (c) { updShowSearch(c); return true; } }
+  return false;
+}
+/** Eintrag aus einer Job-Antwort (followJob) oder aus /api/session.jobs übernehmen. */
+function aktMelden(id, j) {
+  if (!j || typeof id !== 'string' || !/^[A-Za-z0-9]{1,40}$/.test(id)) return;
+  const art = typeof j.art === 'string' ? j.art : '';
+  if (!art || AKT_INTERN.includes(art) || !AKT_ART[art]) return;
+  let e = S.jobs.get(id), neu = false;
+  if (!e) {
+    if (S.jobs.size >= 50) { const alt = [...S.jobs.values()].find(x => x.status !== 'running'); if (alt) S.jobs.delete(alt.id); }
+    e = { id, art, werkzeug: null, status: 'running', gestartet: null, fortschritt: null, view: S.view, row: null };
+    S.jobs.set(id, e); neu = true;
+  }
+  if (typeof j.status === 'string' && AKT_STATUS[j.status]) e.status = j.status;
+  if (typeof j.werkzeug === 'string' && /^[a-z0-9.]{1,40}$/.test(j.werkzeug)) e.werkzeug = j.werkzeug;
+  if (typeof j.gestartet === 'string') e.gestartet = j.gestartet;
+  if ('fortschritt' in j) e.fortschritt = j.fortschritt && typeof j.fortschritt === 'object' ? j.fortschritt : null;
+  // Werkzeug und Startzeit kennt nur /api/session (die Job-Abfrage liefert sie nicht): einmal nachlesen
+  if (neu && !('gestartet' in j)) aktSync();
+  aktZeichnen();
+}
+function aktSync() {
+  if (aktSyncLauf) return;
+  aktSyncLauf = (async () => {
+    await sleep(300);
+    try { await loadSession(); } catch (e) { /* nur Anzeige: ohne Werkzeugnamen weiter */ }
+    finally { aktSyncLauf = null; }
+  })();
+}
+/** Nach dem (Neu-)Laden: Einträge aus /api/session.jobs übernehmen; laufenden Jobs wieder folgen (nur Anzeige). */
+function aktAusSession() {
+  const liste = S.session && Array.isArray(S.session.jobs) ? S.session.jobs.slice(0, AKT_MAX) : [];
+  for (const j of liste.slice().reverse()) {   // Server: neueste zuerst; hier in Startreihenfolge eintragen
+    if (!j || typeof j.id !== 'string') continue;
+    const kannte = S.jobs.has(j.id);
+    aktMelden(j.id, j);
+    const e = S.jobs.get(j.id);
+    if (e && !kannte && e.status === 'running') {
+      e.view = null;
+      followJob(e.id, () => {}).catch(err => { if (err && err.status === 404) { S.jobs.delete(e.id); aktZeichnen(); } /* sonst bleibt der letzte Stand */ });
+    }
+  }
+}
+let aktBtn = null, aktPop = null, aktListe = null, aktKopf = null;
+function initAkt() {
+  const ki = $('#ki-btn'); if (!ki || aktBtn) return;
+  aktBtn = h('button', { type: 'button', class: 'btn ghost akt-btn', id: 'akt-btn', hidden: true, 'aria-expanded': 'false', 'aria-controls': 'akt-pop' });
+  aktKopf = h('p', { class: 'akt-kopf' });
+  aktListe = h('ul', { class: 'akt-liste' });
+  aktPop = h('div', { class: 'akt-pop', id: 'akt-pop', role: 'region', hidden: true, tabindex: '-1' }, h('h2', { class: 'akt-titel', id: 'akt-titel' }), aktKopf, aktListe);
+  aktPop.setAttribute('aria-labelledby', 'akt-titel');
+  const wrap = h('div', { class: 'akt' }, aktBtn, aktPop);
+  ki.before(wrap);
+  aktBtn.addEventListener('click', () => aktOeffnen(aktPop.hidden));
+  wrap.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !aktPop.hidden) { ev.preventDefault(); ev.stopPropagation(); aktOeffnen(false); aktBtn.focus(); } });
+  document.addEventListener('click', ev => { if (!aktPop.hidden && !wrap.contains(ev.target)) aktOeffnen(false); });
+  aktZeichnen();
+}
+function aktOeffnen(auf) {
+  if (!aktPop) return;
+  aktPop.hidden = !auf;
+  aktBtn.setAttribute('aria-expanded', auf ? 'true' : 'false');
+  if (auf) { aktZeichnen(); const l = aktListe.querySelector('a'); (l || aktPop).focus(); }
+}
+function aktZeile(e) {
+  const bar = progressBar();
+  bar.node.classList.add('akt-fs');
+  const name = h('b', { class: 'akt-name' });
+  const link = h('a', { href: '#/' + aktZiel(e).view, class: 'akt-link', text: t('akt.anzeigen') });
+  link.addEventListener('click', ev => { ev.preventDefault(); aktOeffnen(false); if (!aktFenster(e)) navGehe(aktZiel(e)); });
+  const li = h('li', { class: 'akt-zeile' }, h('div', { class: 'akt-z1' }, name, link), bar.node);
+  return { li, bar, name, link };
+}
+function aktZeichnen() {
+  if (!aktBtn) return;
+  const alle = [...S.jobs.values()];
+  const laufen = alle.filter(e => e.status === 'running').length;
+  aktBtn.hidden = alle.length === 0;
+  aktBtn.classList.toggle('laeuft', laufen > 0);
+  const titel = t('akt.titel');
+  // Knopf nur bei geändertem Inhalt neu aufbauen: sonst entstünde der Spinner bei jeder Job-Antwort neu und seine Drehung begänne von vorn
+  const text = laufen > 0 ? t('akt.laeuft', laufen) : titel;
+  if (aktBtn.dataset.inhalt !== text) {
+    aktBtn.dataset.inhalt = text;
+    aktBtn.replaceChildren(...(laufen > 0 ? [h('span', { class: 'pk-spin', 'aria-hidden': 'true' }), text] : [text]));
+    aktBtn.setAttribute('aria-label', laufen > 0 ? titel + ': ' + text : titel);
+  }
+  if (!aktPop || aktPop.hidden) return;
+  aktPop.querySelector('.akt-titel').textContent = titel;
+  aktKopf.textContent = laufen > 0 ? t('akt.laeuft', laufen) : t('akt.leer');
+  // neueste zuerst; Zeilen bleiben bestehen (Fokus auf einem Link geht beim Aktualisieren nicht verloren)
+  const sortiert = alle.slice().reverse().slice(0, AKT_MAX);
+  for (const e of sortiert) {
+    if (!e.row) e.row = aktZeile(e);
+    e.row.name.textContent = aktName(e);
+    e.row.link.href = '#/' + aktZiel(e).view;
+    e.row.bar.set(e.fortschritt);
+    e.row.bar.state(AKT_STATUS[e.status] || 'run');
+  }
+  const soll = sortiert.map(e => e.row.li);
+  if (soll.length !== aktListe.children.length || soll.some((li, i) => aktListe.children[i] !== li)) aktListe.replaceChildren(...soll);
+}
+// Schließen mit laufenden Aufgaben (#161): Standarddialog des Browsers (Text nicht änderbar), nur wenn ein Job läuft.
+// Der Job läuft im Server weiter, das Fenster ist dann aber weg und Morpheus lässt sich bis zum Ende nicht neu starten.
+// F5/Strg+R laden dieselbe Seite neu und holen sich den Stand aus /api/session: dafür kein Dialog.
+let aktNeuladen = false;
+document.addEventListener('keydown', e => {
+  if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r')) { aktNeuladen = true; setTimeout(() => { aktNeuladen = false; }, 1500); }
+}, true);
+window.addEventListener('beforeunload', e => {
+  if (aktNeuladen || ![...S.jobs.values()].some(j => j.status === 'running')) return;
+  e.preventDefault();
+  e.returnValue = '';
+});
 
 // ---------------------------------------------------------------- Daten laden
 const normName = n => String(n || '').replace(/\.(json|html|md)$/i, '');
@@ -306,7 +484,7 @@ function refreshActionStates() {
   })();
   return statesRun;
 }
-async function loadSession() { S.session = await api('/api/session'); }
+async function loadSession() { S.session = await api('/api/session'); aktAusSession(); }
 async function loadAll() {
   await Promise.all([loadSession(), loadReports()]);
   await Promise.all([
@@ -416,8 +594,109 @@ let RUN_STEPS = [];   // Schritte der Anzeige: [Name, Muster für die Logzeile];
 let RESULT_TEXT = {};
 const FORCE_RE = /zustand.*ge[äa]ndert|ge[äa]ndert.*zustand|state.*changed|changed.*state/i;
 
-/** Gemeinsame Anzeige eines laufenden Jobs im Dialog: Schritte, Live-Log, Ergebnis. */
-function jobView(steps, confirm = false) {
+/** Fortschrittsbalken mit Statuszeile (2.8, #138). set(f): Feld fortschritt des Servers oder null (= Laufbalken
+ *  ohne Zahl); state(z): run|wait|done|fail|stop|offen. Alle Texte per textContent, Farben nur über Zustandsklassen. */
+const FS_STATES = { run: 'fs.laeuft', wait: 'fs.wartetDialog', done: 'fs.fertig', fail: 'fs.fehler', stop: 'fs.abgebrochen', offen: 'fs.offen' };
+function progressBar(opts = {}) {
+  const fill = h('i');
+  const meter = h('div', { class: 'meter offen', role: 'progressbar', 'aria-label': t('fs.aria'), 'aria-valuemin': '0', 'aria-valuemax': '100' }, fill);
+  const st = h('span', { class: 'fs-st' }), val = h('span', { class: 'fs-val' }), txt = h('span', { class: 'fs-txt' });
+  const node = h('div', { class: 'fs fs-run' }, meter, h('div', { class: 'fs-zeile' }, st, val, txt));
+  let zustand = '';
+  const self = {
+    node,
+    set(f) {
+      const m = f && (f.modus === 'prozent' || f.modus === 'zaehler') ? f.modus : null;
+      txt.textContent = f && typeof f.text === 'string' ? f.text.slice(0, 120) : '';
+      if (!m) { meter.classList.add('offen'); meter.removeAttribute('aria-valuenow'); meter.removeAttribute('aria-valuetext'); fill.style.width = ''; val.textContent = ''; return; }
+      let pct, vt;
+      if (m === 'zaehler') {
+        const n = Math.max(1, Math.min(9999, Math.floor(Number(f.n) || 0)));
+        const i = Math.max(0, Math.min(n, Math.floor(Number(f.i) || 0)));
+        pct = Math.floor(100 * i / n); vt = t(opts.zaehler || 'fs.zaehler', i, n);
+      } else { pct = Math.round(clampPct(f.prozent)); vt = t('fs.prozent', pct); }
+      meter.classList.remove('offen');
+      fill.style.width = pct + '%';
+      meter.setAttribute('aria-valuenow', String(pct)); meter.setAttribute('aria-valuetext', vt);
+      val.textContent = vt;
+    },
+    state(z) {
+      if (!FS_STATES[z] || z === zustand) return;
+      zustand = z;
+      node.className = 'fs fs-' + z;
+      st.textContent = t(FS_STATES[z]);
+      if (z === 'done' && !meter.classList.contains('offen')) { fill.style.width = '100%'; meter.setAttribute('aria-valuenow', '100'); }
+    },
+    get zustand() { return zustand; },
+  };
+  return self;
+}
+/** Laufbalken ohne Zahl (Modus „offen“) über der Fortschrittszeile von Jobs ohne Job-Dialog (2.9, #149) */
+function laufBalken() { const b = progressBar(); b.set(null); b.state('run'); return b.node; }
+
+/** Paketliste des winget-Laufs (2.9, #140): vier Gruppen mit Zähler, leere Gruppen verborgen. Namen und Versionen setzt
+ *  der Server aus seiner eigenen Paketliste, nie aus dem Job; alles per textContent. Abgebrochene stehen unter „offen“. */
+const PK_STATUS = ['offen', 'laeuft', 'fertig', 'fehler', 'abgebrochen'];
+const PK_GRP = [['fertig', 'upd.grpFertig', ['fertig']], ['laeuft', 'upd.grpLaeuft', ['laeuft']], ['offen', 'upd.grpOffen', ['offen', 'abgebrochen']], ['fehler', 'upd.grpFehler', ['fehler']]];
+const PK_CHIP = { fertig: ['OK', 'upd.stFertig'], offen: ['SKIP', 'upd.stOffen'], fehler: ['CRIT', 'upd.stFehler'], abgebrochen: ['WARN', 'upd.stAbgebrochen'] };
+function pkChip(st) {
+  if (st === 'laeuft') return h('span', { class: 'chip pk-run' }, h('span', { class: 'pk-spin', 'aria-hidden': 'true' }), t('upd.stLaeuft'));
+  const c = PK_CHIP[st] || PK_CHIP.offen;
+  return h('span', { class: 'chip ' + c[0], text: t(c[1]) });
+}
+/** Grund je fehlgeschlagenem Paket aus dem Job-Ergebnis (2.9, #154): id -> Text aus Exit-Code, Meldung und den letzten
+ *  winget-Zeilen (Feld ausgabe). Nur aus GET /api/jobs/<id>, nie aus dem Fortschritt; Länge begrenzt, Anzeige per textContent. */
+const PK_DET_MAX = 2500;
+function pkgDetails(res) {
+  const m = {};
+  [].concat((res && res.pakete) || []).filter(Boolean).slice(0, 200).forEach(p => {
+    if (typeof p.id !== 'string' || (p.status !== 'fehlgeschlagen' && p.status !== 'laeuft-noch')) return;
+    const teile = [];
+    const ec = Number(p.exitCode);
+    if (p.exitCode != null && p.exitCode !== '' && Number.isFinite(ec)) {
+      teile.push(t('jr.exit', ec >= -2147483648 && ec <= 4294967295 ? `${ec} (0x${(ec >>> 0).toString(16).toUpperCase().padStart(8, '0')})` : String(ec)));
+    }
+    if (p.text) teile.push(String(p.text).slice(0, 500));
+    if (p.ausgabe) teile.push(String(p.ausgabe).slice(0, 2000));
+    const s = teile.join('\n');
+    if (s) m[p.id] = s.length > PK_DET_MAX ? s.slice(0, PK_DET_MAX - 1) + '…' : s;
+  });
+  return m;
+}
+function pkgList() {
+  const node = h('div', { class: 'pk-liste' });
+  let last = '';
+  return {
+    node,
+    /** el: Feld fortschritt.elemente des Servers; alles andere als eine Liste lässt die Anzeige stehen.
+     *  det: optional pkgDetails(ergebnis) – aufklappbare Details an fehlgeschlagenen Paketen (#154). */
+    set(el, det) {
+      if (!Array.isArray(el)) return;
+      const arr = el.filter(x => x && typeof x.id === 'string' && PK_STATUS.includes(x.status)).slice(0, 200);
+      const d = det && typeof det === 'object' ? det : {};
+      const key = JSON.stringify(arr.map(x => [x.id, x.status, x.status === 'fehler' ? d[x.id] || '' : '']));
+      if (key === last) return;   // nur bei Änderung neu zeichnen (Spinner und Fokus bleiben ruhig)
+      last = key;
+      node.replaceChildren(...PK_GRP.map(([k, titel, sts]) => {
+        const items = arr.filter(x => sts.includes(x.status));
+        if (!items.length) return null;
+        return h('section', { class: 'pk-grp pk-' + k }, h('h4', { text: t(titel, items.length) }),
+          h('ul', null, items.map(x => h('li', null, pkChip(x.status), h('b', { text: String(x.name || x.id) }),
+            (x.von || x.auf) ? h('span', { class: 'muted', text: ` ${String(x.von || '?')} → ${String(x.auf || '?')}` }) : null,
+            x.status === 'fehler' && d[x.id] ? h('details', { class: 'pk-det' }, h('summary', { text: t('scan.details') }),
+              h('pre', { class: 'log', text: String(d[x.id]).slice(0, PK_DET_MAX) })) : null))));
+      }).filter(Boolean));
+    },
+  };
+}
+
+/** Gemeinsame Anzeige eines laufenden Jobs im Dialog: Balken, Schritte, Live-Log, Ergebnis.
+ *  Schritte: [Name, Muster für die Logzeile, Phasenkennung des Servers (optional)]. opts.liste: Paketliste (winget, 2.9). */
+function jobView(steps, confirm = false, opts = {}) {
+  const bar = progressBar();
+  const pl = opts.liste ? pkgList() : null;
+  bar.state(confirm ? 'wait' : 'run');
+  let ended = false;
   const ul = h('ul', { class: 'steps', 'aria-label': t('run.ablauf') }, steps.map(s => h('li', null, h('span', { class: 's' }), s[0])));
   // Das Protokoll ist zum Nachlesen; angesagt wird nur der aktuelle Schritt (2.7, #95), sonst liest ein Screenreader jede Logzeile vor
   const log = h('pre', { class: 'log', 'aria-live': 'off', tabindex: '0', 'aria-label': t('run.protokoll'), text: '' });
@@ -428,19 +707,37 @@ function jobView(steps, confirm = false) {
   // Nur bei echtem Wechsel neu setzen, sonst startet die Haken-Animation bei jeder Logzeile neu
   const setLi = (li, cls) => { if (li.className === cls) return; li.className = cls; li.firstChild.replaceChildren(cls === 'done' ? icon('tick') : (cls === 'fail' ? icon('x') : '')); };
   const mark = (idx, cls) => { [...ul.children].forEach((li, i) => setLi(li, i < idx ? 'done' : (i === idx ? cls : ''))); };
+  // Schritt vorwärts schalten (Logzeile oder Phase); angesagt wird nur der Wechsel, nie jeder Prozentwert
+  const goTo = i => {
+    if (i > cur) { cur = i; mark(i, 'run'); live.textContent = t('run.schrittLive', i + 1, steps.length, steps[i][0]); }
+    else if (i === cur) mark(i, 'run');
+  };
   return {
-    get nodes() { return [hint, ul, log, live].filter(Boolean); }, ul, log,
+    get nodes() { return [hint, bar.node, pl && pl.node, ul, log, live].filter(Boolean); }, ul, log, bar, pl,
+    /** Antwort des Servers: Feld fortschritt oder null. Eine bekannte Phase schaltet den Schritt weiter (nur vorwärts). */
+    progress(f) {
+      if (ended) return;
+      if (hint) { hint.remove(); hint = null; }
+      bar.state('run');
+      bar.set(f);
+      if (pl && f) pl.set(f.elemente);
+      const ph = f && typeof f.phase === 'string' ? f.phase : '';
+      if (ph) { const i = steps.findIndex(s => s[2] === ph); if (i >= 0) goTo(i); }
+    },
     lines(arr) {
       if (arr.length && hint) { hint.remove(); hint = null; }
+      if (arr.length && !ended) bar.state('run');
       for (const l of arr) {
         log.append(document.createTextNode(l + '\n'));
         const i = steps.findIndex((s, k) => k >= cur && s[1].test(l));
-        if (i >= 0 && i > cur) { cur = i; mark(i, 'run'); live.textContent = t('run.schrittLive', i + 1, steps.length, steps[i][0]); }
-        else if (i >= 0 && i >= cur) { cur = i; mark(i, 'run'); }
+        if (i >= 0) goTo(i);
       }
       log.scrollTop = log.scrollHeight;
     },
-    finish(ok) {
+    /** ok: true/false; stopped: abgebrochen statt fehlgeschlagen */
+    finish(ok, stopped = false) {
+      ended = true;
+      bar.state(ok ? 'done' : (stopped ? 'stop' : 'fail'));
       if (hint) { hint.remove(); hint = null; }
       if (ok) [...ul.children].forEach(li => setLi(li, 'done')); else mark(Math.max(cur, 0), 'fail');
       live.textContent = ok ? t('run.liveFertig') : t('run.liveFehler');
@@ -510,7 +807,7 @@ async function startRun(actions, title, variante) {
     const body = { ids: actions.map(a => a.id) };
     if (v) body.variante = v;
     const r = await api('/api/actions/run', { method: 'POST', body });
-    job = await followJob(r.jobId, jv.lines);
+    job = await followJob(r.jobId, jv.lines, jv.progress);
   } catch (e) { err = e; }
   const msg = err ? err.message : (job && job.status === 'failed' && job.ergebnis && job.ergebnis.error) || '';
   finishJob(title, jv, job, err, t('btn.fertig'), false, sperreAusweg(msg));
@@ -558,7 +855,7 @@ async function startUndo(e, force, vorRep) {
   let job = null, err = null;
   try {
     const r = await api(`/api/journal/${encodeURIComponent(e.id)}/undo`, { method: 'POST', body: Object.assign({}, force ? { force: true } : null, vorRep ? { vorReparatur: true } : null) });
-    job = await followJob(r.jobId, jv.lines);
+    job = await followJob(r.jobId, jv.lines, jv.progress);
   } catch (x) { err = x; }
   const msg = err ? err.message : (job && job.status === 'failed' && job.ergebnis && job.ergebnis.error) || '';
   if (!vorRep && /vor der Reparatur des Datenordners|before (the )?repair(ing)? (of )?the data folder/i.test(msg)) {
@@ -602,7 +899,10 @@ function actionCard(a, inFinding) {
   if (done && !restartPending(a)) {
     return h('div', { class: 'action quiet one', 'data-id': a.id },
       h('div', { class: 'ah' }, icon('tick'), h('span', { class: 'at', text: a.titel }),
-        h('div', { class: 'acts' }, h('span', { class: 'state on', text: t('karte.bereitsErledigt') }))));
+        h('div', { class: 'acts' },
+          // #166: „Zurücknehmen“ nur, wenn Morpheus die Anpassung selbst gesetzt hat (Server: a.zuruecknehmen = Journal-Eintrag); dieselbe Rückgängig-Route samt Bestätigung
+          a.zuruecknehmen && !readOnly() ? h('button', { type: 'button', class: 'sm', 'data-f': 'zuruecknehmen', 'aria-label': t('karte.zuruecknehmenAria', a.titel), onclick: () => openUndoDialog(a.zuruecknehmen) }, icon('undo'), t('karte.zuruecknehmen')) : null,
+          h('span', { class: 'state on', text: t('karte.bereitsErledigt') }))));
   }
   const hasVar = a.varianten && a.varianten.length;
   const stateNode = h('span', { class: 'state ' + (z.aktiv === true ? 'on' : (z.aktiv === false ? 'off' : 'unk')), title: z.stand ? t('karte.gelesen', fmtDate(z.stand)) : null },
@@ -670,6 +970,7 @@ function findingRow(f, opts = {}) {
     f.Recommendation ? h('div', { class: 'frec' }, settingsLinks(f.Recommendation)) : null,
     defenderTool(f),
     einfach ? null : sysTool(f),   // Sysinternals gibt es nur im Experten-Modus
+    updTool(f),
     // Stufen nur ohne Aktionskarte, die zeigt sie selbst; Merken/Akzeptieren/Rohdaten ruhig in der Fußzeile (2.7, #92)
     lvl && !acts.length ? h('div', { class: 'lvwrap' }, lvl) : null,
     howTo(f),
@@ -695,6 +996,15 @@ function sysTool(f) {
   else if (f.Status === 'WARN' && /nicht ausgeführt|not (run|executed)/i.test(v)) text = t('sys.neuLadenLink');
   if (!text) return null;
   return h('div', { class: 'deftool' }, h('a', { href: '#/werkzeuge', text }));
+}
+/** Link am Befund „Software-Updates (winget)“ zur Update-Karte unter „Werkzeuge“ (2.9, #153), wenn der Befund Updates meldet.
+ *  Nur Navigation wie die Aktivitätsanzeige (navGehe, Ziel #upd-card), in beiden Modi. */
+function updTool(f) {
+  if (norm(f.Check) !== 'Software-Updates (winget)') return null;
+  const st = f.Status === 'ACK' ? f.OriginalStatus : f.Status;
+  if (st !== 'WARN' && st !== 'INFO') return null;
+  return h('div', { class: 'deftool' }, h('a', { href: '#/werkzeuge', 'data-f': 'upd-sprung', text: t('upd.zurKarte'),
+    onclick: ev => { ev.preventDefault(); navGehe({ key: 'werkzeuge/updates', view: 'werkzeuge', ziel: { sel: '#upd-card' } }); } }));
 }
 function toggleMark(check, state) {
   // Im Nur-Lesen-Modus speichert der Server nichts (403), also auch lokal nichts ändern
@@ -1075,7 +1385,7 @@ function initTopbar() {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (tg && tg.isContentEditable)) return;
     e.preventDefault(); gs.focus(); gs.select();
   });
-  $('#ki-btn').addEventListener('click', e => { if (S.report) copyText(buildKi(), $('#ki-btn span')); });
+  $('#ki-btn').addEventListener('click', e => { if (S.report) kiVorschau(buildKi()); });
 }
 
 // ---------------------------------------------------------------- Ansicht: Kategorien
@@ -1312,31 +1622,59 @@ function changesCard(ch) {
     !status.length && !Object.keys(bestand).length ? h('p', { text: t('chg.keine') }) : null);
 }
 
-// ---------------------------------------------------------------- KI-Kopie (Anonymisierung wie Protect-Text in pc-check.ps1)
+// ---------------------------------------------------------------- Anonymisierung (#118)
+// Reine Funktion ohne DOM. Dieselben Regeln wie Protect-Text in pc-check.ps1; beide laufen mit den Testfällen aus
+// tests/anonymisierung.testfaelle.json (tests/Anonymisierung.Tests.ps1). Regeln beim Ändern in beiden Dateien nachziehen.
+// ctx: { pc, user, anzeige, netzwerke[], konten[], tokBenutzer, tokEmail }
+// ANONYM-BEGIN
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const ANON_NB = '0-9A-Za-zÄÖÜäöüß';
+const ANON_H = '[0-9a-f]{1,4}';
+const ANON_ALLG = /^(?:netzwerk|network|unidentified network|nicht identifiziertes netzwerk|ethernet|wlan|wi-?fi|lan)(?: [0-9]+)?$/i;
+const ANON_EMAIL = /[A-Za-z0-9_.+-]+@[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+/gi;
+const ANON_SID = /S-1-5-21-[0-9-]+/gi;
+const ANON_MAC = /\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b/gi;
+const ANON_IPV4 = /(?<![0-9.])(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(?![0-9]|\.[0-9])/gi;
+const ANON_IPV6 = new RegExp(`(?<![0-9A-Za-z:.])(?:(?:${ANON_H}:){7}${ANON_H}|${ANON_H}(?::${ANON_H}){0,6}::(?:${ANON_H}(?::${ANON_H}){0,6})?|::${ANON_H}(?::${ANON_H}){0,6})(?:%[0-9A-Za-z]+)?(?![0-9A-Za-z:])`, 'gi');
+const ANON_PROFIL = /(\\{1,2}Users\\{1,2})(?!(?:Public|Default)(?:[\\\s"']|$))[^\\\s"']+/gi;
+const ANON_SERIEN = /((?:Seriennummer|Serial(?:[ -]?(?:No\.?|Number|Nr\.?))?|S\/N|\bSN|Service[ -]?Tag)["']?[ \t]*[:=#][ \t]*["']?)[A-Za-z0-9][A-Za-z0-9._-]{3,}/gi;
+const ANON_SSID = /(\bSSID["']?[ \t]*[:=][ \t]*["']?)[^;,\r\n"']+/gi;
 function protect(text, ctx) {
   if (!text) return '';
+  ctx = ctx || {};
+  const tb = ctx.tokBenutzer || '<Benutzer>', te = ctx.tokEmail || '<E-Mail>';
+  const wort = (name, fl) => new RegExp(`(?<![${ANON_NB}])${reEsc(name)}(?![${ANON_NB}])`, fl);
   let s = String(text);
   if (ctx.pc) s = s.replace(new RegExp(reEsc(ctx.pc), 'gi'), '<PC>');
-  if (ctx.user && ctx.user.length >= 3) s = s.replace(new RegExp(reEsc(ctx.user), 'gi'), '<Benutzer>');
-  s = s.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '<E-Mail>')
-    .replace(/S-1-5-21-[\d-]+/gi, '<SID>')
-    .replace(/\b([0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b/gi, '<MAC>')
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '<IP>')
-    .replace(/\bfe80:[0-9a-f:%]*|\b[0-9a-f]{4}:[0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f:]+/gi, '<IPv6>')
-    .replace(/(\\Users\\)[^\\\s"']+/gi, '$1<Benutzer>'); // zusätzlich zur PS-Fassung: Profilordner
-  return s;
+  if (ctx.anzeige && ctx.anzeige.length >= 3) s = s.replace(new RegExp(reEsc(ctx.anzeige), 'gi'), '<Name>');
+  const u = ctx.user || '';
+  if (u.length >= 3) s = s.replace(new RegExp(reEsc(u), 'gi'), tb);
+  else if (u) {   // 1–2 Zeichen: nur als PC\Name und (ab 2 Buchstaben) als ganzes Wort mit gleicher Schreibung, sonst würden Wörter zerstört
+    if (ctx.pc) s = s.replace(new RegExp(`(<PC>\\\\)${reEsc(u)}(?![${ANON_NB}_])`, 'gi'), '$1' + tb);
+    if (u.length === 2 && /[A-Za-z]/.test(u)) s = s.replace(wort(u, 'g'), tb);
+  }
+  (ctx.konten || []).forEach(k => { if (k && String(k).length >= 3) s = s.replace(wort(String(k), 'gi'), tb); });
+  (ctx.netzwerke || []).forEach(n => { if (n && String(n).length >= 3 && !ANON_ALLG.test(String(n).trim())) s = s.replace(wort(String(n), 'gi'), '<WLAN>'); });
+  return s.replace(ANON_EMAIL, te).replace(ANON_SID, '<SID>').replace(ANON_MAC, '<MAC>')
+    .replace(ANON_IPV4, '<IP>').replace(ANON_IPV6, '<IPv6>')
+    .replace(ANON_PROFIL, '$1' + tb).replace(ANON_SERIEN, '$1<Serial>').replace(ANON_SSID, '$1<WLAN>');
 }
+// ANONYM-END
 function kiCtx() {
-  const m = (S.report && S.report.Meta) || {};
-  return { pc: m.Computer || (S.session && S.session.pc) || '', user: (S.session && (S.session.benutzer || S.session.user)) || ((S.journal || [])[0] || {}).benutzer || '' };
+  const m = (S.report && S.report.Meta) || {}, D = (S.report && S.report.Data) || {}, se = S.session || {};
+  return {
+    pc: m.Computer || se.pc || '',
+    user: se.benutzer || se.user || ((S.journal || [])[0] || {}).benutzer || '',
+    anzeige: se.anzeigename || '',
+    netzwerke: (D['Netzwerkprofile'] || []).map(r => r && r.Netzwerk).filter(Boolean),
+    konten: (D['Lokale Benutzerkonten'] || []).filter(r => r && r.Name && !/-50[0-4]$/.test(String(r.SID || ''))).map(r => r.Name),   // ohne eingebaute Konten (RID 500–504)
+    tokBenutzer: t('ki.tokBenutzer'), tokEmail: t('ki.tokEmail')
+  };
 }
+/** „Für KI kopieren“: derselbe Datenblock mit Markierung wie bei „KI fragen“ (kiRahmen), Inhalt = alle Befunde. */
 function buildKi() {
   const m = S.report.Meta, sys = ((S.report.Data || {}).System || [])[0] || {};
-  const ctx = kiCtx();
-  const c = counts(S.findings), L = [];
-  L.push(t('ki.zeile1'));
-  L.push(t('ki.zeile2'), '');
+  const ctx = kiCtx(), c = counts(S.findings), L = [];
   L.push(t('ki.system', sys.Edition || 'Windows', sys.Version || '', m.Version || '', jaNein(m.Admin)));
   L.push(t('ki.nutzung', m.Profil || ''));
   L.push(t('ki.uebersicht', c.CRIT, c.WARN, c.TIPP, c.ACK, c.INFO, c.OK));
@@ -1345,26 +1683,43 @@ function buildKi() {
     if (!list.length) return;
     L.push('', `== ${STATUS_NAME[s]} ==`);
     list.forEach(f => {
-      L.push(`- [${areaName(f)} / ${catName(f)}] ${chkName(f)}: ${protect(f.Value, ctx)}`);
-      if (f.Recommendation) L.push(t('ki.empfehlung', protect(f.Recommendation, ctx)));
-      if (s === 'ACK') L.push(t('ki.akzeptiert', protect(f.Note, ctx)));
+      L.push(`- [${areaName(f)} / ${catName(f)}] ${chkName(f)}: ${kiClean(f.Value, ctx, KI_MAX_WERT)}`);
+      if (f.Recommendation) L.push(t('ki.empfehlung', kiClean(f.Recommendation, ctx, KI_MAX_WERT)));
+      if (s === 'ACK') L.push(t('ki.akzeptiert', kiClean(f.Note, ctx, KI_MAX_WERT)));
     });
   });
-  return L.join('\n');
+  return kiRahmen([t('ki.zeile1'), t('ki.zeile2')], L.join('\n'), KI_MAX_BERICHT);
+}
+/** Vorschau vor dem Kopieren (#118): Der Text steht im Feld; kopiert wird erst auf „Kopieren“, genau der Inhalt des Feldes. */
+function kiVorschau(text) {
+  const ta = h('textarea', { class: 'ki-vorschau', rows: '16', spellcheck: 'false', 'aria-label': t('ki.vorschau.titel') });
+  ta.value = text;
+  const grenzen = h('details', { class: 'ki-grenzen' }, h('summary', { text: t('ki.grenzen.titel') }),
+    h('p', { text: t('ki.grenzen.ersetzt') }), h('p', { text: t('ki.grenzen.bleibt') }));
+  dlgOpen(t('ki.vorschau.titel'), [h('p', { class: 'muted', text: t('ki.vorschau.hinweis') }), ta, grenzen],
+    [{ label: t('btn.abbrechen'), onClick: dlgClose }, { label: t('kopieren.knopf'), primary: true, onClick: () => { copyText(ta.value, null); dlgClose(); } }]);
 }
 
 // ---------------------------------------------------------------- Knopf „KI fragen“ (2.7, #101)
 // Kopiert eine Frage für eine beliebige KI, die eine Prüfung, Anpassung oder Funktion in einfachen Worten erklären lässt.
 // Nur Zwischenablage, kein Netz. Persönliches wird wie bei „Für KI kopieren“ ersetzt (protect). Werte vom PC stehen in einem
 // Datenblock mit zufälliger Markierung, damit z. B. ein Autostart-Name wie „Ignoriere alles …“ für die KI keine Anweisung wird.
-const KI_KEY = 'morpheusKiFragen', KI_MAX = 700, KI_MAX_GESAMT = 6000;
+const KI_KEY = 'morpheusKiFragen', KI_MAX = 700, KI_MAX_GESAMT = 6000, KI_MAX_WERT = 1500, KI_MAX_BERICHT = 60000;
 function kiOn() { try { return localStorage.getItem(KI_KEY) !== '0'; } catch { return true; } }
-function kiClean(v, ctx) {
+function kiClean(v, ctx, max = KI_MAX) {
   if (v == null || v === '') return '';
   let s = protect(Array.isArray(v) ? v.filter(x => x != null && x !== '').join('; ') : String(v), ctx)
     .replace(/\r/g, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f​-‏‪-‮⁦-⁩]/g, '').replace(/\n{3,}/g, '\n\n').trim();
-  if (s.length > KI_MAX) s = s.slice(0, KI_MAX) + t('kf.gekuerzt');
+  if (s.length > max) s = s.slice(0, max) + t('kf.gekuerzt');
   return s;
+}
+/** Gemeinsamer Rahmen von „KI fragen“ und „Für KI kopieren“: Kopf, Stilhinweis, Datenblock mit zufälliger Markierung, Sprache. */
+function kiRahmen(kopf, daten, max) {
+  const mk = kiMarke();
+  // Die Markierung darf im Datenteil nicht vorkommen (praktisch ausgeschlossen, aber billig zu prüfen)
+  daten = daten.split(mk).join('');
+  if (daten.length > max) daten = daten.slice(0, max) + t('kf.gekuerzt');
+  return [...kopf, '', t('kf.stil'), '', t('kf.datenHinweis', mk), t('kf.anfang', mk), daten, t('kf.ende', mk), '', t('kf.sprache')].join('\n');
 }
 function kiMarke() {
   const a = new Uint8Array(4);
@@ -1374,16 +1729,12 @@ function kiMarke() {
 const kiStufen = (n, a, r) => [[t('stufe.nutzen'), n], [t('stufe.aufwand'), a], [t('stufe.risiko'), r]].filter(x => x[1]).map(x => `${x[0]} ${stufeName(x[1])}`).join(', ');
 /** Prompt bauen. fragen: Texte der fünf Fragen; felder: [[Bezeichnung, Wert], …], leere Werte fallen weg. */
 function kiPrompt(thema, fragen, felder) {
-  const ctx = kiCtx(), mk = kiMarke();
+  const ctx = kiCtx();
   const sys = (((S.report && S.report.Data) || {}).System || [])[0] || {};
-  let daten = felder.concat([[t('kf.f.windows'), [sys.Edition, sys.Version].filter(Boolean).join(' ')]])
+  const daten = felder.concat([[t('kf.f.windows'), [sys.Edition, sys.Version].filter(Boolean).join(' ')]])
     .map(([k, v]) => [k, kiClean(v, ctx)]).filter(x => x[1])
     .map(([k, v]) => v.includes('\n') ? `${k}:\n${v}` : `${k}: ${v}`).join('\n');
-  // Die Markierung darf im Datenteil nicht vorkommen (praktisch ausgeschlossen, aber billig zu prüfen)
-  daten = daten.split(mk).join('');
-  if (daten.length > KI_MAX_GESAMT) daten = daten.slice(0, KI_MAX_GESAMT) + t('kf.gekuerzt');
-  return [t('kf.einleitung'), '', thema, ...fragen, '', t('kf.stil'), '',
-    t('kf.datenHinweis', mk), t('kf.anfang', mk), daten, t('kf.ende', mk), '', t('kf.sprache')].join('\n');
+  return kiRahmen([t('kf.einleitung'), '', thema, ...fragen], daten, KI_MAX_GESAMT);
 }
 function kiBefund(f) {
   const P = (S.help && (S.help.Pruefungen || S.help.pruefungen)) || {}, e = P[f.Check] || {};
@@ -1424,7 +1775,7 @@ function kiWerkzeug(titel, erkl, felder) {
 function kiWartung(w, lw) {
   const hp = S.help && (S.help.Wartung || S.help.wartung), help = (hp && hp[w.id]) || {};
   return kiWerkzeug(w.titel, w.erklaerung, [
-    [t('kf.f.art'), (WT_KLASSE[w.klasse] || [])[1]],
+    [t('kf.f.art'), werkzeugArt(w)],
     [t('kf.f.was'), help.Was], [t('kf.f.wann'), help.Wann], [t('kf.f.hinweis'), [help.Hinweis, w.hinweis].filter(Boolean).join(' ')],
     [t('kf.f.dauer'), w.dauer], [t('kf.f.internet'), w.internet ? t('allg.ja') : null],
     [t('kf.f.befehl'), wtBefehl(w, lw)]]);
@@ -1527,8 +1878,20 @@ V.aenderungen = () => {
       h('p', { class: 'note' }, tn('jr.rstrui', h('code', { text: 'rstrui.exe' })))]
       : [h('p', { class: 'muted', text: t('jr.keinePunkte') })]));
   }).catch(e => rbox.replaceChildren(h('h2', { text: t('jr.punkte') }), h('p', { class: 'rem', text: e.message })));
+  // Bestätigungsdialoge dieser Sitzung (#113): was angefragt wurde und wie geantwortet wurde (Feld dialoge in /api/session)
+  const dbox = h('div', { class: 'card' }, h('h2', { text: t('jr.dialoge') }), h('p', { class: 'muted', text: t('laedt') }));
+  const dlgChip = { ja: 'OK', nein: 'INFO', zeit: 'WARN', pause: 'WARN' };
+  loadSession().then(() => {
+    if (token !== S.rv) return;
+    const l = (S.session && S.session.dialoge) || [];
+    dbox.replaceChildren(h('h2', { text: t('jr.dialoge') }), h('p', { class: 'note', text: t('jr.dialogeSub') }), ...(l.length
+      ? [h('div', { class: 'list' }, l.map(d => h('div', { class: 'row' },
+        h('span', { class: 'chip ' + (dlgChip[d.ergebnis] || 'INFO'), text: tk('jr.dlg.' + d.ergebnis, d.ergebnis) }),
+        h('div', null, h('div', { class: 't', text: d.was }), h('div', { class: 'd', text: fmtWhen(d.zeit) + (d.anzahl > 1 ? ` · ${d.anzahl}×` : '') })))))]
+      : [h('p', { class: 'muted', text: t('jr.dlgKeine') })]));
+  }).catch(e => dbox.replaceChildren(h('h2', { text: t('jr.dialoge') }), h('p', { class: 'rem', text: e.message })));
   return h('section', null, h('h1', { text: t('menu.aenderungen') }), h('p', { class: 'sub', text: t('jr.sub') }),
-    safetyBanner(), dOrdHinweis(), h('div', { class: 'grid g-hero' }, jbox, rbox));
+    safetyBanner(), dOrdHinweis(), h('div', { class: 'grid g-hero' }, jbox, rbox), dbox);
 };
 
 // ---------------------------------------------------------------- Ansicht: Berichte
@@ -1585,36 +1948,76 @@ V.berichte = () => {
 };
 
 // ---------------------------------------------------------------- Ansicht: Scan
+/** Neu geladene Seite während eines Scans (#141): Läuft laut /api/session (S.jobs) ein Scan, den diese Seite nicht verfolgt,
+ *  hängt sich die Ansicht wieder an ihn an. Nur GET /api/jobs/<id> über followJob; startet keinen zweiten Scan. */
+function scanAnhaengen() {
+  if (S.scan && S.scan.running) return;
+  const e = [...S.jobs.values()].find(x => x.art === 'scan' && x.status === 'running');
+  if (!e || (S.scan && S.scan.jobId === e.id)) return;
+  S.scan = { running: true, lines: [], done: false, fortschritt: e.fortschritt || null, zustand: 'run', bereich: '', jobId: e.id };
+  runScan(null, e.id);
+}
 V.scan = () => {
+  scanAnhaengen();
   const sc = S.scan;
   const profil = h('select', { id: 'sc-profil', 'aria-label': t('scan.profilAria') }, [['Auto', t('scan.profilAuto')], ['Gaming', 'Gaming'], ['Office', 'Office'], ['Laptop', 'Laptop']].map(([v, l]) => h('option', { value: v, text: l })));
   const days = h('select', { id: 'sc-days', 'aria-label': t('scan.zeitraumAria') }, [7, 14, 30, 60, 90].map(d => h('option', { value: String(d), selected: d === 14, text: t('scan.tage', d) })));
   const upd = h('input', { type: 'checkbox', checked: true }), wg = h('input', { type: 'checkbox', checked: true }), nsp = h('input', { type: 'checkbox' }), nsi = h('input', { type: 'checkbox' });
-  const log = h('pre', { class: 'log scanlog', id: 'scanlog', 'aria-live': 'polite', text: sc ? sc.lines.join('\n') : t('scan.bereit') });
+  // Rohprotokoll (2.8, #139): hinter „Details“, im einfachen Modus zu, im Experte-Modus offen; die Wahl gilt für die Sitzung.
+  // Kein aria-live am Log (wie jobView, #95): angesagt wird nur der Bereichswechsel über die Statuszeile.
+  const log = h('pre', { class: 'log scanlog', id: 'scanlog', text: sc ? sc.lines.join('\n') : '' });
+  const offen = typeof S.scanDetailsOffen === 'boolean' ? S.scanDetailsOffen : !S.einfach;
+  const details = h('details', { class: 'scandetails', open: offen }, h('summary', { text: t('scan.details') }), log);
+  details.addEventListener('toggle', () => { if (details.open !== offen || typeof S.scanDetailsOffen === 'boolean') S.scanDetailsOffen = details.open; if (details.open) log.scrollTop = log.scrollHeight; });
+  const bar = progressBar({ zaehler: 'scan.fsLaeuft' });
+  const bereich = h('p', { class: 'vh', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+  const ready = h('p', { class: 'sub scanbereit', text: t('scan.bereit') });
   const btn = h('button', { type: 'button', class: 'btn brand', text: t('scan.starten'), disabled: !!(sc && sc.running) || readOnly(), title: readOnly() ? lockTitle() : null, onclick: startScan });
   const msg = h('div', { id: 'scanmsg' });
   function startScan() {
     const d = parseInt(days.value, 10);
     if (!(d >= 1 && d <= 90)) return;
-    S.scan = { running: true, lines: [], done: false };
-    log.textContent = ''; btn.disabled = true; msg.replaceChildren();
+    S.scan = { running: true, lines: [], done: false, fortschritt: null, zustand: 'run', bereich: '' };
+    log.textContent = ''; btn.disabled = true; msg.replaceChildren(); bereich.textContent = '';
+    scanBarZeigen();
     runScan({ profil: profil.value, eventDays: d, skipWinget: !wg.checked, skipUpdateSearch: !upd.checked, skipSpeicher: nsp.checked, skipSysinternals: nsi.checked });
   }
-  S.scanUi = { log, btn, msg };
+  function scanBarZeigen() {
+    const s = S.scan;
+    bar.node.hidden = !s; ready.hidden = !!s;
+    if (!s) return;
+    bar.set(s.fortschritt || null);
+    bar.state(s.zustand || (s.running ? 'run' : 'done'));
+  }
+  S.scanUi = { log, btn, msg, bar, bereich, details };
+  scanBarZeigen();
   if (sc && sc.msg) msg.replaceChildren(sc.msg);
   log.scrollTop = log.scrollHeight;
   return h('section', { class: 'noaccent' }, h('h1', { text: t('menu.scan') }), h('p', { class: 'sub', text: t('scan.sub') }),
     h('div', { class: 'card' }, h('div', { class: 'toolbar' },
       h('label', null, t('scan.lblProfil') + ' ', profil), h('label', null, t('scan.lblZeitraum') + ' ', days),
-      h('label', null, upd, ' ' + t('scan.optUpdate')), h('label', null, wg, ' ' + t('scan.optWinget')), h('label', null, nsp, ' ' + t('scan.optSpeicher')), h('label', null, nsi, ' ' + t('scan.optSysinternals')), btn), log, msg));
+      h('label', null, upd, ' ' + t('scan.optUpdate')), h('label', null, wg, ' ' + t('scan.optWinget')), h('label', null, nsp, ' ' + t('scan.optSpeicher')), h('label', null, nsi, ' ' + t('scan.optSysinternals')), btn),
+      ready, bar.node, bereich, details, msg));
 };
-async function runScan(body) {
+/** Scan starten (body) oder einem schon laufenden Scan-Job folgen (jobId, ohne POST); Abschluss in beiden Fällen gleich. */
+async function runScan(body, jobId) {
   const ui = () => { const u = S.scanUi; return u && u.log.isConnected ? u : null; };
   const out = lines => { S.scan.lines.push(...lines); const u = ui(); if (u) { u.log.textContent = S.scan.lines.join('\n'); u.log.scrollTop = u.log.scrollHeight; } };
+  // Fortschritt halten (Ansichtswechsel und Rückkehr zeigen den Stand); ansagen nur, wenn der Bereich wechselt
+  const prog = f => {
+    S.scan.fortschritt = f;
+    const u = ui();
+    if (u) u.bar.set(f);
+    const b = f && typeof f.text === 'string' ? f.text.split(' › ')[0].slice(0, 120) : '';
+    if (b && b !== S.scan.bereich) { S.scan.bereich = b; if (u) u.bereich.textContent = b; }
+  };
+  const ende = z => { S.scan.zustand = z; const u = ui(); if (u) u.bar.state(z); };
   try {
-    const r = await api('/api/scan', { method: 'POST', body });
-    const job = await followJob(r.jobId, out);
+    if (!jobId) jobId = (await api('/api/scan', { method: 'POST', body })).jobId;
+    S.scan.jobId = jobId;
+    const job = await followJob(jobId, out, prog);
     S.scan.running = false;
+    ende(job.status === 'done' ? 'done' : 'fail');
     if (job.status === 'done') {
       await loadReports();
       if (S.reports.length) await showReport(S.reports[0].name);
@@ -1624,7 +2027,7 @@ async function runScan(body) {
       // Zustände der Anpassungen passend zum neuen Bericht neu lesen; sonst zeigt eine Karte z. B. „aus“, obwohl der Scan „an“ meldet
       refreshActionStates();
     } else S.scan.msg = h('p', { class: 'rem', text: (job.ergebnis && job.ergebnis.error) || t('scan.fehlgeschlagen') });
-  } catch (e) { S.scan.running = false; S.scan.msg = h('p', { class: 'rem', text: e.message }); }
+  } catch (e) { S.scan.running = false; ende('fail'); S.scan.msg = h('p', { class: 'rem', text: e.message }); }
   const u = ui();
   if (u) { u.btn.disabled = false; u.msg.replaceChildren(S.scan.msg); }
   renderNav();
@@ -1800,7 +2203,7 @@ async function runDefenderDatei(pfad, title) {
   try {
     jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/defender/datei', { method: 'POST', body: { bericht: S.cur + '.json', pfad } });
-    job = await followJob(r.jobId, jv.lines);
+    job = await followJob(r.jobId, jv.lines, jv.progress);
   } catch (e) { err = e; }
   const ok = !err && !!job && job.status === 'done', res = job && job.ergebnis;
   jv.finish(ok);
@@ -1912,7 +2315,7 @@ function spOrdnerCard() {
       if (m && m.saved) kids.push(h('div', { class: 'toolbar' },
         h('span', { class: 'note', text: t('spo.gespeichert') }),
         h('button', { type: 'button', class: 'sm', disabled: dis, title: tt, text: t('spo.neuBerechnen'), onclick: recalc })));
-      if (busy) kids.push(h('div', { class: 'note', 'aria-live': 'polite', text: S.spoJob.line }));
+      if (busy) kids.push(S.spoJob.bar || (S.spoJob.bar = laufBalken()), h('div', { class: 'note', 'aria-live': 'polite', text: S.spoJob.line }));
     }
     card.replaceChildren(...kids);
   };
@@ -1989,6 +2392,7 @@ function sysBody(d, prog) {
     ws.length ? h('div', { class: 'tablewrap' }, h('table', null, h('tbody', null, ws.map(row)))) : h('p', { class: 'muted', text: t('sys.keineAngaben') }),
     h('p', { class: z.akzeptiert ? 'note' : 'muted', text: z.akzeptiert ? t('sys.lizenzAngenommen', z.zeit ? fmtDate(z.zeit) : '?', z.benutzer ? ' (' + z.benutzer + ')' : '') : t('sys.lizenzNein') }),
     running ? h('p', { class: 'warn', text: t('sys.laeuftWarte') }) : null,
+    running ? laufBalken() : null,
     running ? prog : null,
     ro ? h('p', { class: 'note', text: lockTitle() }) : null,
     h('div', { class: 'toolbar' },
@@ -2033,7 +2437,7 @@ async function runSysInstall(title) {
   try {
     jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/sysinternals/install', { method: 'POST', body: { eulaAkzeptiert: true } });
-    job = await followJob(r.jobId, jv.lines);
+    job = await followJob(r.jobId, jv.lines, jv.progress);
   } catch (e) { err = e; }
   const ok = !err && !!job && job.status === 'done', res = job && job.ergebnis;
   jv.finish(ok);
@@ -2102,7 +2506,7 @@ async function runDefender(art, title) {
   try {
     jv.lines([t('win.bestaetigen')]);
     const r = await api('/api/defender/run', { method: 'POST', body: { art } });
-    job = await followJob(r.jobId, jv.lines);
+    job = await followJob(r.jobId, jv.lines, jv.progress);
   } catch (e) { err = e; }
   const ok = !err && !!job && job.status === 'done', res = job && job.ergebnis;
   jv.finish(ok);
@@ -2195,11 +2599,17 @@ let WT_KLASSE = {}, WT_ERG = {}, WT_STATUS = {}, WT_PAKET = {};   // [Status-Far
 const UPD_KAT = { 'Programm': 'upd.kat.programm', 'Id gekürzt': 'upd.kat.idGekuerzt', 'Spiel/Launcher': 'upd.kat.spielLauncher', 'aktualisiert sich selbst': 'upd.kat.selbst' };   // winget-Kategorien (Kennung -> Textschlüssel)
 const WT_GRUPPEN_OHNE = ['Wiederherstellung', 'Programme'];
 const WT_PUNKT_ID = 'wiederherstellung.punkt', WT_WINGET_ID = 'winget.upgrade';
+// Werkzeuge mit eigenem Knopf unter Diagnose (kein Job, kein Dialog): nicht in der allgemeinen Liste
+const WT_EIGENER_KNOPF = ['perfmon.rel', 'speichertest'];
 const WT = new Map();          // jobId -> Verfolger eines laufenden Wartungs- bzw. Update-Jobs (bleibt auch ohne Dialog aktiv)
 const WT_SEARCH = new Map();   // jobId -> Verfolger einer Update-Suche
+const WT_FERTIG = new Map();   // jobId -> Verfolger beendeter Wartungsjobs dieser Sitzung (Endstand über die Aktivitätsanzeige, #160)
 S.wt = { tools: [], sel: new Set(), report: null, scrollReport: false };
 
 const klasseChip = k => { const c = WT_KLASSE[k] || ['INFO', String(k || '')]; return h('span', { class: 'chip ' + c[0], text: c[1] }); };
+// Werkzeuge mit Merkmal 'behebt' (chkdsk /scan): Klasse diagnose, aber 'liest nur' wäre falsch
+const werkzeugArt = w => (w && w.behebt) ? t('wt.k.pruefung') : (WT_KLASSE[w && w.klasse] || [])[1];
+const werkzeugChip = w => (w && w.behebt) ? h('span', { class: 'chip INFO', text: t('wt.k.pruefung') }) : klasseChip(w && w.klasse);
 const wtChip = (tab, key, fallback) => { const c = tab[key]; return h('span', { class: 'chip ' + (c ? c[0] : 'INFO'), text: c ? c[1] : (fallback || String(key || '')) }); };
 const wtErr = e => e && e.status === 403 ? t('err.abgelehnt', e.message) : ((e && e.message) || t('run.fehlgeschlagen'));
 /** Werkzeug aus dem zuletzt geladenen Katalog (mit Rückfall für winget und den Wiederherstellungspunkt). */
@@ -2216,8 +2626,8 @@ function wtCfg(id, abbruch) {
 }
 function wtSteps(cfg) {
   const st = [[t('def.step.win'), re(t('def.re.win'))]];
-  if (cfg.punkt) st.push([t('wt.step.punkt'), re(t('wt.re.punkt'))]);
-  if (cfg.w.id !== WT_PUNKT_ID) st.push([cfg.winget ? t('wt.step.winget') : t('wt.step.laeuft'), new RegExp(t('wt.re.start'))]);
+  if (cfg.punkt) st.push([t('wt.step.punkt'), re(t('wt.re.punkt')), 'punkt']);
+  if (cfg.w.id !== WT_PUNKT_ID) st.push([cfg.winget ? t('wt.step.winget') : t('wt.step.laeuft'), new RegExp(t('wt.re.start')), 'ausfuehren']);
   // winget: nur die Abschlusszeile „<ok> von <n> Programmen erledigt …“ (jedes Paket meldet auch „Ergebnis: <Name>: …“)
   st.push([t('wt.step.ergebnis'), new RegExp(cfg.winget ? t('wt.re.ergebnisWinget') : t('wt.re.ergebnis'))]);
   return st;
@@ -2228,10 +2638,17 @@ const wtBefehl = (w, lw) => String(w.befehl || '').replace(/<LW>/g, lw || '<LW>'
 function wtCtl(jobId, cfg) {
   let c = WT.get(jobId);
   if (c) return c;
-  c = { jobId, cfg, jv: jobView(wtSteps(cfg)), bg: true, done: false, cancelling: false, job: null, err: null };
+  c = { jobId, cfg, jv: jobView(wtSteps(cfg), false, { liste: !!cfg.winget }), bg: true, done: false, cancelling: false, job: null, err: null, fs: null, karte: null };
   c.jv.lines([t('wt.erteilt')]);
   WT.set(jobId, c);
-  followJob(jobId, c.jv.lines).then(j => { c.job = j; }, e => { c.err = e; }).then(() => wtDone(c));
+  // winget (2.9, #140): letzter Fortschritt auch für die Update-Karte (c.karte = { bar, pl } der zuletzt gezeichneten Karte)
+  const onFs = f => {
+    c.jv.progress(f);
+    if (!f) return;
+    c.fs = f;
+    if (c.karte) { c.karte.bar.set(f); c.karte.pl.set(f.elemente); }
+  };
+  followJob(jobId, c.jv.lines, onFs).then(j => { c.job = j; }, e => { c.err = e; }).then(() => wtDone(c));
   return c;
 }
 function wtShow(c) {
@@ -2259,6 +2676,16 @@ function wtDone(c) {
   loadSession().catch(() => {});
   if (c.cfg.winget) S.wt.sel.clear();
   const res = c.job && c.job.ergebnis;
+  // Endstand für „Anzeigen“ in der Aktivitätsanzeige merken (nicht „Punkt fehlt“: dort bietet der Dialog eine neue Ausführung an)
+  if (!(res && res.status === 'punkt-fehlt')) { WT_FERTIG.set(c.jobId, c); if (WT_FERTIG.size > 10) WT_FERTIG.delete(WT_FERTIG.keys().next().value); }
+  // Paketliste bleibt auf der Update-Karte stehen, bis die Liste neu gesucht ist (anderer Stand) (2.9, #140)
+  if (c.cfg.winget && c.fs && Array.isArray(c.fs.elemente) && c.fs.elemente.length) {
+    const z = !c.err && res && res.status === 'erledigt' ? 'done' : (!c.err && res && res.status === 'abgebrochen' ? 'stop' : 'fail');
+    // Fehlergründe aus dem Ergebnis (#154): im Dialog (c.jv.pl), auf der Karte und im letzten Lauf
+    const det = pkgDetails(res);
+    if (c.jv.pl) c.jv.pl.set(c.fs.elemente, det);
+    S.wt.letzterLauf = { fs: c.fs, zustand: z, stand: S.wt.updStand, det };
+  }
   // Ids des gescheiterten winget-Laufs merken: ohne Punkt verlangt der Server genau diese Menge
   if (c.cfg.winget) {
     if (res && res.status === 'punkt-fehlt') S.wt.punktIds = c.cfg.ids || [].concat(res.pakete || []).filter(Boolean).map(p => p.id).filter(Boolean);
@@ -2295,7 +2722,7 @@ function wtStartDlg(w, lw) {
   const cfg = wtCfg(w.id), cmd = wtBefehl(w, lw);
   const body = [
     w.erklaerung ? h('p', { text: w.erklaerung }) : null,
-    h('p', null, klasseChip(w.klasse), w.dauer ? [' ', h('span', { class: 'wt-dur', text: t('wt.dauer', w.dauer) })] : null, lw ? [' ', h('span', { class: 'wt-dur', text: t('wt.laufwerk', lw) })] : null),
+    h('p', null, werkzeugChip(w), w.dauer ? [' ', h('span', { class: 'wt-dur', text: t('wt.dauer', w.dauer) })] : null, lw ? [' ', h('span', { class: 'wt-dur', text: t('wt.laufwerk', lw) })] : null),
     cmdBlock(cmd, true, /^Checkpoint-Computer/.test(cmd) ? t('cmd.psAdmin') : t('cmd.cmdAdmin')),
     w.klasse === 'reparatur' ? h('div', { class: 'wt-box', role: 'note' }, h('b', { text: t('wt.nichtUmkehrbar') }), t('wt.nichtUmkehrbarText')) : null,
     w.internet ? h('p', { class: 'note', text: t('wt.internetNote') }) : null,
@@ -2330,7 +2757,7 @@ function wtResultDlg(c) {
   const job = c.job, err = c.err, res = job && job.ergebnis, cfg = c.cfg;
   if (res && res.status === 'punkt-fehlt') { c.jv.finish(false); wtPunktFehlt(c, res); return; }
   const ok = !err && !!res && !res.error && res.status === 'erledigt';
-  c.jv.finish(ok);
+  c.jv.finish(ok, !ok && !err && !!res && res.status === 'abgebrochen');
   const body = [...c.jv.nodes];
   if (err) body.push(h('p', { class: 'rem', text: err.message }));
   else if (!res || res.error || !res.status) body.push(h('p', { class: 'rem', text: (res && res.error) || t('run.fehlgeschlagen') }));
@@ -2388,8 +2815,17 @@ function wtRow(w, d, dis, tt) {
   let sel = null, noLw = null;
   if (w.parameter === 'laufwerk' || w.parameter === 'ssd') {
     const opts = laufw.filter(l => w.parameter === 'laufwerk' || l.ssd === true);
-    if (opts.length) sel = h('select', { 'aria-label': t('wt.laufwerkFuer', w.titel) }, opts.map(l => h('option', { value: l.laufwerk, text: l.bezeichnung ? `${l.laufwerk} ${l.bezeichnung}` : l.laufwerk })));
-    else noLw = w.parameter === 'ssd' ? t('wt.keineSsd') : t('wt.keineLw');
+    // chkdsk /scan gibt es nur für NTFS: andere Dateisysteme (z. B. ReFS beim Dev Drive) bleiben sichtbar, aber gesperrt
+    const gesperrt = l => w.id === 'chkdsk.scan' && !!l.dateisystem && l.dateisystem !== 'NTFS';
+    const frei = opts.filter(l => !gesperrt(l));
+    if (frei.length) {
+      sel = h('select', { 'aria-label': t('wt.laufwerkFuer', w.titel) }, opts.map(l => {
+        const name = [l.bezeichnung ? `${l.laufwerk} ${l.bezeichnung}` : l.laufwerk, l.dateisystem].filter(Boolean).join(' · ');
+        return h('option', { value: l.laufwerk, disabled: gesperrt(l), text: gesperrt(l) ? t('wt.nurNtfs', name) : name });
+      }));
+      sel.value = frei[0].laufwerk;
+    }
+    else noLw = opts.length ? t('wt.keinNtfs') : (w.parameter === 'ssd' ? t('wt.keineSsd') : t('wt.keineLw'));
   }
   const off = dis || !!noLw;
   const step = w.gruppe === 'Systemdateien' && w.schritt ? `${w.schritt}. ` : '';
@@ -2397,7 +2833,7 @@ function wtRow(w, d, dis, tt) {
   if (sel) sel.addEventListener('change', () => { const n = cmdBlock(wtBefehl(w, sel.value), true, t('cmd.cmdAdmin')); cb.replaceWith(n); cb = n; });
   const meta = [w.dauer ? t('wt.dauer', w.dauer) : null, w.internet ? t('wt.brauchtInternet') : null].filter(Boolean).join(' · ');
   return h('div', { class: 'wt-row', 'data-id': w.id },
-    h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: step + w.titel }), klasseChip(w.klasse)),
+    h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: step + w.titel }), werkzeugChip(w)),
     w.erklaerung ? h('p', { class: 'wt-expl', text: w.erklaerung }) : null,
     meta ? h('p', { class: 'wt-meta', text: meta }) : null,
     w.hinweis ? h('p', { class: 'wt-meta', text: w.hinweis }) : null,
@@ -2439,7 +2875,7 @@ function wtBody(d, upd) {
   const tt = ro ? lockTitle() : (run ? t('wt.tt.laeuft', cfgRun.title) : (suche ? t('wt.tt.suche') : null));
   const kids = [h('p', { class: 'wt-expl', text: t('wt.expl') }),
     h('div', { class: 'wt-legend', role: 'list', 'aria-label': t('wt.legende') },
-      h('span', { role: 'listitem' }, klasseChip('diagnose'), ' ' + t('wt.leg.diagnose')), h('span', { role: 'listitem' }, klasseChip('wartung'), ' ' + t('wt.leg.wartung')), h('span', { role: 'listitem' }, klasseChip('reparatur'), ' ' + t('wt.leg.reparatur')))];
+      h('span', { role: 'listitem' }, klasseChip('diagnose'), ' ' + t('wt.leg.diagnose')), h('span', { role: 'listitem' }, werkzeugChip({ behebt: true }), ' ' + t('wt.leg.pruefung')), h('span', { role: 'listitem' }, klasseChip('wartung'), ' ' + t('wt.leg.wartung')), h('span', { role: 'listitem' }, klasseChip('reparatur'), ' ' + t('wt.leg.reparatur')))];
   if (ro) kids.push(h('p', { class: 'wt-meta', text: lockTitle() }));
   if (run) {
     const c = wtCtl(run.jobId, cfgRun);
@@ -2447,7 +2883,7 @@ function wtBody(d, upd) {
   }
   kids.push(wtRestore(d, dis, tt));
   const groups = [];
-  S.wt.tools.filter(w => !WT_GRUPPEN_OHNE.includes(w.gruppe) && w.id !== WT_PUNKT_ID && w.id !== 'perfmon.rel').forEach(w => { let g = groups.find(x => x.name === w.gruppe); if (!g) groups.push(g = { name: w.gruppe, list: [] }); g.list.push(w); });
+  S.wt.tools.filter(w => !WT_GRUPPEN_OHNE.includes(w.gruppe) && w.id !== WT_PUNKT_ID && !WT_EIGENER_KNOPF.includes(w.id)).forEach(w => { let g = groups.find(x => x.name === w.gruppe); if (!g) groups.push(g = { name: w.gruppe, list: [] }); g.list.push(w); });
   const berichte = Array.isArray(d.berichte) ? d.berichte : [];
   const viewer = h('div'), repBtns = [];
   groups.forEach(g => {
@@ -2462,6 +2898,13 @@ function wtBody(d, upd) {
       h('p', { class: 'wt-meta', text: t('wt.rel.meta') }),
       h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: t('wt.rel.oeffnen'), onclick: wtZuverlaessigkeit }),
         kiBtn(t('menu.werkzeug.zuverlaessigkeit'), () => kiWerkzeug(t('menu.werkzeug.zuverlaessigkeit'), t('wt.rel.expl'), [[t('kf.f.hinweis'), t('wt.rel.meta')]])))));
+    if (g.name === 'Diagnose') gk.push(h('div', { class: 'wt-row', 'data-id': 'speichertest' },
+      h('div', { class: 'wt-head' }, h('b', { class: 'wt-title', text: t('menu.werkzeug.speichertest') }), klasseChip('diagnose')),
+      h('p', { class: 'wt-expl', text: t('wt.mem.expl') }),
+      h('p', { class: 'wt-meta', text: t('wt.mem.meta') }),
+      wtMemErgebnis(),
+      h('div', { class: 'wt-acts' }, h('button', { type: 'button', class: 'sm primary', text: t('wt.mem.oeffnen'), onclick: wtSpeichertest }),
+        kiBtn(t('menu.werkzeug.speichertest'), () => kiWerkzeug(t('menu.werkzeug.speichertest'), t('wt.mem.expl'), [[t('kf.f.hinweis'), t('wt.mem.meta')]])))));
     if (g.name === 'Energieberichte') {
       gk.push(h('h3', { class: 'wt-sub', text: t('wt.berichte') }));
       gk.push(berichte.length ? h('div', { class: 'wt-reps' }, berichte.map(b => {
@@ -2493,6 +2936,18 @@ async function wtZuverlaessigkeit() {
     toast((r && r.meldung) || (r && r.ok === false ? t('wt.rel.fehl') : t('wt.rel.wirdGeoeffnet')));
   } catch (e) { toast(t('wt.rel.alternativ', e.message)); }
 }
+function wtMemErgebnis() {
+  // Ergebnis des letzten Tests: kommt aus dem Scan-Befund 'Speichertest' (Ereignisprotokoll), nicht aus einer eigenen Abfrage
+  const f = (S.findings || []).find(x => x.Check === 'Speichertest');
+  if (!f || !f.Value) return h('p', { class: 'wt-meta', text: t('wt.mem.ergebnisNachScan') });
+  return h('p', { class: 'wt-meta wt-mem-erg' }, h('span', { class: 'chip ' + f.Status, text: t('wt.mem.ergebnis') }), ' ' + f.Value);
+}
+async function wtSpeichertest() {
+  try {
+    const r = await api('/api/wartung/speichertest', { method: 'POST' });
+    toast((r && r.meldung) || (r && r.ok === false ? t('wt.mem.fehl') : t('wt.mem.wirdGeoeffnet')));
+  } catch (e) { toast(t('wt.mem.alternativ', e.message)); }
+}
 function wartungCard() {
   const body = h('div', null, h('p', { class: 'muted', text: t('laedt') }));
   const token = S.rv;
@@ -2511,7 +2966,7 @@ function updFollowSearch(jobId, bg) {
   let c = WT_SEARCH.get(jobId);
   if (c) return c;
   const title = t('upd.suchTitel');
-  c = { jobId, bg, log: h('pre', { class: 'log', 'aria-live': 'polite', text: '' }) };
+  c = { jobId, bg, bar: laufBalken(), log: h('pre', { class: 'log', 'aria-live': 'polite', text: '' }) };
   WT_SEARCH.set(jobId, c);
   followJob(jobId, l => { c.log.append(document.createTextNode(l.join('\n') + '\n')); c.log.scrollTop = c.log.scrollHeight; })
     .then(j => ({ j }), e => ({ e }))
@@ -2527,7 +2982,7 @@ function updFollowSearch(jobId, bg) {
 }
 function updShowSearch(c) {
   c.bg = false;
-  dlgOpen(t('upd.suchTitel'), [h('p', { class: 'note', text: t('upd.suchNote') }), c.log],
+  dlgOpen(t('upd.suchTitel'), [h('p', { class: 'note', text: t('upd.suchNote') }), c.bar, c.log],
     [{ label: t('wt.hintergrund'), onClick: () => { c.bg = true; dlgClose(); if (S.view === 'werkzeuge') refreshView(); } }], { lock: true });
 }
 function updInstallDlg(items) {
@@ -2559,7 +3014,22 @@ function updBody(d) {
   kids.push(h('p', { class: 'wt-meta', text: d.stand ? t('upd.stand', fmtDate(d.stand)) : t('upd.nochNicht') }));
   if (d.fehler) kids.push(h('p', { class: 'rem', text: String(d.fehler) }));
   if (ro) kids.push(h('p', { class: 'wt-meta', text: lockTitle() }));
-  if (run) { const c = wtCtl(run, wtCfg(WT_WINGET_ID)); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: t('upd.laeuft') }), h('button', { type: 'button', class: 'sm', text: t('rb.anzeigen'), onclick: () => wtShow(c) }))); }
+  if (run) {
+    const c = wtCtl(run, wtCfg(WT_WINGET_ID));
+    kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: t('upd.laeuft') }), h('button', { type: 'button', class: 'sm', text: t('rb.anzeigen'), onclick: () => wtShow(c) })));
+    // Balken „3 von 8“ und Paketliste auf der Karte (2.9, #140); folgt dem Verfolger des Jobs
+    const bar = progressBar(), pl = pkgList();
+    bar.state('run');
+    if (c.fs) { bar.set(c.fs); pl.set(c.fs.elemente); } else bar.set(null);
+    c.karte = { bar, pl };
+    S.wt.letzterLauf = null;
+    kids.push(h('div', { class: 'upd-lauf' }, bar.node, pl.node));
+  } else if (S.wt.letzterLauf && S.wt.letzterLauf.stand === d.stand) {
+    const L = S.wt.letzterLauf, bar = progressBar(), pl = pkgList();
+    bar.set(L.fs); bar.state(L.zustand); pl.set(L.fs.elemente, L.det);
+    kids.push(h('div', { class: 'upd-lauf' }, bar.node, pl.node));
+  } else S.wt.letzterLauf = null;
+  S.wt.updStand = d.stand || null;
   if (search) { const c = updFollowSearch(search, true); kids.push(h('div', { class: 'wt-run', role: 'status' }, h('span', { text: t('upd.sucheLaeuft') }), h('button', { type: 'button', class: 'sm', text: t('rb.anzeigen'), onclick: () => updShowSearch(c) }))); }
   const punktBtn = pIds ? h('button', { type: 'button', class: 'sm', text: t('wt.pf.knopfPunkte'), disabled: dis, title: dis ? tt : null,
     onclick: () => wtPunktFehlt({ cfg: { ...wtCfg(WT_WINGET_ID), ids: pIds } }, { meldung: t('wt.pf.meldung') }) }) : null;
@@ -2948,8 +3418,9 @@ function renderSpPop() {
     h('button', { type: 'button', class: 'sm ghost', 'data-f': 'close', 'aria-label': t('btn.schliessen'), title: t('sp.schliessenEsc'), text: '✕', onclick: () => closeSpPop(true) }))];
   const refresh = h('button', { type: 'button', class: 'sm', 'data-f': 'refresh', disabled: readOnly() || !!S.spJob, title: readOnly() ? lockTitle() : null, text: S.spJob ? t('sp.wirdBerechnet') : (lw ? t('sp.neuBerechnenKnopf') : t('sp.jetztBerechnen')), onclick: spRefresh });
   const prog = h('div', { class: 'note', id: 'sp-prog', 'aria-live': 'polite', text: S.spJob ? S.spJob.line : '' });
+  const spBar = S.spJob ? (S.spJob.bar || (S.spJob.bar = laufBalken())) : null;
   if (!sp || !sp.stand || !lw) {
-    kids.push(h('p', { text: t('sp.keineAuswertung', P.letter) }), h('div', { class: 'sp-foot' }, refresh), prog);
+    kids.push(h('p', { text: t('sp.keineAuswertung', P.letter) }), h('div', { class: 'sp-foot' }, refresh), spBar, prog);
   } else {
     kids.push(h('div', { class: 'note', text: t('sp.stand', fmtDate(sp.stand), spSrcText(), lw.uebersprungen ? t('sp.uebersprungen', lw.uebersprungen) : '') }));
     if (lw.fehler) kids.push(h('p', { class: 'rem', text: String(lw.fehler) }));
@@ -2963,7 +3434,7 @@ function renderSpPop() {
         [t('sp.zuletzt', x.zuletztGespielt ? fmtShort(x.zuletztGespielt) : '–'), x.groesseUnsicher ? t('sp.groesseEingeschraenkt') : ''])));
     const hasGames = (dataTable('Installierte Spiele') || []).length > 0;
     kids.push(h('div', { class: 'sp-foot' }, refresh, hasGames ? h('button', { type: 'button', class: 'link', 'data-f': 'games', text: t('sp.alleSpiele'), onclick: () => { closeSpPop(false); openRaw(['Installierte Spiele']); } }) : null,
-      h('button', { type: 'button', class: 'link', 'data-f': 'spordner', text: t('sp.ordnerFestlegen'), onclick: gotoSpOrdner })), prog,
+      h('button', { type: 'button', class: 'link', 'data-f': 'spordner', text: t('sp.ordnerFestlegen'), onclick: gotoSpOrdner })), spBar, prog,
       h('p', { class: 'note', text: t('sp.deinstallieren') }));
   }
   pop.setAttribute('aria-label', t('sp.aria', P.letter));
@@ -3068,7 +3539,7 @@ function buildTexts() {
     // Reihenfolge wie in der Karte „Wartung & Reparatur“
     werkzeuge: [['wiederherstellung.punkt', t('menu.werkzeug.punkt')], ['dism.checkhealth', t('menu.werkzeug.dismCheck')], ['dism.scanhealth', t('menu.werkzeug.dismScan')],
       ['dism.restorehealth', t('menu.werkzeug.dismRestore')], ['sfc.scannow', t('menu.werkzeug.sfc')], ['dism.analyze', t('menu.werkzeug.winsxsAnalyse')], ['dism.cleanup', t('menu.werkzeug.winsxsCleanup')],
-      ['chkdsk.scan', t('menu.werkzeug.chkdsk')], ['perfmon.rel', t('menu.werkzeug.zuverlaessigkeit')], ['dns.flush', t('menu.werkzeug.dns')], ['trim', t('menu.werkzeug.trim')],
+      ['chkdsk.scan', t('menu.werkzeug.chkdsk')], ['perfmon.rel', t('menu.werkzeug.zuverlaessigkeit')], ['speichertest', t('menu.werkzeug.speichertest')], ['dns.flush', t('menu.werkzeug.dns')], ['trim', t('menu.werkzeug.trim')],
       ['zeit.resync', t('menu.werkzeug.zeit')], ['powercfg.energy', t('menu.werkzeug.energie')], ['powercfg.akku', t('menu.werkzeug.akku')], ['powercfg.schlaf', t('menu.werkzeug.schlaf')]],
     aria: { nav: t('menu.aria.nav'), auf: t('menu.aria.auf'), zu: t('menu.aria.zu') },
   };
@@ -3084,12 +3555,12 @@ function buildTexts() {
     { sprache: true },
   ];
   RUN_STEPS = [
-    [t('run.step.lesen'), re(t('run.re.lesen'))],
-    [t('run.step.punktAnlegen'), re(t('run.re.punktAnlegen'))],
+    [t('run.step.lesen'), re(t('run.re.lesen')), 'zustand'],
+    [t('run.step.punktAnlegen'), re(t('run.re.punktAnlegen')), 'punkt'],
     [t('run.step.punktPruefen'), re(t('run.re.punktPruefen'))],
-    [t('run.step.journal'), re(t('run.re.journal'))],
-    [t('run.step.aendern'), re(t('run.re.aendern'))],
-    [t('run.step.ergebnis'), re(t('run.re.ergebnis'))],
+    [t('run.step.journal'), re(t('run.re.journal')), 'journal'],
+    [t('run.step.aendern'), re(t('run.re.aendern')), 'ausfuehren'],
+    [t('run.step.ergebnis'), re(t('run.re.ergebnis')), 'pruefen'],
   ];
   RESULT_TEXT = { erledigt: t('run.res.erledigt'), fehlgeschlagen: t('run.res.fehlgeschlagen'), 'fehlgeschlagen-zurueckgesetzt': t('run.res.zurueckgesetzt'), zurueckgenommen: t('run.res.zurueckgenommen'),
     uebersprungen: t('run.res.uebersprungen'), 'übersprungen': t('run.res.uebersprungen'), 'uebersprungen-erreicht': t('run.res.schonErledigt'), 'uebersprungen-voraussetzung': t('run.res.voraussetzung') };
@@ -3140,7 +3611,7 @@ async function init() {
     return;
   }
   startHeartbeat();
-  initTopbar(); initStatusbar(); initNav();
+  initTopbar(); initStatusbar(); initNav(); initAkt();
   $('#skip').addEventListener('click', () => $('#view').focus());   // Sprunglink zum Inhalt (2.7, #92)
   window.addEventListener('hashchange', route);
   route();

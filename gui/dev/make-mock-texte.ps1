@@ -1,4 +1,4 @@
-# Schreibt die Oberflächentexte für den Mock (gui\dev\mock.html) als texte.de.json und texte.en.json (UTF-8 ohne BOM).
+﻿# Schreibt die Oberflächentexte für den Mock (gui\dev\mock.html) als texte.de.json und texte.en.json (UTF-8 ohne BOM).
 # Aufruf: powershell -NoProfile -ExecutionPolicy Bypass -File gui\dev\make-mock-texte.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

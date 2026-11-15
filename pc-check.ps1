@@ -90,7 +90,7 @@ $script:BenutzerTemp = $env:TEMP
 $env:PATH = [Environment]::SystemDirectory + ';' + [Environment]::GetFolderPath('Windows') + ';' + [Environment]::SystemDirectory + '\Wbem;' + [Environment]::SystemDirectory + '\WindowsPowerShell\v1.0'
 foreach ($morpheusVar in @([Environment]::GetEnvironmentVariables().Keys)) { if ([string]$morpheusVar -match '^(COR_|CORECLR_|COMPlus_|DOTNET_)') { [Environment]::SetEnvironmentVariable([string]$morpheusVar, $null) } }
 
-$ScriptVersion = '2.7.0'
+$ScriptVersion = '2.10.0'
 # Anzeigename (Dateien und Repos heißen weiter pc-check)
 $ProductName = 'Morpheus'
 $ProductTagline = 'PC Check-up'
@@ -165,12 +165,83 @@ function Start-Section {
     param([string]$Area, [string]$Category)
     $script:Area = $Area
     $script:Category = $Category
+    $script:FsBereich++
     Write-Host ("`n[" + (Get-MorpheusAnzeige 'bereich' $Area) + '] ' + (Get-MorpheusAnzeige 'kategorie' $Category)) -ForegroundColor Cyan
+}
+
+# Fortschritt (2.8, #139). GUI: Die GUI gibt eine Einmal-Kennung (32 Hex-Zeichen) in MORPHEUS_FS mit; je Prüfung eine
+# Markerzeile mit dieser Kennung auf die Standardausgabe (der Server filtert sie aus dem Log). Konsole: Write-Progress.
+# Ohne Kennung und mit umgeleiteter Ausgabe: nichts von beidem. Fehler hier brechen den Scan nie ab.
+function Initialize-ScanFortschritt {
+    $script:FsKennung = $null; $script:FsKonsole = $false
+    $script:FsI = 0; $script:FsN = 0; $script:FsBereich = 0; $script:FsBereiche = 0
+    $fsEnv = [string]$env:MORPHEUS_FS
+    # Nicht an Programme weitervererben, die der Scan startet
+    [Environment]::SetEnvironmentVariable('MORPHEUS_FS', $null)
+    if ($fsEnv -cmatch '^[0-9a-f]{32}$') { $script:FsKennung = $fsEnv }
+    elseif ((-not $fsEnv) -and (-not [Console]::IsOutputRedirected)) { $script:FsKonsole = $true }
+    if ((-not $script:FsKennung) -and (-not $script:FsKonsole)) { return }
+    try {
+        # Aufrufe statisch zählen (nur die eigene Datei wird gelesen)
+        $tok = $null; $err = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($PSCommandPath, [ref]$tok, [ref]$err)
+        $cmds = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language.CommandAst] }, $true))
+        # Ausgelassene Prüfungen nicht mitzählen (#150): Aufrufe im else-Zweig von 'if ($SkipX)' mit gesetztem Schalter
+        $istAus = {
+            param($c)
+            $vor = $c
+            for ($p = $c.Parent; $p; $p = $p.Parent) {
+                if (($p -is [System.Management.Automation.Language.IfStatementAst]) -and ($p.Clauses.Count -eq 1) -and [object]::ReferenceEquals($vor, $p.ElseClause)) {
+                    $v = $null
+                    try { $v = $p.Clauses[0].Item1.PipelineElements[0].Expression } catch { }
+                    if (($v -is [System.Management.Automation.Language.VariableExpressionAst]) -and ($v.VariablePath.UserPath -like 'Skip*') -and
+                        (Get-Variable -Name $v.VariablePath.UserPath -ValueOnly -ErrorAction SilentlyContinue)) { return $true }
+                }
+                $vor = $p
+            }
+            $false
+        }
+        $script:FsN = @($cmds | Where-Object { ($_.GetCommandName() -eq 'Invoke-Check') -and (-not (& $istAus $_)) }).Count
+        $script:FsBereiche = @($cmds | Where-Object { $_.GetCommandName() -eq 'Start-Section' }).Count
+    }
+    catch { $script:FsN = 0 }
+    if ($script:FsN -lt 1) { $script:FsKennung = $null; $script:FsKonsole = $false }
+}
+
+function Send-ScanFortschritt {
+    param([string]$Name)
+    if ((-not $script:FsKennung) -and (-not $script:FsKonsole)) { return }
+    try {
+        $script:FsI++
+        $n = [Math]::Min($script:FsN, 9999)
+        $i = [Math]::Min($script:FsI, $n)
+        $bn = [Math]::Max(1, [Math]::Min($script:FsBereiche, 99))
+        $b = [Math]::Min([Math]::Max($script:FsBereich, 1), $bn)
+        $text = (Get-MorpheusAnzeige 'kategorie' $script:Category) + ' > ' + (Get-MorpheusAnzeige 'pruefung' $Name)
+        $text = ([regex]::Replace($text, '[\u0000-\u001F\u007F]', ' ')).Trim()
+        if ($text.Length -gt 200) { $text = $text.Substring(0, 200) }
+        if (-not $text) { $text = '-' }
+        if ($script:FsKennung) {
+            [Console]::Out.WriteLine(('@@MORPHEUS-FORTSCHRITT {0} {1} {2} {3} {4} {5}' -f $script:FsKennung, $i, $n, $b, $bn, $text))
+            [Console]::Out.Flush()
+        }
+        else {
+            $ProgressPreference = 'Continue'
+            Write-Progress -Id 1 -Activity (T 'scan.fs.aktivitaet') -Status (T 'scan.fs.status' $i $n) -CurrentOperation $text -PercentComplete ([int][Math]::Floor(100.0 * $i / $n))
+        }
+    }
+    catch { }
+}
+
+function Complete-ScanFortschritt {
+    if (-not $script:FsKonsole) { return }
+    try { $ProgressPreference = 'Continue'; Write-Progress -Id 1 -Activity (T 'scan.fs.aktivitaet') -Completed } catch { }
 }
 
 function Invoke-Check {
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][scriptblock]$Script, [switch]$NeedsAdmin)
     $script:CheckName = $Name
+    Send-ScanFortschritt $Name
     $null = Get-MorpheusDeutscherText ''
     if ($NeedsAdmin -and -not $script:IsAdmin) {
         Add-Finding SKIP (T 'scan.hilfe.nurAdmin')
@@ -398,6 +469,9 @@ if (Test-Path -LiteralPath $audioLibPfad) { try { . $audioLibPfad; $script:Audio
 $script:WingetLib = $false
 $wingetLibPfad = Join-Path $PSScriptRoot 'gui\lib\Winget.ps1'
 if (Test-Path -LiteralPath $wingetLibPfad) { . $wingetLibPfad; $script:WingetLib = $true }
+# Nur für Test-MorpheusKonsolenFortschritt (winget-Dialog der Konsole, 2.9, #142); fehlt die Datei, bleibt die Anzeige aus
+$fortschrittLibPfad = Join-Path $PSScriptRoot 'gui\lib\Fortschritt.ps1'
+if (Test-Path -LiteralPath $fortschrittLibPfad) { try { . $fortschrittLibPfad } catch { } }
 $sicherungLibPfad = Join-Path $PSScriptRoot 'gui\lib\Sicherung.ps1'
 if (Test-Path -LiteralPath $sicherungLibPfad) { . $sicherungLibPfad; $script:SicherungLib = $true }
 # Akzeptanzliste: früh einlesen, weil die Sigcheck-Prüfung die Datei-Regeln (je SHA256) braucht
@@ -718,6 +792,7 @@ Write-Host (T 'scan.start.kopf' $ProductName $ProductTagline $ScriptVersion $scr
 if (-not $script:IsAdmin) { Write-Warning (T 'scan.start.ohneAdmin') }
 $script:PackagedFrom = Get-PackagedAncestor
 if ($script:PackagedFrom) { Write-Warning (T 'scan.start.store' $script:PackagedFrom) }
+Initialize-ScanFortschritt
 
 $script:OS = Get-CimInstance Win32_OperatingSystem
 $script:CS = Get-CimInstance Win32_ComputerSystem
@@ -2979,6 +3054,20 @@ Invoke-Check 'Abstürze und unerwartete Neustarts' {
     else { Add-Finding OK $value }
 }
 
+Invoke-Check 'Speichertest' {
+    # Ergebnis der Windows-Speicherdiagnose (nur lesen); -AllTime, weil ein Test älter sein darf als der Ereigniszeitraum
+    $ev = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results' } -Max 20 -AllTime)
+    Add-Table 'Speichertest' @($ev | ForEach-Object { [pscustomobject][ordered]@{ Zeit = Format-Date $_.TimeCreated; ID = $_.Id; Meldung = ((([string]$_.Message) -split "`n")[0]).Trim() } })
+    if (-not $ev) { Add-Finding OK (T 'scan.stabilitaet.memKeiner') }
+    else {
+        $letzter = $ev | Sort-Object TimeCreated -Descending | Select-Object -First 1
+        $zeit = Format-Date $letzter.TimeCreated
+        if ($letzter.Id -in 1102, 1202) { Add-Finding CRIT (T 'scan.stabilitaet.memFehler' $zeit) (T 'scan.stabilitaet.memFehlerEmpf') }
+        elseif ($letzter.Id -in 1101, 1201) { Add-Finding OK (T 'scan.stabilitaet.memOk' $zeit) }
+        else { Add-Finding INFO (T 'scan.stabilitaet.memUnklar' $zeit $letzter.Id) (T 'scan.stabilitaet.memUnklarEmpf') }
+    }
+}
+
 Invoke-Check 'Grafiktreiber-Abstürze' {
     $tdr = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101 } -Max 100)
     $nv = @(Get-RecentEvents @{ LogName = 'System'; ProviderName = 'nvlddmkm'; Level = 1, 2 } -Max 100)
@@ -3147,6 +3236,7 @@ foreach ($f in $script:Findings) {
 
 #region Bericht
 
+Complete-ScanFortschritt
 $duration = (Get-Date) - $startedAt
 $stamp = Get-Date -Format 'yyyy-MM-dd_HHmm'
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
@@ -3440,17 +3530,55 @@ $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedire
 
 function ConvertTo-HtmlText { param($Text) [System.Net.WebUtility]::HtmlEncode([string]$Text) }
 
-# Für die KI-Kopiervorlage: PC- und Benutzernamen, IP-/MAC-Adressen, SIDs und E-Mail-Adressen entfernen
+# Kontext für Protect-Text: was auf diesem PC persönlich ist (PC-, Benutzer-, Anzeigename, WLAN-Namen, weitere Konten)
+function Get-ProtectContext {
+    $anzeige = ''
+    try { $anzeige = [string](Get-LocalUser -Name $env:USERNAME -ErrorAction Stop).FullName } catch { }
+    $netz = @(); $konten = @()
+    $tab = $script:Tables
+    if ($tab) {
+        if ($tab['Netzwerkprofile']) { $netz = @($tab['Netzwerkprofile'] | ForEach-Object { [string]$_.Netzwerk } | Where-Object { $_ }) }
+        if ($tab['Lokale Benutzerkonten']) { $konten = @($tab['Lokale Benutzerkonten'] | Where-Object { [string]$_.SID -notmatch '-50[0-4]$' } | ForEach-Object { [string]$_.Name } | Where-Object { $_ }) }
+    }
+    @{ pc = $env:COMPUTERNAME; user = $env:USERNAME; anzeige = $anzeige; netzwerke = $netz; konten = $konten
+        tokBenutzer = (T 'bericht.ki.benutzer'); tokEmail = (T 'bericht.ki.email') }
+}
+
+# Für die KI-Kopiervorlage: Persönliches ersetzen. Dieselben Regeln wie protect() in gui/app.js (Block ANONYM-BEGIN bis
+# ANONYM-END); beide laufen mit tests/anonymisierung.testfaelle.json. Regeln beim Ändern in beiden Dateien nachziehen.
+# Context: pc, user, anzeige, netzwerke[], konten[], tokBenutzer, tokEmail (ohne Angabe: $script:ProtectContext, sonst Get-ProtectContext)
 function Protect-Text {
-    param([string]$Text)
+    param([string]$Text, $Context)
     if (-not $Text) { return '' }
-    $t = $Text -replace [regex]::Escape($env:COMPUTERNAME), '<PC>'
-    if ($env:USERNAME.Length -ge 3) { $t = $t -replace [regex]::Escape($env:USERNAME), (T 'bericht.ki.benutzer') }
-    $t = $t -replace '[\w.+-]+@[\w-]+\.[\w.-]+', (T 'bericht.ki.email')
-    $t = $t -replace 'S-1-5-21-[\d-]+', '<SID>'
-    $t = $t -replace '(?i)\b([0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b', '<MAC>'
-    $t = $t -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b', '<IP>'
-    $t = $t -replace '(?i)\bfe80:[0-9a-f:%]*|\b[0-9a-f]{4}:[0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f:]+', '<IPv6>'
+    if (-not $Context) { $Context = $script:ProtectContext }
+    if (-not $Context) { $Context = Get-ProtectContext }
+    $nb = '0-9A-Za-zÄÖÜäöüß'
+    $h = '[0-9a-f]{1,4}'
+    $tb = if ($Context.tokBenutzer) { [string]$Context.tokBenutzer } else { '<Benutzer>' }
+    $te = if ($Context.tokEmail) { [string]$Context.tokEmail } else { '<E-Mail>' }
+    $t = $Text
+    if ($Context.pc) { $t = $t -replace [regex]::Escape([string]$Context.pc), '<PC>' }
+    if ($Context.anzeige -and ([string]$Context.anzeige).Length -ge 3) { $t = $t -replace [regex]::Escape([string]$Context.anzeige), '<Name>' }
+    $u = [string]$Context.user
+    if ($u.Length -ge 3) { $t = $t -replace [regex]::Escape($u), $tb }
+    elseif ($u) {   # 1-2 Zeichen: nur als PC\Name und (ab 2 Buchstaben) als ganzes Wort mit gleicher Schreibung
+        if ($Context.pc) { $t = $t -replace ('(<PC>\\)' + [regex]::Escape($u) + "(?![$nb`_])"), ('${1}' + $tb) }
+        if ($u.Length -eq 2 -and $u -match '[A-Za-z]') { $t = $t -creplace ("(?<![$nb])" + [regex]::Escape($u) + "(?![$nb])"), $tb }
+    }
+    foreach ($k in @($Context.konten)) { if ($k -and ([string]$k).Length -ge 3) { $t = $t -replace ("(?<![$nb])" + [regex]::Escape([string]$k) + "(?![$nb])"), $tb } }
+    foreach ($n in @($Context.netzwerke)) {
+        if ($n -and ([string]$n).Length -ge 3 -and ([string]$n).Trim() -notmatch '^(?:netzwerk|network|unidentified network|nicht identifiziertes netzwerk|ethernet|wlan|wi-?fi|lan)(?: [0-9]+)?$') {
+            $t = $t -replace ("(?<![$nb])" + [regex]::Escape([string]$n) + "(?![$nb])"), '<WLAN>'
+        }
+    }
+    $t = $t -replace '[A-Za-z0-9_.+-]+@[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+', $te
+    $t = $t -replace 'S-1-5-21-[0-9-]+', '<SID>'
+    $t = $t -replace '\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b', '<MAC>'
+    $t = $t -replace '(?<![0-9.])(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(?![0-9]|\.[0-9])', '<IP>'
+    $t = $t -replace "(?<![0-9A-Za-z:.])(?:(?:${h}:){7}${h}|${h}(?::${h}){0,6}::(?:${h}(?::${h}){0,6})?|::${h}(?::${h}){0,6})(?:%[0-9A-Za-z]+)?(?![0-9A-Za-z:])", '<IPv6>'
+    $t = $t -replace '(\\{1,2}Users\\{1,2})(?!(?:Public|Default)(?:[\\\s"'']|$))[^\\\s"'']+', ('${1}' + $tb)
+    $t = $t -replace '((?:Seriennummer|Serial(?:[ -]?(?:No\.?|Number|Nr\.?))?|S/N|\bSN|Service[ -]?Tag)["'']?[ \t]*[:=#][ \t]*["'']?)[A-Za-z0-9][A-Za-z0-9._-]{3,}', '${1}<Serial>'
+    $t = $t -replace '(\bSSID["'']?[ \t]*[:=][ \t]*["'']?)[^;,\r\n"'']+', '${1}<WLAN>'
     $t
 }
 
@@ -3579,10 +3707,12 @@ function Write-HtmlReport {
     (Get-Chart (T 'bericht.html.chartIndex') 'Index' (T 'bericht.html.einheitVon10') 'high') + (Get-Chart (T 'bericht.html.chartFreiePlatz' $env:SystemDrive) 'FreiC' '%' 'high')
 
     # Anonymisierte Kopiervorlage für einen KI-Assistenten
+    $script:ProtectContext = Get-ProtectContext   # einmal je Bericht (Get-LocalUser ist langsam)
+    # Befunddaten in einem Block mit zufälliger Markierung (wie kiRahmen in gui/app.js), damit die KI sie nur als Information behandelt
+    $kiBytes = New-Object byte[] 4
+    (New-Object System.Security.Cryptography.RNGCryptoServiceProvider).GetBytes($kiBytes)
+    $kiMarke = -join ($kiBytes | ForEach-Object { $_.ToString('X2') })
     $ki = New-Object System.Text.StringBuilder
-    [void]$ki.AppendLine((T 'bericht.ki.einleitung1'))
-    [void]$ki.AppendLine((T 'bericht.ki.einleitung2'))
-    [void]$ki.AppendLine('')
     [void]$ki.AppendLine((T 'bericht.ki.system' $script:OS.Caption $script:CV.DisplayVersion $ProductName $ScriptVersion $(if ($script:IsAdmin) { T 'bericht.ja' } else { T 'bericht.nein' })))
     [void]$ki.AppendLine((T 'bericht.ki.nutzung' $profilAnzeige))
     [void]$ki.AppendLine((T 'bericht.ki.uebersicht' $count.CRIT $count.WARN $count.TIPP $count.ACK $count.INFO $count.OK))
@@ -3597,6 +3727,8 @@ function Write-HtmlReport {
             if ($s -eq 'ACK') { [void]$ki.AppendLine((T 'bericht.ki.akzeptiert' (Protect-Text $f.Note))) }
         }
     }
+    $kiText = @((T 'bericht.ki.einleitung1'), (T 'bericht.ki.einleitung2'), '', (T 'bericht.ki.stil'), '', (T 'bericht.ki.datenHinweis' $kiMarke),
+        (T 'bericht.ki.anfang' $kiMarke), $ki.ToString().TrimEnd().Replace($kiMarke, ''), (T 'bericht.ki.ende' $kiMarke), '', (T 'bericht.ki.sprache')) -join "`r`n"
     $css = @'
 :root{--b03:#002b36;--b02:#073642;--b01:#586e75;--b00:#657b83;--b0:#839496;--b1:#93a1a1;--b2:#eee8d5;--b3:#fdf6e3;--yellow:#b58900;--orange:#cb4b16;--red:#dc322f;--magenta:#d33682;--violet:#6c71c4;--blue:#268bd2;--cyan:#2aa198;--green:#859900;--line:#0d4a57}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
@@ -3853,7 +3985,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
         datumsformat    = $(if ($Sprache -eq 'en') { 'en-GB' } else { 'de-DE' })
     }
     # < statt <: Kein Text kann das umgebende <script> beenden
-    $js = $js.Replace('__MORPHEUS_TEXTE__', (($jsTexte | ConvertTo-Json -Compress).Replace('<', '<')))
+    $js = $js.Replace('__MORPHEUS_TEXTE__', (($jsTexte | ConvertTo-Json -Compress).Replace('<', '\u003c')))
 
     $title = "$ProductName · $env:COMPUTERNAME · $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
     $htmlLang = if ($Sprache -eq 'en') { 'en' } else { 'de' }
@@ -4019,7 +4151,7 @@ footer{padding:16px 28px 30px;color:var(--b01);font-size:12px;border-top:1px sol
     A ('</ol><p class="muted">' + (HEnc (T 'bericht.html.guideSchluss')) + '</p></div>')
 
     A ('</main></div><footer>' + (HEnc (T 'bericht.html.fuss' $ProductName $ProductTagline $ScriptVersion (Get-Date -Format 'dd.MM.yyyy HH:mm'))) + '</footer>')
-    A "<textarea id=`"ki-text`" readonly aria-hidden=`"true`">$(HEnc $ki.ToString())</textarea>"
+    A "<textarea id=`"ki-text`" readonly aria-hidden=`"true`">$(HEnc $kiText)</textarea>"
     A "<script>$js</script></body></html>"
 
     [IO.File]::WriteAllText($Path, $sb.ToString(), (New-Object Text.UTF8Encoding $false))
@@ -4084,11 +4216,31 @@ if (-not $NoUpdatePrompt -and $interactive -and $candidates.Count) {
         if ($selected) {
             Write-Host (T 'bericht.update.ohneAdmin') -ForegroundColor DarkGray
         }
+        # Konsole (2.9, #142): 'Paket i von n: Name' über der Rohausgabe; nicht aus der GUI, nicht bei umgeleiteter Ausgabe
+        $wgFs = $false
+        try {
+            $wgFs = (-not $script:FsKennung) -and [bool](Get-Command -Name Test-MorpheusKonsolenFortschritt -CommandType Function -ErrorAction SilentlyContinue) -and
+                [bool](Test-MorpheusKonsolenFortschritt)
+        }
+        catch { $wgFs = $false }
+        $wgFsEnde = { if ($wgFs) { try { $ProgressPreference = 'Continue'; Write-Progress -Id 3 -Activity (T 'scan.winget.fsAktivitaet') -Completed } catch { } } }
+        $wgI = 0; $wgN = @($selected).Count
         foreach ($u in $selected) {
             $erfolg = $false
+            $wgI++
             while ($true) {
                 Write-Host ("`n" + (T 'bericht.update.aktualisiere' $u.Name $u.Installiert $u.Verfuegbar)) -ForegroundColor Cyan
+                if ($wgFs) {
+                    try {
+                        $ProgressPreference = 'Continue'
+                        $wgName = ([regex]::Replace([string]$u.Name, '[\u0000-\u001F\u007F]', ' ')).Trim()
+                        Write-Progress -Id 3 -Activity (T 'scan.winget.fsAktivitaet') -Status (T 'scan.winget.fsPaket' $wgI $wgN $wgName) -PercentComplete ([int][Math]::Floor(100.0 * ($wgI - 1) / $wgN))
+                    }
+                    catch { }
+                }
                 $wr = Invoke-MorpheusWingetBenutzer -WingetPfad $wg -Argumente (Get-MorpheusWingetUpgradeArgumente -Id $u.Id) -Zeile { param($z) Write-Host ('  ' + $z) }
+                # Anzeige weg, bevor eine Rückfrage (Read-Host) oder das Ergebnis kommt
+                & $wgFsEnde
                 if ($wr.zeitueberschritten) { $result = T 'bericht.update.zeitlimit'; break }
                 if ($null -eq $wr.exitCode) { $result = T 'bericht.update.fehlgeschlagenMit' $wr.fehler; break }
                 $code = $wr.exitCode

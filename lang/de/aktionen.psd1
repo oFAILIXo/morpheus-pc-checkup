@@ -217,7 +217,7 @@ New-ItemProperty -Path ''HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR
     }
     'gaming.maus' = @{
         Titel      = 'Mausbeschleunigung ausschalten'
-        Erklaerung = 'Die Maus bewegt den Zeiger dann immer proportional zur Handbewegung ("Zeigerpräzision verbessern" aus), was vor allem in Shootern ein gleichmäßigeres Zielen ergibt. Die Umstellung braucht ein Ab- und Anmelden und fühlt sich anfangs ungewohnt an.'
+        Erklaerung = 'Die Maus bewegt den Zeiger dann immer proportional zur Handbewegung ("Zeigerpräzision verbessern" aus), was vor allem in Shootern ein gleichmäßigeres Zielen ergibt. Die Umstellung wirkt sofort und fühlt sich anfangs ungewohnt an.'
         Befehle    = @{
             Ausfuehren   = 'New-ItemProperty -Path ''HKCU:\Control Panel\Mouse'' -Name ''MouseSpeed'' -PropertyType String -Value ''0'' -Force
 New-ItemProperty -Path ''HKCU:\Control Panel\Mouse'' -Name ''MouseThreshold1'' -PropertyType String -Value ''0'' -Force
@@ -227,7 +227,7 @@ New-ItemProperty -Path ''HKCU:\Control Panel\Mouse'' -Name ''MouseThreshold2'' -
                 'New-ItemProperty legt einen Registry-Wert an bzw. überschreibt ihn (-Force). HKCU gilt nur für den angemeldeten Benutzer.',
                 'MouseSpeed, MouseThreshold1 und MouseThreshold2 sind die drei Werte hinter "Zeigerpräzision verbessern"; alle drei auf "0" bedeutet: keine Beschleunigung.',
                 '-PropertyType String: Diese Werte sind Text (REG_SZ), keine Zahlen.',
-                'Windows liest die Werte erst nach dem nächsten Ab-/Anmelden. Rückgängig stellt jeden der drei Werte einzeln wieder her.'
+                'Danach meldet Morpheus die neuen Werte an Windows (SystemParametersInfo, wie der OK-Knopf der Systemsteuerung), damit sie sofort gelten. Rückgängig stellt jeden der drei Werte einzeln wieder her und meldet sie ebenso.'
             )
         }
     }

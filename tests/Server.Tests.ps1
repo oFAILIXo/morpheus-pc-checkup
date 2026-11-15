@@ -666,13 +666,14 @@ $script:WzKatalog = @(
     [pscustomobject]@{ id = 'dism.restorehealth'; klasse = 'reparatur'; titel = 'DISM: Komponentenspeicher reparieren'; erklaerung = 'Repariert.'; befehl = 'Dism.exe /Online /Cleanup-Image /RestoreHealth'; abbruch = 'nein'; parameter = $null }
     [pscustomobject]@{ id = 'sfc.scannow'; klasse = 'reparatur'; titel = 'SFC'; erklaerung = 'Repariert Systemdateien.'; befehl = 'sfc.exe /scannow'; abbruch = 'nein'; parameter = $null }
     [pscustomobject]@{ id = 'dns.flush'; klasse = 'wartung'; titel = 'DNS-Cache leeren'; erklaerung = 'Leert den DNS-Cache.'; befehl = 'ipconfig.exe /flushdns'; abbruch = 'nein'; parameter = $null }
-    [pscustomobject]@{ id = 'chkdsk.scan'; klasse = 'diagnose'; titel = 'chkdsk'; erklaerung = 'Prueft.'; befehl = 'chkdsk.exe <LW> /scan'; abbruch = 'sofort'; parameter = 'laufwerk' }
+    [pscustomobject]@{ id = 'chkdsk.scan'; klasse = 'diagnose'; titel = 'chkdsk'; erklaerung = 'Prueft.'; befehl = 'chkdsk.exe <LW> /scan'; abbruch = 'sofort'; parameter = 'laufwerk'; behebt = $true }
     [pscustomobject]@{ id = 'trim'; klasse = 'wartung'; titel = 'ReTrim'; erklaerung = 'Trim.'; befehl = 'defrag.exe <LW> /L'; abbruch = 'sofort'; parameter = 'ssd' }
     [pscustomobject]@{ id = 'winget.upgrade'; klasse = 'reparatur'; titel = 'Programme aktualisieren'; erklaerung = 'winget.'; befehl = 'winget upgrade --id <Paket-Id>'; abbruch = 'nach-paket'; parameter = 'ids' }
     [pscustomobject]@{ id = 'perfmon.rel'; klasse = 'diagnose'; titel = 'Zuverlaessigkeitsverlauf'; erklaerung = 'Zeigt an.'; befehl = 'perfmon /rel'; abbruch = 'nein'; parameter = $null }
 )
 $script:LwAufrufe = 0
 $script:ZuverlThrow = $false
+$script:SpeicherThrow = $false
 $script:TestJournal = @()
 function Get-MorpheusWartungWerkzeuge { return @($script:WzKatalog) }
 function Get-MorpheusWartungLaufwerke {
@@ -694,11 +695,14 @@ function Test-MorpheusWartungAuftrag {
 }
 function Get-MorpheusWartungBerichte { param($DataRoot) return @([pscustomobject]@{ name = 'morpheus-energy_2026-10-26_153012.html'; art = 'energy'; titel = 'Energiebericht'; zeit = '2026-10-26T15:30:12' }) }
 function Start-MorpheusZuverlaessigkeit { if ($script:ZuverlThrow) { throw 'Explorer nicht startbar' }; return [pscustomobject]@{ ok = $true; meldung = 'Geoeffnet.' } }
+function Start-MorpheusSpeichertest { if ($script:SpeicherThrow) { throw 'MdSched nicht startbar' }; return [pscustomobject]@{ ok = $true; meldung = 'Speichertest geoeffnet.' } }
 function Get-MorpheusWingetUpdates { }
 function Get-PcCheckCatalog { param($Root) return @() }
 function Invoke-PcCheckChange { param($Root, $DataRoot, $Ids, $Variante) }
 function Undo-PcCheckChange { param($Root, $DataRoot, $EntryId, [switch]$Force) }
 function Get-PcCheckJournal { param($Root, $DataRoot) return @($script:TestJournal) }
+# #166: nimmt Journal und DataRoot entgegen und meldet, was /api/actions an die echte Funktion weitergibt
+function ConvertTo-PublicAction { param($Action, $State, $Journal, [string]$DataRoot) return [pscustomobject]@{ id = [string]$Action.Id; journal = @($Journal).Count; dataRoot = $DataRoot } }
 # Update-GuiJobs ruft Receive-Job/Remove-Job auf; in diesem Test gibt es nur Attrappen-Jobs mit .Out
 function Receive-Job { param($Job, $ErrorAction, $WarningAction, $InformationAction) return @($Job.Out) }
 # Gemeinsame Undo-Sperre (18.10): die echte Funktion aus Safety.ps1 (ohne den Rest der Datei zu laden)
@@ -718,6 +722,7 @@ function Initialize-TestWartung {
     $script:SysJobArgs = $null
     $script:LwAufrufe = 0
     $script:ZuverlThrow = $false
+    $script:SpeicherThrow = $false
     $script:TestJournal = @()
     $dir = Join-Path $script:TestDir 'state\wartung'
     if (Test-Path -LiteralPath $dir) { Get-ChildItem -LiteralPath $dir -File | Remove-Item -Force }
@@ -783,7 +788,7 @@ Describe 'Routen /api/wartung* (mit Attrappen)' {
             '{"werkzeug":"chkdsk.scan"}', '{"werkzeug":"chkdsk.scan","laufwerk":"Z:"}', '{"werkzeug":"chkdsk.scan","laufwerk":["C:"]}',
             '{"werkzeug":"chkdsk.scan","laufwerk":"c:"}', '{"werkzeug":"trim","laufwerk":"D:"}',
             '{"werkzeug":"dism.checkhealth","ohnePunkt":"true"}', '{"werkzeug":"dism.checkhealth","ohnePunkt":1}', '{"werkzeug":"dism.checkhealth","ohnePunkt":[true]}',
-            '{"werkzeug":"winget.upgrade"}', '{"werkzeug":"winget.upgrade","ids":["Demo.App"]}', '{"werkzeug":"perfmon.rel"}')
+            '{"werkzeug":"winget.upgrade"}', '{"werkzeug":"winget.upgrade","ids":["Demo.App"]}', '{"werkzeug":"perfmon.rel"}', '{"werkzeug":"speichertest"}', '{"werkzeug":"speichertest","laufwerk":"C:"}')
         foreach ($f in $faelle) {
             $r = Invoke-TestRoute 'POST' '/api/wartung/start' $f
             if ($r.status -ne 400) { throw "Erwartet 400, war $($r.status): $f" }
@@ -800,7 +805,13 @@ Describe 'Routen /api/wartung* (mit Attrappen)' {
         $script:SysCalls.Confirm | Should Be 0
         $script:SysCalls.Job | Should Be 0
     }
-    It 'diagnose: Job mit allen Argumenten, Dialog "liest nur", Flag-Name nur im Server' {
+    It 'diagnose ohne Merkmal behebt: Dialog "liest nur"' {
+        $r = Start-TestWartung 'dism.checkhealth'
+        $r.status | Should Be 200
+        $script:SysConfirmText | Should Match 'Dieses Werkzeug liest nur und ändert nichts\.'
+        $script:SysConfirmText | Should Not Match 'behebt Windows'
+    }
+    It 'diagnose mit Merkmal behebt: Job mit allen Argumenten, Dialog "prüft, behebt Kleines", Flag-Name nur im Server' {
         $r = Start-TestWartung 'chkdsk.scan' 'C:'
         $r.status | Should Be 200
         $r.json.jobId | Should Match '^[0-9a-f]{8}$'
@@ -810,7 +821,8 @@ Describe 'Routen /api/wartung* (mit Attrappen)' {
         $script:SysConfirmText | Should Match 'Morpheus-Werkzeug mit Administratorrechten starten\?'
         $script:SysConfirmText | Should Match 'chkdsk'
         $script:SysConfirmText | Should Match 'Befehl: chkdsk\.exe C: /scan'
-        $script:SysConfirmText | Should Match 'Dieses Werkzeug liest nur und ändert nichts\.'
+        $script:SysConfirmText | Should Match 'Kleine Dateisystemfehler behebt Windows dabei sofort; sonst ändert es nichts\.'
+        $script:SysConfirmText | Should Not Match 'liest nur'
         $script:SysConfirmText | Should Match "wähle 'Nein'\.$"
         $script:SysConfirmText | Should Not Match 'NICHT UMKEHRBAR'
         $rec = $script:Gui.Jobs[$r.json.jobId]
@@ -1031,6 +1043,19 @@ Describe 'Routen /api/wartung* (mit Attrappen)' {
         $e.error | Should Match 'Explorer nicht startbar'
         (Invoke-TestRoute 'GET' '/api/wartung/zuverlaessigkeit').status | Should Be 405
     }
+    It 'speichertest: ohne Dialog, Journal und Job, Ergebnis ok/meldung, Fehler ergibt 500, GET 405' {
+        $r = Invoke-TestRoute 'POST' '/api/wartung/speichertest' '{}'
+        $r.status | Should Be 200
+        $r.json.ok | Should Be $true
+        $r.json.meldung | Should Be 'Speichertest geoeffnet.'
+        $script:SysCalls.Confirm | Should Be 0
+        $script:SysCalls.Job | Should Be 0
+        $script:SpeicherThrow = $true
+        $e = Invoke-TestRoute 'POST' '/api/wartung/speichertest' '{}'
+        $e.status | Should Be 500
+        $e.error | Should Match 'MdSched nicht startbar'
+        (Invoke-TestRoute 'GET' '/api/wartung/speichertest').status | Should Be 405
+    }
 }
 
 Describe 'Routen /api/updates* (mit Attrappen)' {
@@ -1129,6 +1154,12 @@ Describe 'Routen /api/updates* (mit Attrappen)' {
         $p[1].id | Should Be 'Evil.App'
         $a[6] | Should Match '^\[\{"id":"Demo\.App","name":"Demo App","von":"1\.0","auf":"1\.1"\},'
         (Invoke-TestRoute 'GET' '/api/updates').json.laufend | Should Be $r.json.jobId
+        # Paketliste am Job-Record (2.9, #140): aus der Server-Liste, nie aus dem Body
+        $rp = @($rec.Pakete)
+        $rp.Count | Should Be 2
+        (@($rp | ForEach-Object { $_.id }) -join ',') | Should Be 'Demo.App,Evil.App'
+        $rp[0].name | Should Be 'Demo App'
+        @($rp | Where-Object { $_.id -eq 'Boese.Paket' }).Count | Should Be 0
     }
     It 'installieren: ein Paket wird als JSON-Array uebergeben' {
         Set-TestUpdates
@@ -1279,6 +1310,202 @@ Describe 'Wartungsberichte im iframe und Rueckgaengig-Sperre (mit Attrappen)' {
         $script:SysCalls.Job | Should Be 0
         (Invoke-TestRoute 'POST' '/api/journal/20261026-120003-01/undo' '{}').status | Should Be 200
         $script:SysCalls.Job | Should Be 1
+    }
+}
+
+function New-TestFortschrittRecord {
+    param($Daten, [switch]$OhneTag)
+    $r = New-Object System.Management.Automation.InformationRecord($Daten, 'test')
+    if (-not $OhneTag) { $r.Tags.Add('morpheus.fortschritt') }
+    return $r
+}
+function New-TestFortschrittRec {
+    param([object[]]$Information)
+    $job = [pscustomobject]@{ ChildJobs = @([pscustomobject]@{ Information = @($Information); Warning = @(); Error = @() }) }
+    return @{ Id = 'fort0001'; Art = 'wartung'; Status = 'running'; Job = $job; Log = (New-Object System.Collections.Generic.List[string])
+        Seen = @{ Information = 0; Warning = 0; Error = 0 }; Fortschritt = $null }
+}
+
+Describe 'Route /api/actions: Journal für Zurücknehmen an der Karte (#166)' {
+    BeforeEach {
+        Initialize-TestWartung
+        $script:Gui.Catalog = @([pscustomobject]@{ Id = 'fake.a'; Titel = 'Fake A'; Varianten = @(); Neustart = $false })
+        $script:TestJournal = @([pscustomobject]@{ id = '20261026-120000-01'; zeit = '2026-10-26T12:00:00'; art = 'ausfuehren'; aktion = 'fake.a'; titel = 'Fake A'; status = 'erledigt' })
+    }
+    It 'gibt Journal und Datenordner an die Aktionsliste weiter' {
+        $r = Invoke-TestRoute 'GET' '/api/actions' ''
+        $r.status | Should Be 200
+        @($r.json)[0].id | Should Be 'fake.a'
+        @($r.json)[0].journal | Should Be 1
+        @($r.json)[0].dataRoot | Should Be ([string]$script:Gui.DataRoot)
+    }
+    It 'liest im Nur-Lesen-Modus das Journal nicht (kein Zurücknehmen)' {
+        $script:Gui.ReadOnly = $true
+        $r = Invoke-TestRoute 'GET' '/api/actions' ''
+        $r.status | Should Be 200
+        @($r.json)[0].journal | Should Be 0
+    }
+    It 'liest das Journal erst wieder, wenn sich Journaldatei oder Zustände geändert haben' {
+        (Invoke-TestRoute 'GET' '/api/actions' '').status | Should Be 200
+        $script:TestJournal = @()
+        @((Invoke-TestRoute 'GET' '/api/actions' '').json)[0].journal | Should Be 1   # aus dem Zwischenspeicher
+        $jf = Join-Path ([string]$script:Gui.DataRoot) 'changes\journal.json'
+        New-Item -ItemType Directory -Path (Split-Path $jf) -Force | Out-Null
+        [IO.File]::WriteAllText($jf, '[]')
+        @((Invoke-TestRoute 'GET' '/api/actions' '').json)[0].journal | Should Be 0
+        $script:TestJournal = @([pscustomobject]@{ id = 'x' })
+        $script:Gui.ActionStates = @{}
+        @((Invoke-TestRoute 'GET' '/api/actions' '').json)[0].journal | Should Be 1
+    }
+    It 'es gibt keine neue Route zum Zurücknehmen: nur POST /api/journal/<id>/undo (Bestätigung, Nur-Lesen)' {
+        (Invoke-TestRoute 'POST' '/api/actions/zuruecknehmen' '{}').status | Should Be 404
+        $script:Gui.ReadOnly = $true
+        (Invoke-TestRoute 'POST' '/api/journal/20261026-120000-01/undo' '{}').status | Should Be 403
+    }
+}
+Describe 'Fortschritt im Job-Status (2.8, #137)' {
+    BeforeEach { Initialize-TestWartung }
+
+    It 'echter Job: getaggter Record wird fortschritt, fehlt im Log; /api/jobs/<id> liefert ihn' {
+        $fs = (Resolve-Path (Join-Path $PSScriptRoot '..\gui\lib\Fortschritt.ps1')).Path
+        $job = Microsoft.PowerShell.Core\Start-Job -ScriptBlock {
+            param($Pfad)
+            . $Pfad
+            Write-Information -MessageData 'Zeile eins' -InformationAction Continue
+            Write-MorpheusFortschritt -Modus prozent -Prozent 42 -Phase ausfuehren -Text 'Pruefe'
+            Write-Information -MessageData 'Zeile zwei' -InformationAction Continue
+        } -ArgumentList $fs
+        try {
+            [void](Wait-Job -Job $job -Timeout 60)
+            $rec = @{ Id = 'fort0001'; Art = 'wartung'; Status = 'running'; Job = $job; Log = (New-Object System.Collections.Generic.List[string])
+                Seen = @{ Information = 0; Warning = 0; Error = 0 }; Fortschritt = $null }
+            Get-GuiJobStreamLines $rec
+            $rec.Log.Count | Should Be 2
+            ($rec.Log -join '|') | Should Be 'Zeile eins|Zeile zwei'
+            $rec.Fortschritt.prozent | Should Be 42
+            $rec.Fortschritt.phase | Should Be 'ausfuehren'
+            $rec.Fortschritt.text | Should Be 'Pruefe'
+        }
+        finally { Remove-Job -Job $job -Force -ErrorAction SilentlyContinue }
+        $rec.Status = 'done'; $rec.Job = $null; $rec.Ergebnis = $null
+        $script:Gui.Jobs['fort0001'] = $rec
+        $r = Invoke-TestRoute 'GET' '/api/jobs/fort0001'
+        $r.status | Should Be 200
+        $r.json.next | Should Be 2
+        $r.json.fortschritt.prozent | Should Be 42
+        $r.json.fortschritt.modus | Should Be 'prozent'
+    }
+    It 'elemente (2.9, #140): fremde id fehlt, name aus der Paketliste des Records, Antwort als Liste' {
+        $rec = New-TestFortschrittRec @((New-TestFortschrittRecord @{ modus = 'zaehler'; i = 1; n = 2; elemente = @(
+                        @{ id = 'Demo.App'; name = 'Gefaelscht'; status = 'fertig' },
+                        @{ id = 'Fremd.App'; status = 'laeuft' }) }))
+        $rec['Pakete'] = @([pscustomobject]@{ id = 'Demo.App'; name = 'Demo App'; von = '1.0'; auf = '1.1' }, [pscustomobject]@{ id = 'Evil.App'; name = 'Evil'; von = '1'; auf = '2' })
+        Get-GuiJobStreamLines $rec
+        $rec.Log.Count | Should Be 0
+        $rec.Status = 'done'; $rec.Job = $null; $rec.Ergebnis = $null
+        $script:Gui.Jobs['fort0003'] = $rec
+        $r = Invoke-TestRoute 'GET' '/api/jobs/fort0003'
+        $r.status | Should Be 200
+        $r.raw | Should Match '"elemente":\[\{'
+        @($r.json.fortschritt.elemente).Count | Should Be 1
+        $r.json.fortschritt.elemente[0].id | Should Be 'Demo.App'
+        $r.json.fortschritt.elemente[0].name | Should Be 'Demo App'
+        $r.json.fortschritt.elemente[0].status | Should Be 'fertig'
+        $r.raw | Should Not Match 'Fremd\.App'
+        $r.raw | Should Not Match 'Gefaelscht'
+        $script:Gui.Jobs.Remove('fort0003')
+    }
+    It 'Job ohne Paketliste: elemente bleibt null' {
+        $rec = New-TestFortschrittRec @((New-TestFortschrittRecord @{ modus = 'zaehler'; i = 0; n = 1; elemente = @(@{ id = 'Demo.App'; status = 'offen' }) }))
+        Get-GuiJobStreamLines $rec
+        $rec.Fortschritt.elemente | Should Be $null
+    }
+    It 'Textzeile, die wie Fortschritt aussieht, bleibt Logzeile' {
+        $txt = '{"modus":"prozent","prozent":99} morpheus.fortschritt'
+        $rec = New-TestFortschrittRec @((New-TestFortschrittRecord $txt))
+        Get-GuiJobStreamLines $rec
+        $rec.Log.Count | Should Be 1
+        $rec.Log[0] | Should Be $txt
+        $rec.Fortschritt | Should Be $null
+    }
+    It 'IDictionary ohne Tag bleibt Logzeile' {
+        $rec = New-TestFortschrittRec @((New-TestFortschrittRecord @{ modus = 'prozent'; prozent = 50 } -OhneTag))
+        Get-GuiJobStreamLines $rec
+        $rec.Log.Count | Should Be 1
+        $rec.Fortschritt | Should Be $null
+    }
+    It 'ungueltiger getaggter Record wird verworfen, alter Wert bleibt' {
+        $rec = New-TestFortschrittRec @(
+            (New-TestFortschrittRecord @{ modus = 'zaehler'; i = 1; n = 4 }),
+            (New-TestFortschrittRecord @{ modus = 'boese'; prozent = 77 }),
+            (New-TestFortschrittRecord @{ modus = 'prozent'; prozent = 'abc' }))
+        Get-GuiJobStreamLines $rec
+        $rec.Log.Count | Should Be 0
+        $rec.Fortschritt.modus | Should Be 'zaehler'
+        $rec.Fortschritt.prozent | Should Be 25
+    }
+    It 'Antwort ohne Fortschritt hat das Feld fortschritt = null' {
+        $script:Gui.Jobs['fort0002'] = @{ Id = 'fort0002'; Art = 'scan'; Status = 'done'; Job = $null; Log = (New-Object System.Collections.Generic.List[string])
+            Seen = @{ Information = 0; Warning = 0; Error = 0 }; Fortschritt = $null; Ergebnis = $null }
+        $r = Invoke-TestRoute 'GET' '/api/jobs/fort0002'
+        $r.status | Should Be 200
+        $r.raw | Should Match '"fortschritt":\s*null'
+    }
+    It 'Job-Scripts run, undo und wartung laden Fortschritt.ps1' {
+        foreach ($art in 'run', 'undo', 'wartung') { $script:GuiJobScripts[$art].ToString() | Should Match 'Fortschritt\.ps1' }
+    }
+}
+
+Describe 'Aktivitätsanzeige: Feld jobs in /api/session (2.9, #141)' {
+    BeforeEach { Initialize-TestWartung; $script:Gui.ReportCache = @{} }
+
+    It 'laufender Job erscheint, alter Job (> 30 min) nicht' {
+        $log = New-Object System.Collections.Generic.List[string]
+        $log.Add('geheime Logzeile')
+        $script:Gui.Jobs['akt00001'] = @{ Id = 'akt00001'; Art = 'scan'; Status = 'running'; Job = $null; Log = $log; Started = (Get-Date).AddMinutes(-2)
+            Finished = $null; Ergebnis = $null; Fortschritt = $null }
+        $script:Gui.Jobs['akt00002'] = @{ Id = 'akt00002'; Art = 'wartung'; Status = 'done'; Job = $null; Log = $log; Started = (Get-Date).AddMinutes(-50)
+            Finished = (Get-Date).AddMinutes(-31); Ergebnis = @{ geheim = 1 }; Werkzeug = 'sfc.scannow' }
+        $r = Invoke-TestRoute 'GET' '/api/session' ''
+        $r.status | Should Be 200
+        @($r.json.jobs).Count | Should Be 1
+        $r.json.jobs[0].id | Should Be 'akt00001'
+        $r.json.jobs[0].art | Should Be 'scan'
+        $r.json.jobs[0].status | Should Be 'running'
+        $r.json.jobs[0].werkzeug | Should BeNullOrEmpty
+    }
+    It 'kürzlich beendeter Job erscheint mit Werkzeug; nur die fünf Felder, kein Log, kein Ergebnis' {
+        $log = New-Object System.Collections.Generic.List[string]
+        $log.Add('geheime Logzeile')
+        $script:Gui.Jobs['akt00003'] = @{ Id = 'akt00003'; Art = 'wartung'; Status = 'failed'; Job = $null; Log = $log; Started = (Get-Date).AddMinutes(-12)
+            Finished = (Get-Date).AddMinutes(-10); Ergebnis = @{ geheim = 1 }; Werkzeug = 'winget.upgrade'; Pakete = @(@{ id = 'Paket.Geheim' })
+            Fortschritt = @{ prozent = 50 }; Mutating = $true; AbbruchDatei = 'C:\x.flag' }
+        $r = Invoke-TestRoute 'GET' '/api/session' ''
+        @($r.json.jobs).Count | Should Be 1
+        $j = $r.json.jobs[0]
+        (@($j.PSObject.Properties.Name) | Sort-Object) -join ',' | Should Be 'art,gestartet,id,status,werkzeug'
+        $j.werkzeug | Should Be 'winget.upgrade'
+        $j.status | Should Be 'failed'
+        $j.gestartet | Should Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'
+        $r.raw | Should Not Match 'geheim'
+        $r.raw | Should Not Match 'Paket\.Geheim'
+    }
+    It 'höchstens 20 Einträge, neueste zuerst; interner refresh-Job fehlt' {
+        for ($i = 1; $i -le 25; $i++) {
+            $id = 'akt' + $i.ToString('00000')
+            $script:Gui.Jobs[$id] = @{ Id = $id; Art = 'scan'; Status = 'running'; Job = $null; Started = (Get-Date).AddMinutes(-60 + $i); Finished = $null }
+        }
+        $script:Gui.Jobs['refr0001'] = @{ Id = 'refr0001'; Art = 'refresh'; Status = 'running'; Job = $null; Started = (Get-Date); Finished = $null }
+        $r = Invoke-TestRoute 'GET' '/api/session' ''
+        @($r.json.jobs).Count | Should Be 20
+        $r.json.jobs[0].id | Should Be 'akt00025'
+        $r.json.jobs[19].id | Should Be 'akt00006'
+        @($r.json.jobs | Where-Object { $_.art -eq 'refresh' }).Count | Should Be 0
+    }
+    It 'ohne Jobs ist jobs eine leere Liste' {
+        $r = Invoke-TestRoute 'GET' '/api/session' ''
+        $r.error | Should BeNullOrEmpty
+        $r.raw | Should Match '"jobs":\s*\[\s*\]'
     }
 }
 
@@ -1633,6 +1860,47 @@ Describe 'pc-check-gui.ps1: statische Prüfung des Serverstarts' {
     }
 }
 
+Describe 'Open-GuiListener: Bind-Wiederholung bei belegtem Port (#123)' {
+    BeforeEach {
+        $script:Gui = @{ DataRoot = $script:TestDir }
+        $script:BindVersuche = @()
+    }
+    It 'Port frei: ein Versuch, gleicher Port' {
+        $r = Open-GuiListener -Port 5000 -PortAuto -Bind { param($p) $script:BindVersuche += $p; 'L' } -NeuerPort { 9999 }
+        $r.Port | Should Be 5000
+        $r.Listener | Should Be 'L'
+        $script:BindVersuche.Count | Should Be 1
+    }
+    It 'Port belegt (automatisch gewählt): neuer Port, dann Erfolg' {
+        $r = Open-GuiListener -Port 5000 -PortAuto -Bind { param($p) $script:BindVersuche += $p; if ($p -eq 5000) { throw 'belegt' }; 'L' } -NeuerPort { 6000 }
+        $r.Port | Should Be 6000
+        ($script:BindVersuche -join ',') | Should Be '5000,6000'
+    }
+    It 'dauerhaft belegt: nach 3 Versuchen Fehler' {
+        { Open-GuiListener -Port 5000 -PortAuto -Versuche 3 -Bind { param($p) $script:BindVersuche += $p; throw 'belegt' } -NeuerPort { 6000 } } | Should Throw 'belegt'
+        $script:BindVersuche.Count | Should Be 3
+    }
+    It 'fester Port (-Port vom Benutzer): kein neuer Versuch' {
+        { Open-GuiListener -Port 5000 -Bind { param($p) $script:BindVersuche += $p; throw 'belegt' } -NeuerPort { 6000 } } | Should Throw 'belegt'
+        $script:BindVersuche.Count | Should Be 1
+    }
+}
+
+Describe 'pc-check-gui.ps1: Hinweis auf Adminrechte nur bei echtem Zugriff-verweigert-Fehler (#123)' {
+    It 'keine Textsuche mit offener Ziffer mehr' {
+        $t = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\pc-check-gui.ps1'), [Text.Encoding]::UTF8)
+        $t | Should Not Match "Zugriff\|denied\|5"
+        $t | Should Match 'NativeErrorCode -eq 5'
+        $t | Should Match '-PortAuto:\$portAuto'
+    }
+    It 'ohne -Port: fester Standardport mit Ausweichen, damit der Browser die Ansichtseinstellungen wiederfindet (#146)' {
+        $t = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\pc-check-gui.ps1'), [Text.Encoding]::UTF8)
+        $t | Should Match 'if \(\$Port -eq 0\) \{ \$Port = 41417 \}'
+        $t.IndexOf('$portAuto = ($Port -eq 0)') | Should BeLessThan $t.IndexOf('$Port = 41417')
+        $t | Should Not Match 'TcpListener'
+    }
+}
+
 Describe 'Test-GuiServerEnde und Heartbeat-Schutz' {
     $jetzt = Get-Date
     function Ende {
@@ -1684,11 +1952,13 @@ Describe 'Test-GuiServerEnde und Heartbeat-Schutz' {
     It 'Start-GuiServerLoop nutzt Test-GuiServerEnde' {
         $script:ServerText | Should Match 'Test-GuiServerEnde -EdgeProfil'
     }
-    It 'pc-check-gui.ps1 startet Edge mit den drei Schaltern und ohne festes Heartbeat-Limit' {
+    It 'pc-check-gui.ps1 startet Edge mit den drei Schaltern (Befehlszeile in EdgeStart.ps1) und ohne festes Heartbeat-Limit' {
         $t = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\pc-check-gui.ps1'), [Text.Encoding]::UTF8)
-        $t | Should Match '--disable-background-timer-throttling'
-        $t | Should Match '--disable-renderer-backgrounding'
-        $t | Should Match '--disable-backgrounding-occluded-windows'
+        $e = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\lib\EdgeStart.ps1'), [Text.Encoding]::UTF8)
+        $t | Should Match 'Get-MorpheusEdgeArgumente'
+        $e | Should Match '--disable-background-timer-throttling'
+        $e | Should Match '--disable-renderer-backgrounding'
+        $e | Should Match '--disable-backgrounding-occluded-windows'
         $t | Should Not Match 'HeartbeatTimeoutSec'
     }
     It 'app.js hat visibilitychange- und focus-Handler für den Heartbeat' {
@@ -1712,6 +1982,21 @@ Describe 'Farbpaletten: statische Dateien und Einbindung (2.7, #100)' {
         $r = Invoke-TestRoute 'GET' '/palettes.css' ''
         $r.status | Should Be 200
         $r.raw | Should Match ':root\[data-palette="gruvbox"\]'
+    }
+    It '/dev/* wird nie ausgeliefert (#123)' {
+        (Invoke-TestRoute 'GET' '/dev/mock.js' '').status | Should Be 404
+        (Invoke-TestRoute 'GET' '/dev/mock.html' '').status | Should Be 404
+        (Invoke-TestRoute 'GET' '/dev/..%2fapp.js' '').status | Should Be 404
+    }
+    It 'CSP der GUI-Seite erlaubt keine Inline-Stile (#123)' {
+        $script:GuiCsp | Should Not Match 'unsafe-inline'
+        $html = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\index.html'), [Text.Encoding]::UTF8)
+        $html | Should Not Match 'style\s*='
+        $html | Should Not Match '<style'
+        # app.js: h()/svg() setzen 'style' über das CSSOM (erlaubt), nie per setAttribute (blockiert)
+        $js = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\gui\app.js'), [Text.Encoding]::UTF8)
+        ([regex]::Matches($js, "k === 'style'\)\s*e\.style\.cssText = v")).Count | Should Be 2
+        $js | Should Not Match "setAttribute\(\s*['""]style['""]"
     }
     It 'liefert andere Namen im gui-Ordner weiterhin nicht aus' {
         (Invoke-TestRoute 'GET' '/palette.json' '').status | Should Be 404
@@ -1740,4 +2025,52 @@ Describe 'Farbpaletten: statische Dateien und Einbindung (2.7, #100)' {
     }
 }
 
+
+# Scan-Fortschritt (2.8, #139): echter Job mit einem Attrappen-Skript statt pc-check.ps1 (schreibt nur Text, liest nichts)
+Describe 'Job-Script scan: Markerzeilen (mit Attrappe)' {
+    It 'richtige Kennung -> fortschritt i/n, Zeile fehlt im Log; falsche Kennung bleibt Logzeile' {
+        $root = Join-Path $script:TestDir 'scanroot'
+        $daten = Join-Path $script:TestDir 'scandaten'
+        $src = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
+        New-Item -ItemType Directory -Force (Join-Path $root 'gui\lib'), (Join-Path $daten 'reports') | Out-Null
+        foreach ($f in 'Sprache.ps1', 'Fortschritt.ps1') { Copy-Item -LiteralPath (Join-Path $src "gui\lib\$f") -Destination (Join-Path $root 'gui\lib') }
+        Copy-Item -LiteralPath (Join-Path $src 'lang') -Destination $root -Recurse
+        $falsch = '0123456789abcdef0123456789abcdef'
+        $attrappe = @(
+            '$k = [string]$env:MORPHEUS_FS'
+            '[Console]::Out.WriteLine(''normale Zeile'')'
+            '[Console]::Out.WriteLine(''@@MORPHEUS-FORTSCHRITT '' + $k + '' 5 12 2 4 Virenschutz > Firewall'')'
+            "[Console]::Out.WriteLine('@@MORPHEUS-FORTSCHRITT $falsch 9 12 3 4 Falsch > Kennung')"
+            '[Console]::Out.WriteLine(''KENNUNG-LAENGE '' + $k.Length)'
+            'exit 0'
+        ) -join "`r`n"
+        [IO.File]::WriteAllText((Join-Path $root 'pc-check.ps1'), $attrappe, (New-Object Text.UTF8Encoding $true))
+        $job = Microsoft.PowerShell.Core\Start-Job -ScriptBlock $script:GuiJobScripts['scan'] -ArgumentList $root, @(), $daten
+        try {
+            [void](Wait-Job $job -Timeout 60)
+            $rec = @{ Id = 'scanfs01'; Art = 'scan'; Job = $job; Status = 'running'; Log = (New-Object System.Collections.Generic.List[string])
+                Seen = @{ Information = 0; Warning = 0; Error = 0 }; Fortschritt = $null }
+            Get-GuiJobStreamLines $rec
+            $job.State | Should Be 'Completed'
+            $log = @($rec.Log) -join "`n"
+            $rec.Fortschritt.modus | Should Be 'zaehler'
+            $rec.Fortschritt.i | Should Be 5
+            $rec.Fortschritt.n | Should Be 12
+            $rec.Fortschritt.phase | Should Be 'scan'
+            $rec.Fortschritt.text | Should Be ('Virenschutz ' + [char]0x203A + ' Firewall')
+            $log | Should Match 'normale Zeile'
+            $log | Should Match 'KENNUNG-LAENGE 32'
+            $log | Should Match ([regex]::Escape("@@MORPHEUS-FORTSCHRITT $falsch 9 12"))
+            $log | Should Not Match 'Virenschutz > Firewall'
+            @($rec.Log | Where-Object { $_ -match '@@MORPHEUS-FORTSCHRITT [0-9a-f]{32} 5 ' }).Count | Should Be 0
+        }
+        finally { Remove-Job $job -Force -ErrorAction SilentlyContinue }
+    }
+    It 'Job-Script scan laedt Fortschritt.ps1 und setzt MORPHEUS_FS danach zurueck' {
+        $s = $script:GuiJobScripts['scan'].ToString()
+        $s | Should Match 'Fortschritt\.ps1'
+        $s | Should Match 'finally \{ \$env:MORPHEUS_FS = \$null \}'
+        $s | Should Match "NewGuid\(\)\.ToString\('N'\)"
+    }
+}
 Remove-Item -LiteralPath $script:TestDir -Recurse -Force -ErrorAction SilentlyContinue

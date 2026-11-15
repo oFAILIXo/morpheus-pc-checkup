@@ -11,7 +11,7 @@
 </head>
 <body>
 <button type="button" id="skip" class="skip" data-t="kopf.zumInhalt">Zum Inhalt</button>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
   <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></symbol>
   <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
   <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></symbol>
@@ -48,7 +48,7 @@
         <button type="button" data-modus="einfach" aria-pressed="false" title="Nur die Zusammenfassung und das Wichtigste" data-t-title="kopf.modusEinfachTitel" data-t="kopf.modusEinfach">Einfach</button>
         <button type="button" data-modus="experte" aria-pressed="false" title="Alle Prüfungen, Werkzeuge und Details" data-t-title="kopf.modusExperteTitel" data-t="kopf.modusExperte">Experte</button>
       </div>
-      <button type="button" class="btn" id="ki-btn" title="Kopiert die Befunde ohne PC-Namen, Benutzernamen und Adressen in die Zwischenablage" data-t-title="kopf.kiTitel"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-t="kopf.kiText">Für KI kopieren</span></button>
+      <button type="button" class="btn" id="ki-btn" title="Zeigt eine Vorschau der Befunde ohne PC-Namen, Benutzernamen und Adressen; kopiert wird erst nach deinem Klick" data-t-title="kopf.kiTitel"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg><span data-t="kopf.kiText">Für KI kopieren</span></button>
       <button type="button" class="btn ghost" id="st-toggle" aria-pressed="true" title="Statusleiste ein- oder ausblenden" data-t-title="kopf.statusTitel"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg><span data-t="kopf.statusText">Statusleiste</span></button>
       <a class="btn brand" href="#/scan"><svg class="i" aria-hidden="true"><use href="#i-scan"/></svg><span data-t="kopf.scanText">Neuer Scan</span></a>
     </header>

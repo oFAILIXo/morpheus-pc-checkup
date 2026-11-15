@@ -1,0 +1,20 @@
+[
+  { "name": "PC-Name", "ctx": { "pc": "TESTPC-01" }, "input": "Computer TESTPC-01 laeuft, testpc-01 auch", "expected": "Computer <PC> laeuft, <PC> auch" },
+  { "name": "Benutzername ab 3 Zeichen, auch im Profilpfad", "ctx": { "user": "tester" }, "input": "C:\\Users\\tester\\AppData und Tester", "expected": "C:\\Users\\<Benutzer>\\AppData und <Benutzer>" },
+  { "name": "Benutzername mit 2 Zeichen: nur ganzes Wort, Schreibung gleich", "ctx": { "user": "ab" }, "input": "Konto ab hat Rechte; about, table, AB", "expected": "Konto <Benutzer> hat Rechte; about, table, AB" },
+  { "name": "Benutzername mit 2 Zeichen im Profilpfad", "ctx": { "user": "ab" }, "input": "C:\\Users\\ab\\Desktop", "expected": "C:\\Users\\<Benutzer>\\Desktop" },
+  { "name": "Benutzername mit 1 Zeichen: nur PC\\Name und Profilpfad", "ctx": { "pc": "TESTPC-01", "user": "x" }, "input": "TESTPC-01\\x, x64, C:\\Users\\x\\Dokumente", "expected": "<PC>\\<Benutzer>, x64, C:\\Users\\<Benutzer>\\Dokumente" },
+  { "name": "Zahl als Benutzername zerstoert keine Versionen", "ctx": { "user": "10" }, "input": "Windows 10 Version 22H2", "expected": "Windows 10 Version 22H2" },
+  { "name": "Anzeigename vor Benutzername", "ctx": { "user": "erika", "anzeige": "Erika Beispiel" }, "input": "Konto Erika Beispiel (erika)", "expected": "Konto <Name> (<Benutzer>)" },
+  { "name": "weitere Konten nur als ganzes Wort", "ctx": { "konten": ["Bob", "Al"] }, "input": "Konto Bob ohne Kennwort; Bobby; Al", "expected": "Konto <Benutzer> ohne Kennwort; Bobby; Al" },
+  { "name": "WLAN-Namen aus den Netzwerkprofilen, allgemeine Namen bleiben", "ctx": { "netzwerke": ["HeimNetz-5G", "Netzwerk 2", "WLAN", "ab"] }, "input": "Verbunden mit HeimNetz-5G (Netzwerk 2), Adapter WLAN, Tab", "expected": "Verbunden mit <WLAN> (Netzwerk 2), Adapter WLAN, Tab" },
+  { "name": "E-Mail, SID, MAC", "ctx": {}, "input": "a.b@example.org S-1-5-21-111-222-333-1001 aa:bb:cc:dd:ee:ff 11-22-33-44-55-66", "expected": "<E-Mail> <SID> <MAC> <MAC>" },
+  { "name": "IPv4 ersetzt, Versionsnummern bleiben", "ctx": {}, "input": "10.0.0.1 und 192.168.178.20:8080; Version 10.0.19045.5011, Treiber 31.0.101.5333, 1.2.3.4.5, 999.1.1.1", "expected": "<IP> und <IP>:8080; Version 10.0.19045.5011, Treiber 31.0.101.5333, 1.2.3.4.5, 999.1.1.1" },
+  { "name": "IPv6 verkuerzt und voll", "ctx": {}, "input": "a 2a02:8109::1. b fe80::1ff:fe23:4567:890a%12 c 2001:0db8:85a3:0000:0000:8a2e:0370:7334 d ::1 e 2001:db8::", "expected": "a <IPv6>. b <IPv6> c <IPv6> d <IPv6> e <IPv6>" },
+  { "name": "Uhrzeiten, Doppelpunkte und Ports sind keine IPv6", "ctx": {}, "input": "Zeit 12:30:45, 1:2:3, std::string, Port 443:80, 2026-11-15 08:15:30", "expected": "Zeit 12:30:45, 1:2:3, std::string, Port 443:80, 2026-11-15 08:15:30" },
+  { "name": "Profilordner, auch mit doppeltem Backslash; Public und Default bleiben", "ctx": {}, "input": "C:\\Users\\someone\\x; C:\\\\Users\\\\someone\\\\x; C:\\Users\\Public\\Documents; C:\\Users\\Default\\NTUSER.DAT", "expected": "C:\\Users\\<Benutzer>\\x; C:\\\\Users\\\\<Benutzer>\\\\x; C:\\Users\\Public\\Documents; C:\\Users\\Default\\NTUSER.DAT" },
+  { "name": "Seriennummern", "ctx": {}, "input": "Seriennummer: ABC12345; SerialNumber=XYZ-9876; S/N: 1234-5678; Serial: To be filled; Volumeseriennummer: 1A2B-3C4D", "expected": "Seriennummer: <Serial>; SerialNumber=<Serial>; S/N: <Serial>; Serial: To be filled; Volumeseriennummer: <Serial>" },
+  { "name": "SSID-Angabe", "ctx": {}, "input": "SSID: Cafe Wlan; Kanal 6", "expected": "SSID: <WLAN>; Kanal 6" },
+  { "name": "Nichts Persoenliches: Text bleibt", "ctx": { "pc": "TESTPC-01", "user": "tester" }, "input": "Windows 11 Pro 10.0.26100, Defender 4.18.24090.11, Serialisierung aktiv, Index 8", "expected": "Windows 11 Pro 10.0.26100, Defender 4.18.24090.11, Serialisierung aktiv, Index 8" },
+  { "name": "leerer Kontext", "ctx": {}, "input": "kein Name, nur Text", "expected": "kein Name, nur Text" }
+]

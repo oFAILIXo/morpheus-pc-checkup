@@ -127,3 +127,172 @@ Describe 'Aktionskatalog: Lesen und Voraussetzung am echten System (nur lesend)'
         }
     }
 }
+
+# #114: Die Rücknahme nimmt Pfad/Name/Typ aus dem Katalog; aus dem Journal kommt nur der Wert.
+# Die Rueckgaengig-Blöcke laufen hier mit gemockten Cmdlets (nichts am System wird geändert).
+function Get-UndoBlock([string]$Id) {
+    $a = @($script:Catalog | Where-Object { [string]$_.Id -ceq $Id })[0]
+    [scriptblock]::Create([string]$a.Rueckgaengig)
+}
+
+Describe 'Rücknahme: gefälschter Journal-Eintrag wird abgelehnt (#114)' {
+    Mock Test-Path { $true }
+    Mock Get-Item { throw 'Get-Item darf nicht aufgerufen werden' }
+    Mock New-Item { }
+    Mock New-ItemProperty { }
+    Mock Remove-ItemProperty { }
+    Mock Remove-Item { }
+
+    $einzel = @(
+        @{ Id = 'fernzugriff.remoteunterstuetzung'; Pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance'; Name = 'fAllowToGetHelp' },
+        @{ Id = 'fernzugriff.rdp'; Pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'; Name = 'fDenyTSConnections' },
+        @{ Id = 'netz.llmnr'; Pfad = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient'; Name = 'EnableMulticast' },
+        @{ Id = 'system.schnellstart'; Pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'; Name = 'HiberbootEnabled' },
+        @{ Id = 'haertung.lsa'; Pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'; Name = 'RunAsPPL' },
+        @{ Id = 'haertung.treibersperrliste'; Pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Config'; Name = 'VulnerableDriverBlocklistEnable' },
+        @{ Id = 'gaming.spielmodus'; Pfad = 'HKCU:\Software\Microsoft\GameBar'; Name = 'AutoGameModeEnabled' },
+        @{ Id = 'gaming.hags'; Pfad = 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers'; Name = 'HwSchMode' }
+    )
+    foreach ($z in $einzel) {
+        $zid = $z.Id; $zp = $z.Pfad; $zn = $z.Name
+        It "$zid verweigert einen abweichenden Typ und schreibt nichts" {
+            $vorher = [pscustomobject]@{ Wert = 'C:\Evil'; Typ = 'String'; SchluesselVorhanden = $true }
+            { & (Get-UndoBlock $zid) $vorher } | Should Throw 'abgelehnt'
+            Assert-MockCalled New-ItemProperty -Times 0 -Scope It
+            Assert-MockCalled New-Item -Times 0 -Scope It
+        }
+        It "$zid schreibt mit festem Pfad, Namen und Typ nur den Wert" {
+            $vorher = [pscustomobject]@{ Wert = 7; Typ = 'DWord'; SchluesselVorhanden = $true }
+            & (Get-UndoBlock $zid) $vorher
+            Assert-MockCalled New-ItemProperty -Times 1 -Exactly -Scope It -ParameterFilter { $LiteralPath -eq $zp -and $Name -eq $zn -and $PropertyType -eq 'DWord' -and $Value -eq 7 }
+        }
+    }
+
+    It 'gaming.gamedvr lehnt einen abweichenden Pfad in irgendeinem Eintrag ab, ohne vorher etwas zu schreiben' {
+        $w = {
+            param($p, $n) [ordered]@{ Pfad = $p; Name = $n; Wert = 0; Typ = 'DWord'; SchluesselVorhanden = $true }
+        }
+        $vorher = [pscustomobject]@{ Werte = @(
+                (& $w 'HKCU:\System\GameConfigStore' 'GameDVR_Enabled'),
+                (& $w 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR' 'AppCaptureEnabled'),
+                (& $w 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' 'Evil')
+            )
+        }
+        { & (Get-UndoBlock 'gaming.gamedvr') $vorher } | Should Throw 'abgelehnt'
+        Assert-MockCalled New-ItemProperty -Times 0 -Scope It
+        Assert-MockCalled Remove-ItemProperty -Times 0 -Scope It
+    }
+    It 'gaming.gamedvr lehnt abweichenden Namen, Typ und Anzahl ab' {
+        $p = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'
+        $e0 = [ordered]@{ Pfad = 'HKCU:\System\GameConfigStore'; Name = 'GameDVR_Enabled'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true }
+        $e1 = [ordered]@{ Pfad = $p; Name = 'AppCaptureEnabled'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true }
+        $e2 = [ordered]@{ Pfad = $p; Name = 'HistoricalCaptureEnabled'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true }
+        $name = [ordered]@{ Pfad = $p; Name = 'Anderer'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true }
+        $typ = [ordered]@{ Pfad = $p; Name = 'AppCaptureEnabled'; Wert = 'x'; Typ = 'String'; SchluesselVorhanden = $true }
+        { & (Get-UndoBlock 'gaming.gamedvr') ([pscustomobject]@{ Werte = @($e0, $e1, $name) }) } | Should Throw 'abgelehnt'
+        { & (Get-UndoBlock 'gaming.gamedvr') ([pscustomobject]@{ Werte = @($e0, $typ, $e2) }) } | Should Throw 'abgelehnt'
+        { & (Get-UndoBlock 'gaming.gamedvr') ([pscustomobject]@{ Werte = @($e0) }) } | Should Throw 'abgelehnt'
+        Assert-MockCalled New-ItemProperty -Times 0 -Scope It
+    }
+    It 'gaming.gamedvr schreibt bei passendem Eintrag nur mit Katalog-Pfaden' {
+        $p = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR'
+        $vorher = [pscustomobject]@{ Werte = @(
+                [ordered]@{ Pfad = 'hkcu:\system\gameconfigstore'; Name = 'GameDVR_Enabled'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true },
+                [ordered]@{ Pfad = $p; Name = 'AppCaptureEnabled'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true },
+                [ordered]@{ Pfad = $p; Name = 'HistoricalCaptureEnabled'; Wert = 1; Typ = 'DWord'; SchluesselVorhanden = $true }
+            )
+        }
+        & (Get-UndoBlock 'gaming.gamedvr') $vorher
+        Assert-MockCalled New-ItemProperty -Times 3 -Exactly -Scope It
+        Assert-MockCalled New-ItemProperty -Times 1 -Exactly -Scope It -ParameterFilter { $LiteralPath -ceq 'HKCU:\System\GameConfigStore' -and $Name -eq 'GameDVR_Enabled' }
+    }
+
+    It 'gaming.maus lehnt abweichenden Pfad, Typ und Wert ab' {
+        $p = 'HKCU:\Control Panel\Mouse'
+        $mk = { param($pf, $n, $w, $t) [ordered]@{ Pfad = $pf; Name = $n; Wert = $w; Typ = $t; SchluesselVorhanden = $true } }
+        $pfad = @((& $mk $p 'MouseSpeed' '1' 'String'), (& $mk $p 'MouseThreshold1' '6' 'String'), (& $mk 'HKCU:\Software\Evil' 'MouseThreshold2' '10' 'String'))
+        $typ = @((& $mk $p 'MouseSpeed' '1' 'DWord'), (& $mk $p 'MouseThreshold1' '6' 'String'), (& $mk $p 'MouseThreshold2' '10' 'String'))
+        $wert = @((& $mk $p 'MouseSpeed' '1' 'String'), (& $mk $p 'MouseThreshold1' 'C:\Evil.exe' 'String'), (& $mk $p 'MouseThreshold2' '10' 'String'))
+        foreach ($liste in @($pfad, $typ, $wert)) {
+            { & (Get-UndoBlock 'gaming.maus') ([pscustomobject]@{ Werte = $liste }) } | Should Throw 'abgelehnt'
+        }
+        Assert-MockCalled New-ItemProperty -Times 0 -Scope It
+    }
+    It 'gaming.maus schreibt Werte als String mit Katalog-Pfad' {
+        $p = 'HKCU:\Control Panel\Mouse'
+        $mk = { param($n, $w) [ordered]@{ Pfad = $p; Name = $n; Wert = $w; Typ = 'String'; SchluesselVorhanden = $true } }
+        # Der gemockte Schlüssel liefert keine Werte: so erreicht der Test die echte Benachrichtigung an Windows nie.
+        Mock Get-Item { $k = New-Object psobject; $k | Add-Member ScriptMethod GetValue { param($n) $null }; $k }
+        & (Get-UndoBlock 'gaming.maus') ([pscustomobject]@{ Werte = @((& $mk 'MouseSpeed' '1'), (& $mk 'MouseThreshold1' '6'), (& $mk 'MouseThreshold2' '10')) })
+        Assert-MockCalled New-ItemProperty -Times 3 -Exactly -Scope It -ParameterFilter { $LiteralPath -ceq $p -and $PropertyType -eq 'String' }
+    }
+    It 'gaming.maus meldet die Werte sofort an Windows, im Speicher statt per Add-Type' {
+        $a = @($script:Catalog | Where-Object { [string]$_.Id -ceq 'gaming.maus' })[0]
+        foreach ($b in @([string]$a.Ausfuehren, [string]$a.Rueckgaengig)) {
+            $b | Should Match 'SystemParametersInfo\(4, 0,'
+            $b | Should Match 'Get-PcCheckMausSpi'
+            $b | Should Not Match '(?m)^[^#\r\n]*\bAdd-Type\b'
+        }
+        $f = [string](Get-Command Get-PcCheckMausSpi).ScriptBlock
+        $f | Should Match 'DefinePInvokeMethod'
+        $f | Should Not Match '(?m)^[^#\r\n]*\bAdd-Type\b'
+        (Get-PcCheckMausSpi).GetMethod('SystemParametersInfo') | Should Not BeNullOrEmpty
+    }
+}
+
+Describe 'Rücknahme: Defender, Laufwerke, Energieplan, Adapter (#114)' {
+    It 'defender.asr-basis lehnt eine fremde Regel-Id ab und ändert nichts' {
+        Mock Get-MpPreference { [pscustomobject]@{ AttackSurfaceReductionRules_Ids = @(); AttackSurfaceReductionRules_Actions = @() } }
+        Mock Add-MpPreference { }
+        Mock Remove-MpPreference { }
+        $vorher = [pscustomobject]@{ Regeln = @(
+                [ordered]@{ Id = '56a863a9-875e-4185-98a7-b882c64b5ce5'; Aktion = 1 },
+                [ordered]@{ Id = 'd1e49aac-8f56-4280-b9ba-993a6d77406c'; Aktion = 0 }
+            )
+        }
+        { & (Get-UndoBlock 'defender.asr-basis') $vorher } | Should Throw 'abgelehnt'
+        Assert-MockCalled Add-MpPreference -Times 0 -Scope It
+        Assert-MockCalled Remove-MpPreference -Times 0 -Scope It
+    }
+    It 'defender.asr-basis lehnt eine unbekannte Aktion ab' {
+        Mock Get-MpPreference { [pscustomobject]@{ AttackSurfaceReductionRules_Ids = @(); AttackSurfaceReductionRules_Actions = @() } }
+        Mock Add-MpPreference { }
+        $vorher = [pscustomobject]@{ Regeln = @(
+                [ordered]@{ Id = '56a863a9-875e-4185-98a7-b882c64b5ce5'; Aktion = 1 },
+                [ordered]@{ Id = '9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2'; Aktion = 99 }
+            )
+        }
+        { & (Get-UndoBlock 'defender.asr-basis') $vorher } | Should Throw
+        Assert-MockCalled Add-MpPreference -Times 0 -Scope It
+    }
+    It 'system.wiederherstellung lehnt ein fremdes Laufwerk ab' {
+        Mock Disable-ComputerRestore { }
+        $vorher = [pscustomobject]@{ Eingeschaltet = $false; Laufwerk = 'Z:\' }
+        { & (Get-UndoBlock 'system.wiederherstellung') $vorher } | Should Throw
+        Assert-MockCalled Disable-ComputerRestore -Times 0 -Scope It
+    }
+    It 'system.wiederherstellung-speicher lehnt Laufwerk und Grenze aus dem Journal ab' {
+        { & (Get-UndoBlock 'system.wiederherstellung-speicher') ([pscustomobject]@{ Laufwerk = 'Z:'; Max = '10000MB' }) } | Should Throw
+        $sys = ([IO.Path]::GetPathRoot([Environment]::SystemDirectory).TrimEnd('\'))
+        { & (Get-UndoBlock 'system.wiederherstellung-speicher') ([pscustomobject]@{ Laufwerk = $sys; Max = '10GB /quiet' }) } | Should Throw
+    }
+    It 'energie.aspm lehnt unbekannten Plan und Werte außerhalb 0 bis 2 ab' {
+        { & (Get-UndoBlock 'energie.aspm') ([pscustomobject]@{ Plan = '11111111-2222-3333-4444-555555555555'; AC = 0; DC = 0 }) } | Should Throw
+        { & (Get-UndoBlock 'energie.aspm') ([pscustomobject]@{ Plan = '11111111-2222-3333-4444-555555555555'; AC = 99; DC = 0 }) } | Should Throw
+    }
+    It 'netz.eee lehnt fremde Schlüsselwörter, unbekannte Adapter und Werte ab, ohne etwas zu setzen' {
+        Mock Get-NetAdapter { [pscustomobject]@{ Name = 'Ethernet'; Status = 'Up' } }
+        Mock Get-NetAdapterAdvancedProperty { [pscustomobject]@{ RegistryValue = @('1') } }
+        Mock Set-NetAdapterAdvancedProperty { }
+        Mock Restart-NetAdapter { }
+        $gut = [ordered]@{ Adapter = 'Ethernet'; Schluessel = '*EEE'; Wert = '0' }
+        $schl = [ordered]@{ Adapter = 'Ethernet'; Schluessel = 'NetworkAddress'; Wert = '0' }
+        $adap = [ordered]@{ Adapter = 'Evil'; Schluessel = '*EEE'; Wert = '0' }
+        $wert = [ordered]@{ Adapter = 'Ethernet'; Schluessel = '*EEE'; Wert = '0; calc' }
+        foreach ($schlecht in @($schl, $adap, $wert)) {
+            { & (Get-UndoBlock 'netz.eee') ([pscustomobject]@{ Eintraege = @($gut, $schlecht) }) } | Should Throw 'abgelehnt'
+        }
+        Assert-MockCalled Set-NetAdapterAdvancedProperty -Times 0 -Scope It
+        Assert-MockCalled Restart-NetAdapter -Times 0 -Scope It
+    }
+}

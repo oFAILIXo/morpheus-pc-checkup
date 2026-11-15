@@ -493,6 +493,19 @@ Describe 'Test-MorpheusSysWerkzeug' {
         $script:FWurzel = $null
         (Test-MorpheusSysWerkzeug -DataRoot $script:Root -Name autorunsc).geprueft | Should Be $false
     }
+    It 'Kettenstatus: nur Revoked lehnt ab, offline/unbekannt nicht' {
+        Test-MorpheusSysKetteWiderrufen -Status @('Revoked') | Should Be $true
+        Test-MorpheusSysKetteWiderrufen -Status @('RevocationStatusUnknown', 'OfflineRevocation') | Should Be $false
+        Test-MorpheusSysKetteWiderrufen -Status @() | Should Be $false
+        Test-MorpheusSysKetteWiderrufen -Status $null | Should Be $false
+        Test-MorpheusSysKetteWiderrufen -Status @('OfflineRevocation', 'Revoked') | Should Be $true
+    }
+    It 'Standard-Wurzelprüfung prüft online mit kurzer Frist' {
+        $src = [IO.File]::ReadAllText($script:SysFile)
+        $src | Should Match 'X509RevocationMode\]::Online'
+        $src | Should Match 'UrlRetrievalTimeout'
+        $src | Should Not Match 'NoCheck'
+    }
     It 'Wurzel 2011 und Kleinschreibung werden akzeptiert' {
         $script:FWurzel = '8f43288ad272f3103b6fb1428485ea3014c0bcfe'
         (Test-MorpheusSysWerkzeug -DataRoot $script:Root -Name autorunsc).geprueft | Should Be $true

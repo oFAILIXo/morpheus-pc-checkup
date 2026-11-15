@@ -2,6 +2,10 @@
 @{
     'katalog.voraus.admin' = 'Administrator rights are missing.'
     'katalog.zustand.fehlt' = 'No previous state is available.'
+    'katalog.ruecknahme.typAbweichend' = 'The journal does not match the catalog: ''{0}'' has type ''{1}'', expected ''{2}''. The undo was rejected, nothing was changed.'
+    'katalog.ruecknahme.zielAbweichend' = 'The journal does not match the catalog (expected: {0}, found: {1}). The undo was rejected, nothing was changed.'
+    'katalog.ruecknahme.wertUngueltig' = 'The journal contains an invalid value for ''{0}'' (''{1}''). The undo was rejected, nothing was changed.'
+    'katalog.ruecknahme.adapterUnbekannt' = 'The journal names an unknown network adapter (''{0}''). The undo was rejected, nothing was changed.'
     'katalog.wert.aus' = 'off'
     'katalog.wert.an' = 'on'
     'katalog.wert.anStandard' = 'on (Windows default)'
@@ -74,6 +78,7 @@
     'katalog.maus.aus' = 'Pointer acceleration off'
     'katalog.maus.ausSchwellen' = 'Pointer acceleration off (thresholds not 0 yet)'
     'katalog.maus.an' = 'Pointer acceleration on (MouseSpeed = {0})'
+    'katalog.maus.spi' = 'The values are saved, but Windows did not apply the change right away. It takes effect after the next sign-out and sign-in.'
     'katalog.eee.keineCmdlets' = 'The network cmdlets (NetAdapter) are not available.'
     'katalog.eee.keinAdapter' = 'No wired network adapter is connected.'
     'katalog.eee.cmdletsLesen' = 'Network cmdlets not available'

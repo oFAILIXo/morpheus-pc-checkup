@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pruefen:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell   # Windows PowerShell 5.1, nicht pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parser und Kodierung (BOM, CRLF)
+        run: .\tools\ci-pruefungen.ps1
+
+      - name: Pester 3.4 (ganze Suite)
+        env:
+          CI: 'true'
+        run: |
+          Import-Module Pester -RequiredVersion 3.4.0
+          Invoke-Pester .\tests -EnableExit
+
+      - name: PSScriptAnalyzer (nur Hinweis)
+        continue-on-error: true
+        run: |
+          Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.22.0 -Scope CurrentUser -Force
+          $r = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning |
+              Where-Object { $_.ScriptPath -notmatch '[\\/](dist|\.claude)[\\/]' })
+          $r | Group-Object Severity, RuleName | Sort-Object Count -Descending |
+              ForEach-Object { '{0,5}  {1}' -f $_.Count, $_.Name }
+          "Gesamt: $($r.Count) Hinweise (Error: $(@($r | Where-Object Severity -eq 'Error').Count), Warning: $(@($r | Where-Object Severity -eq 'Warning').Count))"

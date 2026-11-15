@@ -12,7 +12,7 @@
 #   - DISM deutsch: 'keine Komponentenspeicherbeschaedigung erkannt', 'Der Komponentenspeicher kann repariert werden', 'kann nicht repariert werden',
 #     'Der Wiederherstellungsvorgang wurde erfolgreich abgeschlossen', 'Der Vorgang wurde erfolgreich beendet', Fehlerzeile 'Fehler: 0x800f081f'
 #   - AnalyzeComponentStore deutsch: 'Tatsaechliche Groesse des Komponentenspeichers', 'Anzahl der freigebbaren Pakete', 'Bereinigung des Komponentenspeichers empfohlen : Ja'
-#   - chkdsk deutsch: 'keine Probleme festgestellt', 'Es sind keine weiteren Aktionen erforderlich', 'Probleme gefunden'; Fortschritt 'Prozent'
+#   - chkdsk deutsch: 'keine Probleme festgestellt', 'Es sind keine weiteren Aktionen erforderlich', 'Probleme gefunden', 'online behoben', '/spotfix'; Fortschritt 'Prozent'
 #   - ipconfig deutsch: 'Der DNS-Aufloesungscache wurde erfolgreich geleert'
 #   - w32tm deutsch: 'Der Befehl wurde erfolgreich ausgefuehrt', 'keine Zeitdaten', 'Der Dienst wurde nicht gestartet'
 #   - defrag deutsch: 'Der Vorgang wurde erfolgreich abgeschlossen', 'wird nicht unterstuetzt'
@@ -236,6 +236,12 @@ function Get-MorpheusWartungZusammenfassung {
         'chkdsk.scan' {
             if ($f -match '(?i)access denied|zugriff (wurde )?verweigert|cannot open volume|datentr.{1,2}ger.{0,30}nicht (ge.{1,2}ffnet|zugreifen)') {
                 return (New-WaErgebnis 'fehler' (T 'server.wa.chkdskZugriff') (T 'server.wa.adminStarten'))
+            }
+            if ($f -match '(?i)/spotfix') {
+                return (New-WaErgebnis 'problem' (T 'server.wa.chkdskOffline') (T 'server.wa.chkdskOfflineSchritte'))
+            }
+            if ($f -match '(?i)fixed online|online (behoben|repariert|korrigiert)') {
+                return (New-WaErgebnis 'repariert' (T 'server.wa.chkdskOnlineBehoben') (T 'server.wa.chkdskOnlineHinweis'))
             }
             if ($f -match '(?i)found no problems|no problems|keine probleme festgestellt|keine probleme gefunden|keine weiteren aktionen erforderlich|no further action is required') {
                 return (New-WaErgebnis 'ok' (T 'server.wa.chkdskOk'))
